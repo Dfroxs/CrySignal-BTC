@@ -16,6 +16,19 @@ python3 run_bot.py --loop 60          # run every 60 min until Ctrl+C
 
 ---
 
+## Disclaimer
+
+**This is a hobby project for studying and experimenting with crypto
+signal algorithms.** It is not financial advice. Do not trade real
+money based on these signals. Have fun, learn something, break stuff —
+just don't YOLO your rent money on a bot written on a Sunday afternoon.
+
+Paper trading is simulated. Past backtest results do not guarantee
+future performance. Markets are unpredictable. The bot will be wrong
+sometimes. That's the fun part — figuring out why.
+
+---
+
 ## Scheduling Guide (step by step)
 
 ### Option A — built‑in loop mode (simplest)
