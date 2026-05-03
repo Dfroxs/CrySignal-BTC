@@ -853,6 +853,9 @@ def generate_signals(df, htf=None, market_structure=None, sr=None):
         signal['type']     = 'HOLD'
         signal['strength'] = max(buy_conditions, sell_conditions)
 
+    signal['buy_score']  = round(buy_conditions, 2)
+    signal['sell_score'] = round(sell_conditions, 2)
+
     return signal
 
 
@@ -1193,12 +1196,14 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None):
     print(f"  {_C['bld']}PRICE & TREND{_C['rst']}")
     print(sep)
     hi24, lo24 = df["high"].tail(24).max(), df["low"].tail(24).min()
-    print(f"  {'Price':<14} ${last['close']:>8,.0f}     {'24h Range':<14} ${lo24:,.0f} ─ ${hi24:,.0f}")
-    print(f"  {'EMA 200':<14} ${last['EMA_200']:>8,.0f}  {trend}", end="")
-    res_str = f"${sr['resistance']:,.0f}" if sr.get("resistance") else "—"
-    print(f"   {'Resistance':<14} {res_str:>10}")
-    sup_str = f"${sr['support']:,.0f}" if sr.get("support") else "—"
-    print(f"  {'':<14} {'':>8}                       {'Support':<14} {sup_str:>10}")
+    _kv("Price",        f"${last['close']:,.0f}")
+    _kv("EMA 200",      f"${last['EMA_200']:,.0f}  {trend}")
+    _kv("24h High",     f"${hi24:,.0f}")
+    _kv("24h Low",      f"${lo24:,.0f}")
+    if sr.get("resistance"):
+        _kv("Resistance", f"${sr['resistance']:,.0f}")
+    if sr.get("support"):
+        _kv("Support",    f"${sr['support']:,.0f}")
 
     # ── MULTI-TIMEFRAME ────────────────────────────────────────────
     if htf:
@@ -1206,7 +1211,9 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None):
         print(f"  {_C['bld']}MULTI-TIMEFRAME{_C['rst']}")
         print(sep)
         a = f"{_C['grn']}✓ ALIGNED{_C['rst']}" if htf["aligned"] else f"{_C['red']}✗ DIVERGING{_C['rst']}"
-        print(f"  {'4H':<14} {htf['4h']:<10} {'1D':<14} {htf['1d']:<10} {a}")
+        _kv("4H",          htf["4h"])
+        _kv("1D",          htf["1d"])
+        _kv("Alignment",   a)
 
     # ── MARKET STRUCTURE ───────────────────────────────────────────
     if market_structure:
@@ -1217,70 +1224,60 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None):
         print()
         print(f"  {_C['bld']}MARKET STRUCTURE{_C['rst']}")
         print(sep)
-
-        f_icon = _bias_icon(funding.get("bias", ""))
-        print(f"  {'Funding':<14} {funding.get('rate_pct',0):+.5f}%  {f_icon:<4}", end="")
-        dxy_str = f"{dxy.get('current',0):.3f} ({dxy.get('change_pct',0):+.2f}%)"
-        print(f"  {'DXY':<14} {dxy_str}")
-
-        ls_icon = _bias_icon(ls.get("bias", ""))
-        print(f"  {'L/S Ratio':<14} {ls.get('ratio',1):.2f}       {ls_icon:<4}", end="")
+        _kv("Funding",
+            f"{funding.get('rate_pct',0):+.5f}%  {_bias_icon(funding.get('bias',''))}")
+        _kv("L/S Ratio",
+            f"{ls.get('ratio',1):.2f}       {_bias_icon(ls.get('bias',''))}")
+        _kv("DXY",
+            f"{dxy.get('current',0):.3f}  ({dxy.get('change_pct',0):+.2f}%)")
         sp500 = market_structure.get("sp500", {})
-        sp_str = f"{sp500['current']:,.0f} ({sp500['change_pct']:+.2f}%) {_bias_icon(sp500.get('bias',''))}" if sp500.get("current") else "—"
-        print(f"  {'S&P 500':<14} {sp_str}")
-
+        if sp500.get("current"):
+            _kv("S&P 500",
+                f"{sp500['current']:,.0f}  ({sp500['change_pct']:+.2f}%)  {_bias_icon(sp500.get('bias',''))}")
         stable = market_structure.get("stablecoin", {})
-        st_str = f"${stable['total_b']:.0f}B  {_bias_icon(stable.get('bias',''))}" if stable.get("total_b") else "—"
-        print(f"  {'Stablecoin':<14} {st_str:<20}", end="")
+        if stable.get("total_b"):
+            _kv("Stablecoin",
+                f"${stable['total_b']:.0f}B  {_bias_icon(stable.get('bias',''))}")
         btc_dom = market_structure.get("btc_dom", {})
-        dom_str = f"{btc_dom['current']:.1f}%     {_bias_icon(btc_dom.get('bias',''))}" if btc_dom.get("current") else "—"
-        print(f"  {'BTC Dom.':<14} {dom_str}")
-
+        if btc_dom.get("current"):
+            _kv("BTC Dominance",
+                f"{btc_dom['current']:.1f}%  {_bias_icon(btc_dom.get('bias',''))}")
         oi = market_structure.get("open_interest", {})
-        oi_str = f"${oi['notional']/1e9:.2f}B ({oi['change_pct']:+.3f}%) {_bias_icon(oi.get('bias',''))}" if oi.get("notional") else "—"
+        if oi.get("notional"):
+            _kv("Open Interest",
+                f"${oi['notional']/1e9:.2f}B  ({oi['change_pct']:+.3f}%)  {_bias_icon(oi.get('bias',''))}")
         basis_pct = funding.get("basis_pct", 0)
-        print(f"  {'Open Int.':<14} {oi_str:<20}", end="")
-        print(f"  {'Fut Basis':<14} {basis_pct:+.4f}%  {_bias_icon(funding.get('basis_bias','NEUTRAL'))}")
+        _kv("Futures Basis",
+            f"{basis_pct:+.4f}%  {_bias_icon(funding.get('basis_bias','NEUTRAL'))}")
 
     # ── TECHNICALS ─────────────────────────────────────────────────
     print()
     print(f"  {_C['bld']}TECHNICALS{_C['rst']}")
     print(sep)
     rsi_val = last["RSI_14"]
-    rsi_tag = ""
-    if rsi_val > 70:
-        rsi_tag = f" {_C['red']}OB{_C['rst']}"
-    elif rsi_val < 30:
-        rsi_tag = f" {_C['grn']}OS{_C['rst']}"
+    rsi_tag = f" {_C['red']}OB{_C['rst']}" if rsi_val > 70 else (f" {_C['grn']}OS{_C['rst']}" if rsi_val < 30 else "")
+    _kv("RSI 14", f"{rsi_val:.1f}{rsi_tag}")
     macd_tag = f"{_C['grn']}▲{_C['rst']}" if last["MACD"] > last["MACD_Signal"] else f"{_C['red']}▼{_C['rst']}"
-    print(f"  {'RSI 14':<14} {rsi_val:>6.1f}{rsi_tag:<14}", end="")
-    print(f"  {'MACD':<14} {last['MACD']:>8.0f}  {macd_tag}")
-
+    _kv("MACD",  f"{last['MACD']:,.0f}  {macd_tag}")
     sk = last.get("StochRSI_K")
     if sk is not None and not pd.isna(sk):
         sd = last.get("StochRSI_D", 0)
         sk_tag = f" {_C['red']}OB{_C['rst']}" if sk > 80 else (f" {_C['grn']}OS{_C['rst']}" if sk < 20 else "")
-        print(f"  {'Stoch K/D':<14} {sk:>5.1f}/{sd:.1f}{sk_tag:<14}", end="")
-    else:
-        print(f"  {'':<14} {'':>14}", end="")
+        _kv("StochRSI K/D", f"{sk:.1f} / {sd:.1f}{sk_tag}")
     vwap_v = last.get("VWAP_24")
     if vwap_v and not pd.isna(vwap_v):
         vw_tag = f"{_C['grn']}▲{_C['rst']}" if last["close"] > vwap_v else f"{_C['red']}▼{_C['rst']}"
-        print(f"  {'VWAP 24h':<14} ${vwap_v:>8,.0f}  {vw_tag}")
-    else:
-        print()
-
-    print(f"  {'BB Upper':<14} ${last['BB_Upper']:>8,.0f}     ", end="")
-    print(f"{'BB Middle':<14} ${last['BB_Middle']:>8,.0f}")
-    print(f"  {'BB Lower':<14} ${last['BB_Lower']:>8,.0f}     ", end="")
-    print(f"{'ATR 14':<14} ${last['ATR_14']:>8,.0f}")
-
+        _kv("VWAP 24h", f"${vwap_v:,.0f}  {vw_tag}")
+    _kv("BB Upper",  f"${last['BB_Upper']:,.0f}")
+    _kv("BB Middle", f"${last['BB_Middle']:,.0f}")
+    _kv("BB Lower",  f"${last['BB_Lower']:,.0f}")
+    _kv("ATR 14",    f"${last['ATR_14']:,.0f}")
     obv_slope = df["OBV"].iloc[-1] - df["OBV"].iloc[-5]
     obv_tag = f"{_C['grn']}▲{_C['rst']}" if obv_slope > 0 else f"{_C['red']}▼{_C['rst']}"
+    _kv("OBV (5c)", f"{obv_slope:+,.0f}  {obv_tag}")
     div = signal.get("rsi_divergence", "NONE")
     div_str = {"BULLISH": f"{_C['grn']}▲ BULL{_C['rst']}", "BEARISH": f"{_C['red']}▼ BEAR{_C['rst']}"}.get(div, "─")
-    print(f"  {'OBV slope':<14} {obv_slope:>+8,.0f}  {obv_tag}   ", end="")
-    print(f"{'RSI Diverg':<14} {div_str}")
+    _kv("RSI Diverg", div_str)
 
     # ── SENTIMENT ──────────────────────────────────────────────────
     if news_data:
@@ -1292,12 +1289,13 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None):
             val = fng["value"]
             bar_f = min(val // 10, 10)
             bar = f"{_C['grn']}{'█' * bar_f}{_C['gry']}{'░' * (10 - bar_f)}{_C['rst']}"
-            print(f"  {'F&G':<14} [{bar}] {val}/100 {fng.get('label','')}")
+            _kv("F&G Index", f"[{bar}] {val}/100  {fng.get('label','')}")
         sent = signal.get("news_sentiment", "NEUTRAL")
         conf = signal.get("news_confidence", 0)
         sent_col = "grn" if sent == "BULLISH" else ("red" if sent == "BEARISH" else "dim")
-        sources = ", ".join(news_data.get("sources_checked", [])[:6])
-        print(f"  {'Sentiment':<14} {_C[sent_col]}{sent}{_C['rst']}  ({conf:.0f}%)     {'Sources':<14} {_C['dim']}{sources[:60]}{_C['rst']}")
+        _kv("Sentiment", f"{_C[sent_col]}{sent}{_C['rst']}  ({conf:.0f}% confidence)")
+        sources = ", ".join(news_data.get("sources_checked", []))
+        _kv("Sources", f"{_C['dim']}{sources[:70]}{_C['rst']}")
 
         headlines = news_data.get("headlines", [])
         if headlines:
@@ -1309,11 +1307,11 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None):
                 cat = "G" if h.get("category") == "geopolitical" else "C"
                 print(f"  {i}. {cat} {icon} {h['title'][:75]}")
 
-    # ── signal reasons (grouped) ───────────────────────────────────
+    # ── SIGNAL REASONS (grouped) ───────────────────────────────────
     reasons = signal.get("reasons", [])
     if reasons:
         print()
-        print(f"  {_C['bld']}SIGNAL REASONS{_C['rst']} ({len(reasons)} of 17 conditions scored)")
+        print(f"  {_C['bld']}SIGNAL REASONS{_C['rst']} ({len(reasons)} of 17)")
         print(sep)
 
         groups = {"trend": [], "momentum": [], "volume": [], "structure": [], "macro": [], "other": []}
@@ -1336,17 +1334,14 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None):
                             ("volume", "VOLUME"), ("structure", "STRUCTURE"),
                             ("macro", "MACRO"), ("other", "OTHER")]:
             if groups[cat]:
-                print(f"  {_C['bld']}{label:<10}{_C['rst']}", end="")
-                items = groups[cat]
-                for i, item in enumerate(items):
+                print(f"  {_C['bld']}{label}{_C['rst']}")
+                for item in groups[cat]:
                     stripped = item[2:] if item[:1] in "✓✗⚠" else item[1:] if item[:1] in "─→" else item
-                    prefix = " " * 12 if i > 0 else "  "
                     icon = "✓" if item.startswith("✓") else ("✗" if item.startswith("✗") else "•")
                     icol = _C["grn"] if item.startswith("✓") else (_C["red"] if item.startswith("✗") else _C["yel"])
-                    print(f"{prefix}{icol}{icon}{_C['rst']} {stripped[:68]}")
-                print()
+                    print(f"    {icol}{icon}{_C['rst']} {stripped[:70]}")
 
-    # ── performance stats ──────────────────────────────────────────
+    # ── PERFORMANCE ────────────────────────────────────────────────
     try:
         import signal_history as _sh
         wr = _sh.get_win_rate()
@@ -1359,11 +1354,14 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None):
             wr_str = f"{wr:.1%}" if wr is not None else "—"
             pf_str = f"{pf:.2f}" if pf is not None else "—"
             pnl_col = "grn" if total_pnl > 0 else "red"
-            print(f"  Trades {count}   Win Rate {wr_str}   Profit Factor {pf_str}   Net P&L {_C[pnl_col]}{total_pnl:+.2f}%{_C['rst']}")
+            _kv("Trades",       str(count))
+            _kv("Win Rate",     wr_str)
+            _kv("Profit Factor", pf_str)
+            _kv("Net P&L",      f"{_C[pnl_col]}{total_pnl:+.2f}%{_C['rst']}")
     except Exception:
         pass
 
-    # ── position sizing ────────────────────────────────────────────
+    # ── POSITION SIZING ───────────────────────────────────────────
     pos = calculate_position_size(signal)
     if signal["type"] != "HOLD" and signal.get("stop_loss"):
         futures = calculate_futures_position(signal)
@@ -1371,20 +1369,54 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None):
         print(f"  {_C['bld']}POSITION SIZING{_C['rst']}")
         print(sep)
         rr = abs(signal["take_profit"] - signal["entry_price"]) / abs(signal["entry_price"] - signal["stop_loss"])
-        print(f"  Spot    ${pos['usdt_amount']:>8,.0f} USDT  ({pos['position_ratio']:.1f}% of acct)  R/R 1:{rr:.2f}")
-        print(f"  Risk    ${pos['risk_amount']:>8,.0f} USDT  ({RISK_CONFIG['risk_per_trade']*100:.0f}% per trade)")
+        _kv("Entry",       f"${signal['entry_price']:,.0f}")
+        _kv("Stop Loss",   f"${signal['stop_loss']:,.0f}")
+        _kv("Take Profit", f"${signal['take_profit']:,.0f}")
+        _kv("R/R",         f"1:{rr:.2f}")
+        _kv("Spot Size",   f"${pos['usdt_amount']:,.0f}  ({pos['position_ratio']:.1f}% of acct)")
+        _kv("Risk",        f"${pos['risk_amount']:,.0f}  ({RISK_CONFIG['risk_per_trade']*100:.0f}% per trade)")
         if futures:
-            print(f"  Futures {futures['direction']} {futures['leverage']}x  Margin ${futures['margin']:,.0f}  Liq ${futures['liquidation_price']:,.0f}")
+            _kv("Futures",  f"{futures['direction']} {futures['leverage']}x  Margin ${futures['margin']:,.0f}  Liq ${futures['liquidation_price']:,.0f}")
+
+    # ── NOTE ───────────────────────────────────────────────────────
+    buy_s  = signal.get("buy_score", 0)
+    sell_s = signal.get("sell_score", 0)
+    gap    = effective_threshold - max(buy_s, sell_s)
+    direction = "BUY" if buy_s > sell_s else ("SELL" if sell_s > buy_s else "neutral")
+
+    print()
+    print(f"  {_C['bld']}NOTE{_C['rst']}")
+    print(sep)
+
+    # Score breakdown
+    b_bar = min(int(buy_s / max(buy_s + sell_s, 1) * 12), 12)
+    s_bar = 12 - b_bar
+    print(f"  Buy      {_C['grn']}{'█' * b_bar}{_C['gry']}{'░' * (12 - b_bar)}{_C['rst']}  {buy_s:.2f}")
+    print(f"  Sell     {_C['red']}{'█' * s_bar}{_C['gry']}{'░' * (12 - s_bar)}{_C['rst']}  {sell_s:.2f}")
+    print(f"  ─ {'─' * 20}")
+    print(f"  {'Threshold:':<14} {_C['dim']}{effective_threshold:.2f}{_C['rst']}  (needed to fire)")
+
+    if signal["type"] == "HOLD":
+        dir_col = "grn" if direction == "BUY" else ("red" if direction == "SELL" else "dim")
+        print(f"  {'Direction:':<14} {_C[dir_col]}{direction.upper()}{_C['rst']} leads by {abs(buy_s - sell_s):.2f}")
+        if gap > 0:
+            print(f"  {'Gap to fire:':<14} {_C['yel']}{gap:.2f}{_C['rst']}  (needs ~{max(1, int(gap / 0.5 + 0.5))} more conditions)")
+        else:
+            print(f"  {'Gap to fire:':<14} {_C['grn']}READY{_C['rst']} but sell side {_C['red']}overrides{_C['rst']}")
+        if effective_threshold != SIGNAL_THRESHOLD:
+            print(f"  {'':<14} {_C['yel']}adaptive threshold active (base={SIGNAL_THRESHOLD}){_C['rst']}")
     else:
-        pnl_str = ""
-        try:
-            _, count, avg_pnl = _sh.get_closed_pnl()
-            if count > 0:
-                pnl_col = "grn" if avg_pnl > 0 else "red"
-                pnl_str = f"   Net P&L {_C[pnl_col]}{avg_pnl:+.2f}%{_C['rst']}"
-        except Exception:
-            pass
-        print(f"\n  {_C['dim']}No active signal — risk capital preserved{pnl_str}{_C['rst']}")
+        _kv("Direction", f"{_C['grn'] if signal['type'] == 'BUY' else _C['red']}{signal['type']}{_C['rst']}")
+        _kv("Strength", f"{signal['strength']:.2f} / {SIGNAL_MAX_SCORE}")
+
+    # Paper P&L note
+    try:
+        _, count, avg_pnl = _sh.get_closed_pnl()
+        if count > 0:
+            pnl_col = "grn" if avg_pnl > 0 else "red"
+            print(f"  {'Paper P&L:':<14} {_C['dim']}{count} closed trades{_C['rst']}  avg {_C[pnl_col]}{avg_pnl:+.2f}%{_C['rst']}")
+    except Exception:
+        pass
 
     print()
 
