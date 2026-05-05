@@ -18,7 +18,7 @@ from config import SIGNAL_HISTORY_CSV, SIGNAL_HISTORY_DB
 logger = logging.getLogger(__name__)
 
 DB = None  # lazy-init connection
-_DB_LOCK = threading.Lock()
+_DB_LOCK = threading.RLock()  # reentrant — _conn() is called from _init_tables/_migrate
 
 
 # ---------------------------------------------------------------------------

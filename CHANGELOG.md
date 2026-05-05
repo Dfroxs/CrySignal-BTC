@@ -4,6 +4,14 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-06 — Critical Deadlock Fix
+
+### Fixed
+
+- **SQLite deadlock causing bot to freeze** (`signal_history.py`) — `_DB_LOCK` was a non-reentrant `threading.Lock()`. On the first DB access in a new process, `_conn()` acquired the lock then called `_init_tables()`, which called `_conn()` again trying to re-acquire the same lock → deadlock. The bot would hang silently after printing "Computing combined sentiment..." (the PERFORMANCE section in `display_analysis` is the first `_conn()` call when `signal_history.csv` doesn't exist). Fixed by changing to `threading.RLock()` (reentrant lock), which allows the same thread to re-enter without deadlocking while still blocking other threads.
+
+---
+
 ## 2026-05-06 — Risk & Signal Quality Fixes
 
 ### Fixed
