@@ -4,6 +4,27 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-06 — HTF Analysis Strengthened + Cycle Logging + SPOT HOLD Notifications
+
+### Added
+
+- **Enhanced HTF multi-timeframe analysis** (`core_analysis.py`) — each higher timeframe now computes 4 indicators (not just EMA200): RSI with zone classification, MACD direction, volume trend vs 20-period avg, and price distance from EMA200. `_htf_indicator()` helper extracts all indicators from OHLCV data. HTF scoring is now nuanced: full weight when aligned + RSI confirms, reduced when RSI warns, MACD bonus +0.25, volume bonus +0.25, and diverging HTFs with extreme RSI contribute reversal signals (+0.75). Max HTF score: 2.0 (was 1.5).
+- **`cycle_log` table** (`signal_history.py`) — new SQLite table recording every analysis cycle (including HOLD) with 35+ fields: scores, all technical indicators, full market structure snapshot, HTF data as JSON, sentiment, top reasons, and open position count. `log_cycle()` called after each `analyze_*_signal()`. Enables post-hoc analysis of signal quality and threshold tuning.
+- **SPOT HOLD notifications** (`notifier.py`) — HOLD signals are now sent to Telegram (previously silent). HOLD cards include gap-to-fire info showing how close the signal is to firing and which direction leads.
+- **Position limit clarified** (`config.py`, `run_bot.py`) — log messages now say "max 1 BUY + 1 SELL per mode" instead of generic "max positions reached".
+
+### Changed
+
+- **HTF terminal display** (`core_analysis.py`) — MULTI-TIMEFRAME section now shows RSI value/zone, MACD direction, and volume trend per timeframe alongside trend bias.
+- **HTF in notifications** (`notifier.py`) — compact signal card includes RSI + MACD per HTF in the technicals section.
+- **Max scores updated** — `SIGNAL_MAX_SCORE`: 18.75 → 19.25, `SPOT_MAX_SCORE`: 15.0 → 15.5 (enhanced HTF adds 0.5).
+
+### Config
+
+- **README rewritten** — full architecture flow diagram, 18 conditions table, HTF analysis detail, macro handling, position management, notification structure, cycle_log documentation with SQL queries, testing guide.
+
+---
+
 ## 2026-05-06 — Clean Notification Sections + Position Close Alerts
 
 ### Changed
@@ -24,7 +45,7 @@ All notable changes to the SpotSignal project.
   - **Signal card** (~600 chars) per mode (SPOT / FUTURES): verdict, trade setup in code block, technicals one-liner, HTF, market structure, sentiment, top 7 reasons
   - **Position + Performance** (~400 chars): open positions with entry/trail/TP1, closed P&L, outcome breakdown (W/L/MC)
   - **Macro warning** sent as standalone banner when active
-- **HOLD signals are silent** — no Telegram message sent when signal is HOLD
+- **HOLD signals are silent** — no Telegram message sent when signal is HOLD *(changed 2026-05-06 — HOLD messages now sent)*
 - **`_send_telegram_message()`** helper extracted for reusable single-message delivery with label logging
 - **`_threshold`** added to signal dict in `core_analysis.py` for compact card display
 
