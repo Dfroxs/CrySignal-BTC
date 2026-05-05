@@ -161,41 +161,70 @@ def fetch_coingecko_trending():
     return articles
 
 
-def fetch_reddit_sentiment():
-    """Reddit hot posts from r/Bitcoin and r/CryptoCurrency — free, no key.
-    Scores titles with the same keyword sentiment engine and returns
-    pre-scored article dicts."""
-    articles = []
-    subreddits = [("Bitcoin", "r/Bitcoin"), ("CryptoCurrency", "r/CryptoCurrency")]
-    for _, sub_name in subreddits:
-        try:
-            resp = HTTP_SESSION.get(
-                f"https://www.reddit.com/{sub_name}/hot.json?limit=10",
-                headers={**_HEADERS, "Accept": "application/json"},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            children = resp.json().get("data", {}).get("children", [])
-            for post in children:
-                data = post.get("data", {})
-                title = data.get("title", "")
-                label, score = analyze_sentiment(title)
-                # Only include posts with non-neutral sentiment
-                if label == "NEUTRAL":
-                    continue
-                articles.append({
-                    "timestamp": datetime.now(UTC).strftime(
-                        "%a, %d %b %Y %H:%M:%S +0000"),
-                    "source":    f"Reddit/{sub_name}",
-                    "title":     title,
-                    "link":      f"https://www.reddit.com{data.get('permalink', '')}",
-                    "sentiment_label": label,
-                    "sentiment_score":  score,
-                    "category":  "crypto",
-                })
-        except Exception as e:
-            logger.warning("Reddit %s fetch failed: %s", sub_name, e)
-    return articles
+def fetch_beincrypto():
+    """BeInCrypto RSS — no key required."""
+    news = []
+    try:
+        resp = HTTP_SESSION.get(
+            "https://beincrypto.com/feed/",
+            headers=_HEADERS, timeout=10,
+        )
+        resp.raise_for_status()
+        root = ET.fromstring(resp.content)
+        for item in root.findall("./channel/item"):
+            news.append({
+                "timestamp": item.findtext("pubDate") or "",
+                "source":    "BeInCrypto",
+                "title":     (item.findtext("title") or "").strip(),
+                "link":      item.findtext("link") or "",
+            })
+    except Exception as e:
+        logger.warning("BeInCrypto fetch failed: %s", e)
+    return news
+
+
+def fetch_coindesk():
+    """CoinDesk RSS — no key required."""
+    news = []
+    try:
+        resp = HTTP_SESSION.get(
+            "https://www.coindesk.com/arc/outboundfeeds/rss/",
+            headers=_HEADERS, timeout=10,
+        )
+        resp.raise_for_status()
+        root = ET.fromstring(resp.content)
+        for item in root.findall("./channel/item"):
+            news.append({
+                "timestamp": item.findtext("pubDate") or "",
+                "source":    "CoinDesk",
+                "title":     (item.findtext("title") or "").strip(),
+                "link":      item.findtext("link") or "",
+            })
+    except Exception as e:
+        logger.warning("CoinDesk fetch failed: %s", e)
+    return news
+
+
+def fetch_bitcoinist():
+    """Bitcoinist RSS — no key required."""
+    news = []
+    try:
+        resp = HTTP_SESSION.get(
+            "https://bitcoinist.com/feed/",
+            headers=_HEADERS, timeout=10,
+        )
+        resp.raise_for_status()
+        root = ET.fromstring(resp.content)
+        for item in root.findall("./channel/item"):
+            news.append({
+                "timestamp": item.findtext("pubDate") or "",
+                "source":    "Bitcoinist",
+                "title":     (item.findtext("title") or "").strip(),
+                "link":      item.findtext("link") or "",
+            })
+    except Exception as e:
+        logger.warning("Bitcoinist fetch failed: %s", e)
+    return news
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +361,9 @@ def scrape_and_export():
     raw.extend(fetch_financialjuice())
     raw.extend(fetch_cointelegraph())
     raw.extend(fetch_decrypt())
+    raw.extend(fetch_beincrypto())
+    raw.extend(fetch_coindesk())
+    raw.extend(fetch_bitcoinist())
 
     # Deduplicate by title
     seen, unique = set(), []
@@ -357,7 +389,6 @@ def scrape_and_export():
             filtered.append(item)
 
     filtered.extend(fetch_coingecko_trending())
-    filtered.extend(fetch_reddit_sentiment())
 
     if filtered:
         crypto_count = sum(1 for a in filtered if a["category"] == "crypto")

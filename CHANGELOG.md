@@ -4,6 +4,19 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-05 — Sumber Berita & Backtest Slippage
+
+### Added
+
+- **BeInCrypto, CoinDesk, Bitcoinist RSS** — tiga sumber berita gratis ditambahkan ke `news_scraper.py` (`fetch_beincrypto`, `fetch_coindesk`, `fetch_bitcoinist`). Setiap sumber diparsing via XML RSS tanpa API key. Total sumber berita naik dari 3 → 6.
+- **Slippage model di backtest** — `backtest.py` sekarang mensimulasikan market impact 0.1% per side (`SLIPPAGE_PCT = 0.001`): BUY entry dibayar lebih mahal, TP dan SL diisi lebih buruk. Membuat hasil backtest lebih mendekati live trading.
+
+### Removed
+
+- **Reddit scraper** (`fetch_reddit_sentiment`) — dihapus karena endpoint JSON unofficial (`reddit.com/*.json`) sering return 429 dan tidak reliable. Digantikan oleh 3 sumber RSS di atas.
+
+---
+
 ## 2026-05-05 — Notifikasi Telegram & Discord Diperbarui
 
 ### Changed
