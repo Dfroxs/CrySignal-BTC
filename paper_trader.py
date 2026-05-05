@@ -61,8 +61,12 @@ def check_and_close_positions(current_price, mode=None):
     If a HIGH impact USD macro event is within 2 hours, all open positions
     are force-closed at *current_price* regardless of mode — macro risk
     trumps technical setups.
+
+    Returns a list of close-event dicts: {type, entry, exit, pnl, outcome, mode}
+    so the caller can send notifications.
     """
     from core_analysis import check_upcoming_macro_events
+    closed = []
 
     # ── Macro gate — force-close ALL positions ──────────────────────
     has_macro, event_name = check_upcoming_macro_events()
@@ -80,11 +84,16 @@ def check_and_close_positions(current_price, mode=None):
             for pos in all_open:
                 exit_pnl = _calc_pnl(pos, current_price)
                 sh.close_paper_position(pos["id"], "MACRO_CLOSE", exit_pnl)
+                closed.append({
+                    "type": pos["type"], "entry": pos["entry_price"],
+                    "exit": current_price, "pnl": exit_pnl,
+                    "outcome": "MACRO_CLOSE", "mode": pos.get("mode", "futures"),
+                })
                 logger.info(
                     "Paper %s %s → MACRO_CLOSE at $%.2f (%.2f%%)",
                     pos["type"], pos["id"], current_price, exit_pnl,
                 )
-        return
+        return closed
 
     # ── Normal position management ──────────────────────────────────
     open_positions = sh.get_open_positions(mode)
@@ -113,6 +122,11 @@ def check_and_close_positions(current_price, mode=None):
                 pnl = (tp1 - entry) / entry * 100
                 sh.partial_close_position(pos_id, pnl, new_sl=entry)
                 trail = entry  # breakeven
+                closed.append({
+                    "type": pos["type"], "entry": entry,
+                    "exit": tp1, "pnl": pnl,
+                    "outcome": "TP1", "mode": pos.get("mode", "futures"),
+                })
                 logger.info(
                     "Paper BUY %s → PARTIAL WIN at TP1 $%.2f (+%.2f%%) — trailing to breakeven",
                     pos_id, tp1, pnl,
@@ -126,6 +140,11 @@ def check_and_close_positions(current_price, mode=None):
                 remaining_pnl = (tp2 - entry) / entry * 100
                 combined_pnl = partial_pnl * 0.5 + remaining_pnl * 0.5
                 sh.close_paper_position(pos_id, "WIN", combined_pnl)
+                closed.append({
+                    "type": pos["type"], "entry": entry,
+                    "exit": tp2, "pnl": combined_pnl,
+                    "outcome": "TP2", "mode": pos.get("mode", "futures"),
+                })
                 logger.info(
                     "Paper BUY %s → WIN at TP2 $%.2f (combined +%.2f%%)",
                     pos_id, tp2, combined_pnl,
@@ -138,6 +157,12 @@ def check_and_close_positions(current_price, mode=None):
                     exit_pnl = partial_pnl * 0.5 + exit_pnl * 0.5
                 outcome = "WIN" if trail >= entry else "LOSS"
                 sh.close_paper_position(pos_id, outcome, exit_pnl)
+                closed.append({
+                    "type": pos["type"], "entry": entry,
+                    "exit": current_price, "pnl": exit_pnl,
+                    "outcome": "SL" if outcome == "LOSS" else "Trail",
+                    "mode": pos.get("mode", "futures"),
+                })
                 logger.info(
                     "Paper BUY %s → %s at trailing $%.2f (filled $%.2f, %.2f%%)",
                     pos_id, outcome, trail, current_price, exit_pnl,
@@ -156,6 +181,11 @@ def check_and_close_positions(current_price, mode=None):
                 pnl = (entry - tp1) / entry * 100
                 sh.partial_close_position(pos_id, pnl, new_sl=entry)
                 trail = entry
+                closed.append({
+                    "type": pos["type"], "entry": entry,
+                    "exit": tp1, "pnl": pnl,
+                    "outcome": "TP1", "mode": pos.get("mode", "futures"),
+                })
                 logger.info(
                     "Paper SELL %s → PARTIAL WIN at TP1 $%.2f (+%.2f%%) — trailing to breakeven",
                     pos_id, tp1, pnl,
@@ -168,6 +198,11 @@ def check_and_close_positions(current_price, mode=None):
                 remaining_pnl = (entry - tp2) / entry * 100
                 combined_pnl = partial_pnl * 0.5 + remaining_pnl * 0.5
                 sh.close_paper_position(pos_id, "WIN", combined_pnl)
+                closed.append({
+                    "type": pos["type"], "entry": entry,
+                    "exit": tp2, "pnl": combined_pnl,
+                    "outcome": "TP2", "mode": pos.get("mode", "futures"),
+                })
                 logger.info(
                     "Paper SELL %s → WIN at TP2 $%.2f (combined +%.2f%%)",
                     pos_id, tp2, combined_pnl,
@@ -180,10 +215,18 @@ def check_and_close_positions(current_price, mode=None):
                     exit_pnl = partial_pnl * 0.5 + exit_pnl * 0.5
                 outcome = "WIN" if trail <= entry else "LOSS"
                 sh.close_paper_position(pos_id, outcome, exit_pnl)
+                closed.append({
+                    "type": pos["type"], "entry": entry,
+                    "exit": current_price, "pnl": exit_pnl,
+                    "outcome": "SL" if outcome == "LOSS" else "Trail",
+                    "mode": pos.get("mode", "futures"),
+                })
                 logger.info(
                     "Paper SELL %s → %s at trailing $%.2f (filled $%.2f, %.2f%%)",
                     pos_id, outcome, trail, current_price, exit_pnl,
                 )
+
+    return closed
 
 
 # ---------------------------------------------------------------------------
