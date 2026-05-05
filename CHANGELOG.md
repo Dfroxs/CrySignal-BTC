@@ -4,6 +4,16 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-06 — Signal Confidence Label
+
+### Added
+
+- **Signal confidence label** — `get_signal_confidence(strength, threshold)` returns `STRONG` (≥1.5× threshold), `NORMAL` (≥1.2× threshold), or `WEAK` (≥threshold). Stored as `signal['confidence']` in every non-HOLD signal dict.
+- **Terminal display** — `_signal_box()` now shows confidence next to strength: green for STRONG, yellow for NORMAL, dim for WEAK.
+- **Notifications** — Telegram and Discord alerts include a `Confidence` line showing STRONG/NORMAL/WEAK.
+
+---
+
 ## 2026-05-05 — Sumber Berita & Backtest Slippage
 
 ### Added

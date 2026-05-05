@@ -409,6 +409,15 @@ def fetch_open_interest():
     return result
 
 
+def get_signal_confidence(strength, threshold):
+    """Return 'STRONG', 'NORMAL', or 'WEAK' based on how far score exceeds threshold."""
+    if strength >= threshold * 1.5:
+        return "STRONG"
+    if strength >= threshold * 1.2:
+        return "NORMAL"
+    return "WEAK"
+
+
 def get_adaptive_threshold():
     """Return the current adaptive SIGNAL_THRESHOLD.
 
@@ -872,6 +881,12 @@ def generate_signals(df, htf=None, market_structure=None, sr=None):
         else:
             signal['tp2'] = signal['entry_price'] - tp1_dist * 2
 
+    # Confidence label based on how far score exceeds the effective threshold
+    if signal['type'] != 'HOLD':
+        signal['confidence'] = get_signal_confidence(signal['strength'], threshold)
+    else:
+        signal['confidence'] = None
+
     return signal
 
 
@@ -1132,8 +1147,14 @@ def _signal_box(signal, effective_threshold):
     icons = {"BUY": "▲", "SELL": "▼", "HOLD": "─"}
     icon = icons.get(stype, "─")
 
+    conf = signal.get("confidence")
+    conf_colors = {"STRONG": "grn", "NORMAL": "yel", "WEAK": "dim"}
+    conf_c = conf_colors.get(conf, "dim") if conf else "dim"
+
     l1 = f"  {_C[c]}{_C['bld']}{icon} {stype}{_C['rst']}"
     l1 += f"   Strength  {_C['bld']}{signal['strength']:.2f}{_C['rst']} / {SIGNAL_MAX_SCORE}"
+    if conf:
+        l1 += f"   {_C[conf_c]}{_C['bld']}{conf}{_C['rst']}"
     l1 += f"   Threshold  {_C['dim']}{effective_threshold:.2f}{_C['rst']}"
 
     if effective_threshold != SIGNAL_THRESHOLD:

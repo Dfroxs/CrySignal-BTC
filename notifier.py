@@ -43,12 +43,19 @@ def _format_signal_message(signal, symbol="BTC/USDT"):
         tp2_pct = abs(tp2 - entry) / entry * 100
         lines.append(f"TP2 (50%):     `${tp2:,.2f}` (+{tp2_pct:.2f}%)")
 
+    conf = signal.get("confidence")
+    conf_line = f"Confidence:    `{conf}`" if conf else None
+
     lines += [
         f"R/R:           `1:{rr:.2f}`",
         f"Strength:      `{signal['strength']:.2f} / {SIGNAL_MAX_SCORE}`",
-        f"F&G:           `{signal.get('fear_greed_value', 'N/A')}"
-        f" — {signal.get('fear_greed_label', '')}`",
     ]
+    if conf_line:
+        lines.append(conf_line)
+    lines.append(
+        f"F&G:           `{signal.get('fear_greed_value', 'N/A')}"
+        f" — {signal.get('fear_greed_label', '')}`"
+    )
     return "\n".join(lines)
 
 
@@ -107,6 +114,9 @@ def send_discord_alert(signal, symbol="BTC/USDT"):
         tp2_pct = abs(tp2 - entry) / entry * 100
         tp2_line = f"\nTP2 (50%): `{tp2:,.2f}` (+{tp2_pct:.2f}%)"
 
+    conf = signal.get("confidence")
+    conf_line = f"\nConfidence: `{conf}`" if conf else ""
+
     text = (
         f"{icon} **{signal['type']} {symbol}**\n"
         f"Entry:     `{entry:,.2f}`\n"
@@ -115,6 +125,7 @@ def send_discord_alert(signal, symbol="BTC/USDT"):
         f"{tp2_line}\n"
         f"R/R:       `1:{rr:.2f}`\n"
         f"Strength:  `{signal['strength']:.2f}/{SIGNAL_MAX_SCORE}`"
+        f"{conf_line}"
     )
 
     try:
