@@ -317,11 +317,15 @@ def fetch_stablecoin_supply():
         total_now = (usdt_cap + usdc_cap) / 1e9   # billions
         result['total_b'] = round(total_now, 1)
 
-        # Compare against cached value from previous cycle
+        # Compare against cached value from previous cycle (skip if stale)
         prev_total = None
         if os.path.exists(STABLECOIN_CACHE_FILE):
             with open(STABLECOIN_CACHE_FILE) as f:
-                prev_total = json.load(f).get('total_b')
+                cached = json.load(f)
+            if _cache_fresh(cached):
+                prev_total = cached.get('total_b')
+            else:
+                logger.warning("Stablecoin cache stale — skipping comparison")
 
         with open(STABLECOIN_CACHE_FILE, 'w') as f:
             json.dump({'total_b': total_now, 'ts': datetime.now(UTC).isoformat()}, f)
@@ -356,7 +360,11 @@ def fetch_btc_dominance():
         prev_btc_dom = None
         if os.path.exists(BTC_DOM_CACHE_FILE):
             with open(BTC_DOM_CACHE_FILE) as f:
-                prev_btc_dom = json.load(f).get('btc_dom')
+                cached = json.load(f)
+            if _cache_fresh(cached):
+                prev_btc_dom = cached.get('btc_dom')
+            else:
+                logger.warning("BTC dominance cache stale — skipping comparison")
 
         with open(BTC_DOM_CACHE_FILE, 'w') as f:
             json.dump({'btc_dom': btc_dom, 'ts': datetime.now(UTC).isoformat()}, f)
@@ -390,7 +398,11 @@ def fetch_open_interest():
         prev_oi = None
         if os.path.exists(OI_CACHE_FILE):
             with open(OI_CACHE_FILE) as f:
-                prev_oi = json.load(f).get('oi')
+                cached = json.load(f)
+            if _cache_fresh(cached):
+                prev_oi = cached.get('oi')
+            else:
+                logger.warning("Open Interest cache stale — skipping comparison")
 
         with open(OI_CACHE_FILE, 'w') as f:
             json.dump({'oi': oi, 'ts': datetime.now(UTC).isoformat()}, f)
@@ -407,6 +419,23 @@ def fetch_open_interest():
     except Exception as e:
         logger.warning("Open Interest fetch failed: %s", e)
     return result
+
+
+_CACHE_MAX_AGE_HOURS = 6
+
+
+def _cache_fresh(cache_dict, max_age_hours=_CACHE_MAX_AGE_HOURS):
+    """Return True if *cache_dict* has a 'ts' key within *max_age_hours*."""
+    ts_str = cache_dict.get("ts")
+    if not ts_str:
+        return False
+    try:
+        ts = datetime.fromisoformat(ts_str)
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        return datetime.now(UTC) - ts < timedelta(hours=max_age_hours)
+    except ValueError:
+        return False
 
 
 def get_signal_confidence(strength, threshold):
@@ -791,27 +820,28 @@ def generate_signals(df, htf=None, market_structure=None, sr=None):
     sk, sd  = current.get('StochRSI_K'), current.get('StochRSI_D')
     psk, psd = previous.get('StochRSI_K'), previous.get('StochRSI_D')
     rsi_now = current.get('RSI_14', 50)
-    if not any(pd.isna(v) for v in [sk, sd, psk, psd] if v is not None):
+    if all(pd.notna(v) for v in [sk, sd, psk, psd]):
         if sk < 20 and sk > sd and psk <= psd:
-            weight = 0.25 if rsi_now < 30 else 1.0
+            # RSI < 30 confirms oversold → boost weight; no RSI confirmation → base weight
+            weight = 1.25 if rsi_now < 30 else 1.0
             buy_conditions += weight
             signal['reasons'].append(f"✓ StochRSI oversold crossover K={sk:.1f} — bullish momentum"
-                                     + (" (RSI confirms)" if weight < 1.0 else ""))
+                                     + (" (RSI confirms)" if rsi_now < 30 else ""))
         elif sk > 80 and sk < sd and psk >= psd:
-            weight = 0.25 if rsi_now > 70 else 1.0
+            weight = 1.25 if rsi_now > 70 else 1.0
             sell_conditions += weight
             signal['reasons'].append(f"✗ StochRSI overbought crossover K={sk:.1f} — bearish momentum"
-                                     + (" (RSI confirms)" if weight < 1.0 else ""))
+                                     + (" (RSI confirms)" if rsi_now > 70 else ""))
         elif sk < 20:
-            weight = 0.15 if rsi_now < 30 else 0.5
+            weight = 0.6 if rsi_now < 30 else 0.5
             buy_conditions += weight
             signal['reasons'].append(f"✓ StochRSI oversold (K={sk:.1f})"
-                                     + (" (RSI confirms)" if weight < 0.5 else ""))
+                                     + (" (RSI confirms)" if rsi_now < 30 else ""))
         elif sk > 80:
-            weight = 0.15 if rsi_now > 70 else 0.5
+            weight = 0.6 if rsi_now > 70 else 0.5
             sell_conditions += weight
             signal['reasons'].append(f"✗ StochRSI overbought (K={sk:.1f})"
-                                     + (" (RSI confirms)" if weight < 0.5 else ""))
+                                     + (" (RSI confirms)" if rsi_now > 70 else ""))
 
     # 16 — Support/Resistance proximity (within 0.3%)
     if sr:

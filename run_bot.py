@@ -15,7 +15,8 @@ from core_analysis import analyze_btc_signal
 from news_scraper import scrape_and_export
 from notifier import send_signal_alert
 from paper_trader import check_and_close_positions, print_open_status, print_paper_summary
-from signal_history import close as close_db, open_paper_position
+from config import RISK_CONFIG
+from signal_history import close as close_db, get_open_positions, open_paper_position
 
 logging.basicConfig(
     level=logging.INFO,
@@ -59,7 +60,14 @@ def run_cycle():
     logger.info("[PHASE 3] Updating paper positions ...")
     try:
         if signal and signal["type"] != "HOLD":
-            open_paper_position(signal)
+            open_count = len(get_open_positions())
+            if open_count < RISK_CONFIG["max_positions"]:
+                open_paper_position(signal)
+            else:
+                logger.info(
+                    "Max positions (%d) reached — skipping new %s position",
+                    RISK_CONFIG["max_positions"], signal["type"],
+                )
 
         if signal:
             entry = signal.get("entry_price", 0)

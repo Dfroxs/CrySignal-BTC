@@ -55,10 +55,11 @@ def check_and_close_positions(current_price):
                 partial = 1
 
             # 3 — full exit: TP2 hit (after partial) or trailing stop hit
+            # P&L is blended: each half contributes 50% of total return
             if partial and tp2 and current_price >= tp2:
                 partial_pnl = pos.get("partial_pnl") or 0
                 remaining_pnl = (tp2 - entry) / entry * 100
-                combined_pnl = (partial_pnl + remaining_pnl) / 2
+                combined_pnl = partial_pnl * 0.5 + remaining_pnl * 0.5
                 sh.close_paper_position(pos_id, "WIN", combined_pnl)
                 logger.info(
                     "Paper BUY %s → WIN at TP2 $%.2f (combined +%.2f%%)",
@@ -68,7 +69,7 @@ def check_and_close_positions(current_price):
                 exit_pnl = (trail - entry) / entry * 100
                 if partial:
                     partial_pnl = pos.get("partial_pnl") or 0
-                    exit_pnl = (partial_pnl + exit_pnl) / 2
+                    exit_pnl = partial_pnl * 0.5 + exit_pnl * 0.5
                 outcome = "WIN" if trail >= entry else "LOSS"
                 sh.close_paper_position(pos_id, outcome, exit_pnl)
                 logger.info(
@@ -99,7 +100,7 @@ def check_and_close_positions(current_price):
             if partial and tp2 and current_price <= tp2:
                 partial_pnl = pos.get("partial_pnl") or 0
                 remaining_pnl = (entry - tp2) / entry * 100
-                combined_pnl = (partial_pnl + remaining_pnl) / 2
+                combined_pnl = partial_pnl * 0.5 + remaining_pnl * 0.5
                 sh.close_paper_position(pos_id, "WIN", combined_pnl)
                 logger.info(
                     "Paper SELL %s → WIN at TP2 $%.2f (combined +%.2f%%)",
@@ -109,7 +110,7 @@ def check_and_close_positions(current_price):
                 exit_pnl = (entry - trail) / entry * 100
                 if partial:
                     partial_pnl = pos.get("partial_pnl") or 0
-                    exit_pnl = (partial_pnl + exit_pnl) / 2
+                    exit_pnl = partial_pnl * 0.5 + exit_pnl * 0.5
                 outcome = "WIN" if trail <= entry else "LOSS"
                 sh.close_paper_position(pos_id, outcome, exit_pnl)
                 logger.info(

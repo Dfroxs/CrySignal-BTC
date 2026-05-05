@@ -4,6 +4,17 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-06 — Risk & Signal Quality Fixes
+
+### Fixed
+
+- **Paper P&L blended return** (`paper_trader.py`) — combined P&L was averaging two percentages (`(a+b)/2`) instead of weighting each half equally (`a*0.5 + b*0.5`). These are mathematically equivalent when both exits are exactly 50%, but the old formula implied equal sizing which wasn't the intent. Now uses explicit 50/50 blend for clarity and correctness.
+- **StochRSI weight inverted** (`core_analysis.py`) — crossover signals were scored at 0.25 when RSI *confirmed* the same zone, suppressing the strongest signals. Fixed: RSI confirmation now adds a bonus (1.25 vs 1.0 for crossover; 0.6 vs 0.5 for zone-only). Strongest signals now score higher.
+- **Cache staleness ignored** (`core_analysis.py`) — stablecoin supply, BTC dominance, and open interest caches were compared against any stored value regardless of age. Added `_cache_fresh()` helper (6-hour TTL): stale previous values are now skipped so trend comparison only uses recent data.
+- **Max positions not enforced** (`run_bot.py`) — `RISK_CONFIG["max_positions"]` (3) was set in config but never checked before opening a paper position. Now checked against `get_open_positions()` count before every `open_paper_position()` call.
+
+---
+
 ## 2026-05-06 — Signal Confidence Label
 
 ### Added
