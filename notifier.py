@@ -2,6 +2,7 @@
 
 import logging
 
+import signal_history as _sh
 from config import (
     DISCORD_WEBHOOK_URL,
     HTTP_SESSION,
@@ -12,51 +13,283 @@ from config import (
 
 logger = logging.getLogger(__name__)
 
+_UP   = "▲"
+_DOWN = "▼"
+_FLAT = "─"
+
+
+def _esc(text):
+    """Escape HTML special characters for Telegram HTML parse mode."""
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _dir(val):
+    if val > 0:
+        return _UP
+    if val < 0:
+        return _DOWN
+    return _FLAT
+
 
 # ---------------------------------------------------------------------------
-# Message formatting
+# Telegram formatter (HTML parse mode)
 # ---------------------------------------------------------------------------
 
-def _format_signal_message(signal, symbol="BTC/USDT"):
-    """Build a plain-text alert string from a signal dict."""
-    icon  = "\U0001f7e2" if signal["type"] == "BUY" else "\U0001f534"
-    entry = signal["entry_price"]
-    sl    = signal["stop_loss"]
-    tp1   = signal["take_profit"]
-    tp2   = signal.get("tp2")
-    atr   = signal.get("atr", 0)
+def _format_telegram(signal, symbol="BTC/USDT"):
+    stype   = signal["type"]
+    icon    = "🟢" if stype == "BUY" else "🔴"
+    conf    = signal.get("confidence", "")
 
+    entry   = signal["entry_price"]
+    sl      = signal["stop_loss"]
+    tp1     = signal["take_profit"]
+    tp2     = signal.get("tp2")
     sl_pct  = abs(entry - sl)  / entry * 100
     tp1_pct = abs(tp1 - entry) / entry * 100
     rr      = tp1_pct / sl_pct if sl_pct > 0 else 0
 
-    trail_init = abs(atr * 1.0)   # trailing_atr_factor = 1.0
-    trail_pct  = trail_init / entry * 100 if entry else 0
+    lines = []
 
-    lines = [
-        f"{icon} *{signal['type']} {symbol}*",
-        f"Entry:         `${entry:,.2f}`",
-        f"Trail SL:      `${sl:,.2f}` (-{sl_pct:.2f}%)",
-        f"TP1 (50%):     `${tp1:,.2f}` (+{tp1_pct:.2f}%)",
-    ]
+    # Header
+    header = f"{icon} <b>{stype} {_esc(symbol)}</b>"
+    if conf:
+        header += f" — <b>{conf}</b>"
+    lines += [header, ""]
+
+    # Trade Setup
+    lines.append("<b>📊 Trade Setup</b>")
+    lines.append(f"Entry:      <code>${entry:,.0f}</code>")
+    lines.append(f"Trail SL:   <code>${sl:,.0f}</code>  (-{sl_pct:.2f}%)")
+    lines.append(f"TP1 (50%):  <code>${tp1:,.0f}</code>  (+{tp1_pct:.2f}%)")
     if tp2:
         tp2_pct = abs(tp2 - entry) / entry * 100
-        lines.append(f"TP2 (50%):     `${tp2:,.2f}` (+{tp2_pct:.2f}%)")
+        lines.append(f"TP2 (50%):  <code>${tp2:,.0f}</code>  (+{tp2_pct:.2f}%)")
+    lines.append(f"R/R: 1:{rr:.2f}  ·  Score: {signal['strength']:.2f} / {SIGNAL_MAX_SCORE}")
+    lines.append("")
 
-    conf = signal.get("confidence")
-    conf_line = f"Confidence:    `{conf}`" if conf else None
+    # Price & Trend
+    last = signal.get("_last", {})
+    if last:
+        ema200 = last.get("ema200", 0)
+        hi24   = last.get("hi24", 0)
+        lo24   = last.get("lo24", 0)
+        trend  = _UP if entry > ema200 else _DOWN
+        lines.append("<b>📈 Price &amp; Trend</b>")
+        lines.append(f"Price  <code>${entry:,.0f}</code>  ·  EMA200  <code>${ema200:,.0f}</code>  {trend}")
+        lines.append(f"Range  <code>${lo24:,.0f}</code> – <code>${hi24:,.0f}</code>")
+        sr = signal.get("support_resistance", {})
+        sr_parts = []
+        if sr.get("resistance"):
+            sr_parts.append(f"R <code>${sr['resistance']:,.0f}</code>")
+        if sr.get("support"):
+            sr_parts.append(f"S <code>${sr['support']:,.0f}</code>")
+        if sr_parts:
+            lines.append("  ·  ".join(sr_parts))
+        lines.append("")
 
-    lines += [
-        f"R/R:           `1:{rr:.2f}`",
-        f"Strength:      `{signal['strength']:.2f} / {SIGNAL_MAX_SCORE}`",
-    ]
-    if conf_line:
-        lines.append(conf_line)
+    # Multi-timeframe
+    htf = signal.get("_htf", {})
+    if htf:
+        aligned = "✓ Aligned" if htf.get("aligned") else "✗ Diverging"
+        lines.append("<b>⏱ Timeframe</b>")
+        lines.append(f"4H: {htf.get('4h','─')}  ·  1D: {htf.get('1d','─')}  ·  {aligned}")
+        lines.append("")
+
+    # Technicals
+    if last:
+        rsi_v  = last.get("rsi", 0)
+        sk     = last.get("stoch_k")
+        sd     = last.get("stoch_d")
+        macd   = last.get("macd", 0)
+        msig   = last.get("macd_sig", 0)
+        vwap   = last.get("vwap")
+        obv    = last.get("obv_slope", 0)
+        atr_v  = last.get("atr", 0)
+        div    = signal.get("rsi_divergence", "NONE")
+        div_str = div if div != "NONE" else "─"
+
+        rsi_tag  = "  OB" if rsi_v > 70 else ("  OS" if rsi_v < 30 else "")
+        macd_tag = _UP if macd > msig else _DOWN
+        obv_tag  = _UP if obv > 0 else _DOWN
+        sk_str   = f"  StochRSI <code>{sk:.0f} / {sd:.0f}</code>" if sk is not None else ""
+
+        lines.append("<b>🔬 Technicals</b>")
+        lines.append(f"RSI <code>{rsi_v:.1f}</code>{rsi_tag}{sk_str}")
+        if vwap:
+            vwap_tag = _UP if entry > vwap else _DOWN
+            lines.append(f"MACD {macd_tag}  ·  VWAP <code>${vwap:,.0f}</code> {vwap_tag}  ·  OBV {obv_tag}")
+        else:
+            lines.append(f"MACD {macd_tag}  ·  OBV {obv_tag}")
+        lines.append(f"ATR <code>${atr_v:,.0f}</code>  ·  Divergence: {_esc(div_str)}")
+        lines.append("")
+
+    # Market Structure
+    mkt = signal.get("_market", {})
+    if mkt:
+        funding = mkt.get("funding", {})
+        ls      = mkt.get("long_short", {})
+        dxy     = mkt.get("dxy", {})
+        sp500   = mkt.get("sp500", {})
+        btcdom  = mkt.get("btc_dom", {})
+        oi      = mkt.get("open_interest", {})
+        stable  = mkt.get("stablecoin", {})
+
+        lines.append("<b>🏦 Market Structure</b>")
+        fund_pct = funding.get("rate_pct", 0)
+        ls_ratio = ls.get("ratio", 1)
+        lines.append(f"Funding <code>{fund_pct:+.4f}%</code>  ·  L/S <code>{ls_ratio:.2f}</code>")
+
+        dxy_c = dxy.get("current", 0)
+        dxy_d = dxy.get("change_pct", 0)
+        sp_c  = sp500.get("current", 0)
+        sp_d  = sp500.get("change_pct", 0)
+        if sp_c:
+            lines.append(
+                f"DXY <code>{dxy_c:.1f}</code> ({dxy_d:+.2f}%)  ·  "
+                f"S&amp;P <code>{sp_c:,.0f}</code> ({sp_d:+.2f}%)"
+            )
+
+        btcd     = btcdom.get("current", 0)
+        btcd_dir = _dir(btcdom.get("change_pct", 0))
+        oi_val   = oi.get("notional", 0)
+        oi_dir   = _dir(oi.get("change_pct", 0))
+        if btcd:
+            lines.append(f"BTC.D <code>{btcd:.1f}%</code> {btcd_dir}  ·  OI <code>${oi_val/1e9:.1f}B</code> {oi_dir}")
+
+        stab     = stable.get("total_b", 0)
+        stab_dir = _dir(stable.get("change_pct", 0))
+        if stab:
+            lines.append(f"Stablecoin <code>${stab:.0f}B</code> {stab_dir}")
+        lines.append("")
+
+    # Sentiment
+    fng_val   = signal.get("fear_greed_value", 50)
+    fng_label = signal.get("fear_greed_label", "Neutral")
+    news_sent = signal.get("news_sentiment", "NEUTRAL")
+    news_conf = signal.get("news_confidence", 0)
+    lines.append("<b>📰 Sentiment</b>")
     lines.append(
-        f"F&G:           `{signal.get('fear_greed_value', 'N/A')}"
-        f" — {signal.get('fear_greed_label', '')}`"
+        f"F&amp;G <code>{fng_val}/100</code> — {_esc(fng_label)}"
+        f"  ·  News: {news_sent} ({news_conf:.0f}%)"
     )
+    news_data = signal.get("_news_data") or {}
+    for h in news_data.get("headlines", [])[:4]:
+        arr  = _UP if h["sentiment"] > 0 else (_DOWN if h["sentiment"] < 0 else _FLAT)
+        cat  = "G" if h.get("category") == "geopolitical" else "C"
+        lines.append(f"  {arr} [{cat}] {_esc(h['title'][:65])}")
+    lines.append("")
+
+    # Signal Reasons
+    reasons = signal.get("reasons", [])
+    if reasons:
+        lines.append(f"<b>✅ Active Signals ({len(reasons)})</b>")
+        for r in reasons[:10]:
+            sym  = "✓" if r.startswith("✓") else ("✗" if r.startswith("✗") else "•")
+            body = r[2:].strip() if r[:1] in "✓✗⚠" else r.strip()
+            lines.append(f"  {sym} {_esc(body[:70])}")
+        lines.append("")
+
+    # Paper Performance
+    try:
+        total_pnl, count, avg = _sh.get_closed_pnl()
+        if count > 0:
+            wr  = _sh.get_win_rate()
+            pf  = _sh.get_profit_factor()
+            pf_str = "∞" if pf == float("inf") else (f"{pf:.2f}" if pf else "—")
+            wr_str = f"{wr:.0%}" if wr is not None else "—"
+            pnl_str = f"{total_pnl:+.2f}%"
+            lines.append("<b>📉 Paper Performance</b>")
+            lines.append(
+                f"{count} trades  ·  Win {wr_str}  ·  PF {pf_str}  ·  P&amp;L {_esc(pnl_str)}"
+            )
+    except Exception:
+        pass
+
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Discord formatter (Markdown)
+# ---------------------------------------------------------------------------
+
+def _format_discord(signal, symbol="BTC/USDT"):
+    stype  = signal["type"]
+    icon   = "🟢" if stype == "BUY" else "🔴"
+    conf   = signal.get("confidence", "")
+    entry  = signal["entry_price"]
+    sl     = signal["stop_loss"]
+    tp1    = signal["take_profit"]
+    tp2    = signal.get("tp2")
+    sl_pct  = abs(entry - sl)  / entry * 100
+    tp1_pct = abs(tp1 - entry) / entry * 100
+    rr      = tp1_pct / sl_pct if sl_pct > 0 else 0
+
+    parts = []
+    header = f"{icon} **{stype} {symbol}**"
+    if conf:
+        header += f" — **{conf}**"
+    parts.append(header)
+
+    # Trade block
+    trade = (
+        f"```\n"
+        f"Entry    ${entry:>10,.0f}\n"
+        f"Trail SL ${sl:>10,.0f}  (-{sl_pct:.2f}%)\n"
+        f"TP1 50%  ${tp1:>10,.0f}  (+{tp1_pct:.2f}%)\n"
+    )
+    if tp2:
+        tp2_pct = abs(tp2 - entry) / entry * 100
+        trade += f"TP2 50%  ${tp2:>10,.0f}  (+{tp2_pct:.2f}%)\n"
+    trade += f"R/R  1:{rr:.2f}  ·  Score {signal['strength']:.2f}/{SIGNAL_MAX_SCORE}\n```"
+    parts.append(trade)
+
+    # HTF + Technicals
+    htf  = signal.get("_htf", {})
+    last = signal.get("_last", {})
+    mkt  = signal.get("_market", {})
+
+    if htf:
+        aligned = "✓" if htf.get("aligned") else "✗"
+        parts.append(f"**Timeframe** · 4H {htf.get('4h','─')} · 1D {htf.get('1d','─')} {aligned}")
+
+    if last:
+        rsi_v = last.get("rsi", 0)
+        sk    = last.get("stoch_k")
+        macd  = last.get("macd", 0)
+        msig  = last.get("macd_sig", 0)
+        sk_str = f" · StochRSI {sk:.0f}" if sk is not None else ""
+        parts.append(
+            f"**Technicals** · RSI {rsi_v:.1f}{sk_str}"
+            f" · MACD {'▲' if macd > msig else '▼'}"
+        )
+
+    if mkt:
+        funding  = mkt.get("funding", {})
+        ls       = mkt.get("long_short", {})
+        btcdom   = mkt.get("btc_dom", {})
+        fund_pct = funding.get("rate_pct", 0)
+        btcd     = btcdom.get("current", 0)
+        parts.append(
+            f"**Market** · Funding {fund_pct:+.4f}% · L/S {ls.get('ratio',1):.2f}"
+            + (f" · BTC.D {btcd:.1f}%" if btcd else "")
+        )
+
+    # Sentiment
+    fng_val = signal.get("fear_greed_value", 50)
+    fng_lbl = signal.get("fear_greed_label", "Neutral")
+    news    = signal.get("news_sentiment", "NEUTRAL")
+    parts.append(f"**Sentiment** · F&G {fng_val}/100 — {fng_lbl} · News {news}")
+
+    # Reasons (top 5)
+    reasons = signal.get("reasons", [])
+    if reasons:
+        top = "\n".join(
+            f"{'✓' if r.startswith('✓') else '✗'} {r[2:].strip()[:65]}"
+            for r in reasons[:5]
+        )
+        parts.append(f"**Signals ({len(reasons)})**\n```\n{top}\n```")
+
+    return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -64,70 +297,35 @@ def _format_signal_message(signal, symbol="BTC/USDT"):
 # ---------------------------------------------------------------------------
 
 def send_telegram_alert(signal, symbol="BTC/USDT"):
-    """Send a Telegram message for BUY/SELL signals.
-
-    No-op if ``TELEGRAM_BOT_TOKEN`` or ``TELEGRAM_CHAT_ID`` are unset.
-    """
+    """Send a Telegram HTML-formatted message for BUY/SELL signals."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return
     if signal["type"] == "HOLD":
         return
 
-    text = _format_signal_message(signal, symbol)
+    text = _format_telegram(signal, symbol)
     try:
         resp = HTTP_SESSION.post(
             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-            json={"chat_id": TELEGRAM_CHAT_ID, "text": text,
-                  "parse_mode": "Markdown"},
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"},
             timeout=5,
         )
         if resp.status_code == 200:
             logger.info("Telegram alert sent.")
         else:
-            logger.warning("Telegram returned %d: %s",
-                           resp.status_code, resp.text[:100])
+            logger.warning("Telegram returned %d: %s", resp.status_code, resp.text[:200])
     except Exception as e:
         logger.warning("Telegram alert failed: %s", e)
 
 
 def send_discord_alert(signal, symbol="BTC/USDT"):
-    """Send a Discord webhook message for BUY/SELL signals.
-
-    No-op if ``DISCORD_WEBHOOK_URL`` is unset.
-    """
+    """Send a Discord webhook message for BUY/SELL signals."""
     if not DISCORD_WEBHOOK_URL:
         return
     if signal["type"] == "HOLD":
         return
 
-    icon  = "\U0001f7e2" if signal["type"] == "BUY" else "\U0001f534"
-    entry = signal["entry_price"]
-    sl    = signal["stop_loss"]
-    tp1   = signal["take_profit"]
-    tp2   = signal.get("tp2")
-    sl_pct  = abs(entry - sl)  / entry * 100
-    tp1_pct = abs(tp1 - entry) / entry * 100
-    rr      = tp1_pct / sl_pct if sl_pct > 0 else 0
-
-    tp2_line = ""
-    if tp2:
-        tp2_pct = abs(tp2 - entry) / entry * 100
-        tp2_line = f"\nTP2 (50%): `{tp2:,.2f}` (+{tp2_pct:.2f}%)"
-
-    conf = signal.get("confidence")
-    conf_line = f"\nConfidence: `{conf}`" if conf else ""
-
-    text = (
-        f"{icon} **{signal['type']} {symbol}**\n"
-        f"Entry:     `{entry:,.2f}`\n"
-        f"Trail SL:  `{sl:,.2f}` (-{sl_pct:.2f}%)\n"
-        f"TP1 (50%): `{tp1:,.2f}` (+{tp1_pct:.2f}%)"
-        f"{tp2_line}\n"
-        f"R/R:       `1:{rr:.2f}`\n"
-        f"Strength:  `{signal['strength']:.2f}/{SIGNAL_MAX_SCORE}`"
-        f"{conf_line}"
-    )
-
+    text = _format_discord(signal, symbol)
     try:
         resp = HTTP_SESSION.post(
             DISCORD_WEBHOOK_URL,
@@ -137,8 +335,7 @@ def send_discord_alert(signal, symbol="BTC/USDT"):
         if resp.status_code in (200, 204):
             logger.info("Discord alert sent.")
         else:
-            logger.warning("Discord returned %d: %s",
-                           resp.status_code, resp.text[:100])
+            logger.warning("Discord returned %d: %s", resp.status_code, resp.text[:200])
     except Exception as e:
         logger.warning("Discord alert failed: %s", e)
 

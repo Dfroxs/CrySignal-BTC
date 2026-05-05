@@ -4,6 +4,18 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-06 — Full-Detail Telegram & Discord Notifications
+
+### Changed
+
+- **Telegram & Discord now send complete analysis** — message matches terminal output with all sections: Trade Setup, Price & Trend, Multi-Timeframe, Technicals, Market Structure, Sentiment + headlines, Signal Reasons, and Paper Performance. Previously only basic entry/SL/TP was sent.
+- **`analyze_btc_signal()`** now attaches `_htf`, `_market`, `_news_data`, and `_last` (last candle technicals) to the signal dict before returning. These underscore-prefixed keys are ignored by `log_signal()` but consumed by `notifier.py`.
+- **Telegram uses HTML parse mode** (tidak lagi Markdown) agar karakter seperti `&`, `<`, `>`, `-`, `.` di judul berita tidak membreak formatting. HTML di-escape otomatis via `_esc()`.
+- **Discord uses code block** untuk trade setup agar angka ter-align dengan font monospace.
+- **Message size: ~1200 chars** (well within the 4096-char limit).
+
+---
+
 ## 2026-05-06 — Critical Deadlock Fix
 
 ### Fixed

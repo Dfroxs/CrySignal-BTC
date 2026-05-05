@@ -1114,6 +1114,28 @@ def analyze_btc_signal(symbol='BTC/USDT', timeframe='1h', include_news=True):
         display_analysis(df, signal, news_data, htf, market_structure)
         signal['db_id'] = log_signal(signal, df, htf)
         update_threshold_state(signal['type'])
+
+        # Rich context for notifications (underscore keys are ignored by log_signal)
+        last = df.iloc[-1]
+        signal['_htf']      = htf
+        signal['_market']   = market_structure
+        signal['_news_data']= news_data
+        signal['_last'] = {
+            'close':      last['close'],
+            'ema200':     last.get('EMA_200', 0),
+            'rsi':        last.get('RSI_14', 0),
+            'macd':       last.get('MACD', 0),
+            'macd_sig':   last.get('MACD_Signal', 0),
+            'stoch_k':    last.get('StochRSI_K'),
+            'stoch_d':    last.get('StochRSI_D'),
+            'vwap':       last.get('VWAP_24'),
+            'bb_upper':   last.get('BB_Upper', 0),
+            'bb_lower':   last.get('BB_Lower', 0),
+            'atr':        last.get('ATR_14', 0),
+            'obv_slope':  df['OBV'].iloc[-1] - df['OBV'].iloc[-5],
+            'hi24':       df['high'].tail(24).max(),
+            'lo24':       df['low'].tail(24).min(),
+        }
         return signal
 
     except Exception as e:
