@@ -69,6 +69,10 @@ def check_and_close_positions(current_price, mode=None):
     if has_macro:
         all_open = sh.get_open_positions(None)  # all modes
         if all_open:
+            print(
+                f"\n⚠️  MACRO RISK: {event_name} in <2h"
+                f" — force closing {len(all_open)} position(s) at market"
+            )
             logger.warning(
                 "⚠️  MACRO: %s in <2h — force closing %d position(s) at market",
                 event_name, len(all_open),
@@ -192,40 +196,71 @@ def print_open_status(mode=None):
     if not positions:
         return
 
-    print("\n📝 PAPER POSITIONS (open):")
+    mode_str = f" [{mode.upper()}]" if mode else ""
+    print(f"\n📝 PAPER POSITIONS (open{mode_str}):")
     for pos in positions:
         icon    = "\U0001f7e2" if pos["type"] == "BUY" else "\U0001f534"
+        entry   = pos["entry_price"]
         trail   = pos.get("trailing_stop") or pos["stop_loss"]
         tp1     = pos.get("tp1") or pos["take_profit"]
         tp2     = pos.get("tp2")
         partial = pos.get("partial_closed", 0)
         tag     = " [½ taken]" if partial else ""
+        opened  = pos.get("opened_at", "")[:16]
 
         tp2_str = f" | TP2: ${tp2:,.2f}" if tp2 else ""
         print(
-            f"   {icon} {pos['type']}{tag} | Entry: ${pos['entry_price']:,.2f} "
+            f"   {icon} {pos['type']}{tag} | Entry: ${entry:,.2f} "
             f"| Trail: ${trail:,.2f} | TP1: ${tp1:,.2f}{tp2_str} "
-            f"| Opened: {pos['opened_at'][:16]}"
+            f"| Opened: {opened}"
         )
 
     total, count, avg = sh.get_closed_pnl(mode)
     if count > 0:
+        bd = sh.get_outcome_breakdown()
+        # Filter to this mode (outcome_breakdown is global — approximate)
+        w = bd.get("WIN", 0)
+        l = bd.get("LOSS", 0)
+        m = bd.get("MACRO_CLOSE", 0)
+        be = bd.get("BREAKEVEN", 0)
+        parts = []
+        if w: parts.append(f"{w}W")
+        if l: parts.append(f"{l}L")
+        if m: parts.append(f"{m}MC")
+        if be: parts.append(f"{be}BE")
+        outcome_str = " · ".join(parts) if parts else ""
+        wr_str = f"  WR: {w/(w+l)*100:.0f}%" if (w + l) > 0 else ""
         print(
-            f"   Closed: {count} trades | "
+            f"   Closed: {count} trades ({outcome_str}{wr_str}) | "
             f"Net P&L: {total:+.2f}% | Avg: {avg:+.2f}%"
         )
 
 
 def print_paper_summary(mode=None):
-    """Print paper trading performance summary."""
+    """Print paper trading performance summary with outcome breakdown."""
     total, count, avg = sh.get_closed_pnl(mode)
     if count == 0:
         return
 
-    print("\n📊 PAPER TRADING PERFORMANCE:")
+    mode_str = f" [ {mode.upper()} ]" if mode else ""
+    print(f"\n📊 PAPER TRADING PERFORMANCE{mode_str}:")
     print(f"   Total Trades:     {count}")
     print(f"   Net P&L:          {total:+.2f}%")
     print(f"   Avg per Trade:    {avg:+.2f}%")
+
+    # Outcome breakdown
+    bd = sh.get_outcome_breakdown()
+    if bd:
+        w  = bd.get("WIN", 0)
+        l  = bd.get("LOSS", 0)
+        mc = bd.get("MACRO_CLOSE", 0)
+        be = bd.get("BREAKEVEN", 0)
+        parts = [f"{w} Wins", f"{l} Losses"]
+        if mc:
+            parts.append(f"{mc} Macro")
+        if be:
+            parts.append(f"{be} BE")
+        print(f"   Outcomes:         {' · '.join(parts)}")
 
     wr = sh.get_win_rate()
     if wr is not None:

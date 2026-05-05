@@ -62,38 +62,41 @@ def run_cycle():
 
     # Phase 3 — paper trading
     logger.info("[PHASE 3] Updating paper positions ...")
+    phase3_actions = []  # track what happened for summary
     try:
         # Spot positions
         if spot_signal and spot_signal["type"] != "HOLD":
             spot_open = len(get_open_positions("spot"))
             if spot_open >= RISK_CONFIG["max_positions"]:
-                logger.info(
-                    "Max spot positions (%d) reached — skipping %s",
-                    RISK_CONFIG["max_positions"], spot_signal["type"],
-                )
+                msg = f"Max spot ({RISK_CONFIG['max_positions']}) — skipping {spot_signal['type']}"
+                logger.info(msg)
+                phase3_actions.append(f"⏭ SPOT: {msg}")
             elif has_open_position_same_direction(spot_signal["type"], "spot"):
-                logger.info(
-                    "Open %s spot position already exists — skipping duplicate signal",
-                    spot_signal["type"],
-                )
+                msg = f"Duplicate {spot_signal['type']} direction — skipping spot"
+                logger.info(msg)
+                phase3_actions.append(f"⏭ SPOT: {msg}")
             else:
-                open_paper_position(spot_signal, mode="spot")
+                pid = open_paper_position(spot_signal, mode="spot")
+                msg = f"SPOT {spot_signal['type']} opened (#{pid}) @ ${spot_signal['entry_price']:,.0f}"
+                logger.info(msg)
+                phase3_actions.append(f"✅ {msg}")
 
         # Futures positions
         if futures_signal and futures_signal["type"] != "HOLD":
             fut_open = len(get_open_positions("futures"))
             if fut_open >= FUTURES_CONFIG["max_positions"]:
-                logger.info(
-                    "Max futures positions (%d) reached — skipping %s",
-                    FUTURES_CONFIG["max_positions"], futures_signal["type"],
-                )
+                msg = f"Max futures ({FUTURES_CONFIG['max_positions']}) — skipping {futures_signal['type']}"
+                logger.info(msg)
+                phase3_actions.append(f"⏭ FUT: {msg}")
             elif has_open_position_same_direction(futures_signal["type"], "futures"):
-                logger.info(
-                    "Open %s futures position already exists — skipping duplicate signal",
-                    futures_signal["type"],
-                )
+                msg = f"Duplicate {futures_signal['type']} direction — skipping futures"
+                logger.info(msg)
+                phase3_actions.append(f"⏭ FUT: {msg}")
             else:
-                open_paper_position(futures_signal, mode="futures")
+                pid = open_paper_position(futures_signal, mode="futures")
+                msg = f"FUT {futures_signal['type']} opened (#{pid}) @ ${futures_signal['entry_price']:,.0f}"
+                logger.info(msg)
+                phase3_actions.append(f"✅ {msg}")
 
         # Determine current price for position checks
         if futures_signal and futures_signal.get("entry_price"):
@@ -112,6 +115,11 @@ def run_cycle():
         print_open_status("futures")
         print_paper_summary("spot")
         print_paper_summary("futures")
+
+        if phase3_actions:
+            print(f"\n📋 Phase 3 summary:")
+            for action in phase3_actions:
+                print(f"   {action}")
 
     except Exception as e:
         logger.error("Paper trading update failed: %s", e)
