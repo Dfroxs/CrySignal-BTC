@@ -1201,8 +1201,9 @@ def analyze_futures_signal(symbol='BTC/USDT', include_news=True):
         signal['db_id'] = log_signal(signal, df, htf)
         update_threshold_state(signal['type'])
 
-        signal['mode']      = 'futures'
-        signal['_htf']      = htf
+        signal['mode']       = 'futures'
+        signal['_threshold'] = threshold
+        signal['_htf']       = htf
         signal['_market']   = market_structure
         signal['_news_data']= news_data
         last = df.iloc[-1]
@@ -1270,8 +1271,9 @@ def analyze_spot_signal(symbol='BTC/USDT', include_news=True):
         signal['db_id'] = log_signal(signal, df, htf)
         update_spot_threshold_state(signal['type'])
 
-        signal['mode']      = 'spot'
-        signal['_htf']      = htf
+        signal['mode']       = 'spot'
+        signal['_threshold'] = threshold
+        signal['_htf']       = htf
         signal['_market']   = market_structure
         signal['_news_data']= news_data
         last = df.iloc[-1]

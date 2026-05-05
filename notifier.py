@@ -373,6 +373,207 @@ def _format_section_discord(signal, symbol="BTC/USDT"):
 
 
 # ---------------------------------------------------------------------------
+# Compact Telegram formatters — short, clean, split per mode
+# ---------------------------------------------------------------------------
+
+_SIGNAL_SEP = "━" * 28
+
+def _format_compact_signal_telegram(signal):
+    """Clean compact signal card — one per mode. ~600 chars."""
+    stype  = signal["type"]
+    label  = _mode_label(signal)
+    score  = signal.get("strength", 0)
+    mscore = _max_score(signal)
+    conf   = signal.get("confidence", "")
+    mode   = signal.get("mode", "futures")
+    last   = signal.get("_last", {})
+    mkt    = signal.get("_market", {})
+
+    # ── Header ──────────────────────────────────────────────
+    if stype == "BUY":
+        header = f"🟢 <b>BUY</b> · {label}"
+        if conf:
+            header += f"  —  <b>{conf}</b>"
+    elif stype == "SELL":
+        header = f"🔴 <b>SELL</b> · {label}"
+        if conf:
+            header += f"  —  <b>{conf}</b>"
+    else:
+        header = f"⏸ <b>HOLD</b> · {label}"
+
+    lines = [header]
+    lines.append(f"Score {score:.2f}/{mscore}  ·  Threshold <i>{_esc(str(signal.get('_threshold', '')))}</i>")
+    lines.append(_SIGNAL_SEP)
+
+    # ── Trade Setup (non-HOLD only) ─────────────────────────
+    if stype != "HOLD" and signal.get("stop_loss"):
+        entry   = signal["entry_price"]
+        sl      = signal["stop_loss"]
+        tp1     = signal["take_profit"]
+        tp2     = signal.get("tp2")
+        sl_pct  = abs(entry - sl)  / entry * 100
+        tp1_pct = abs(tp1 - entry) / entry * 100
+        tp2_str = f"\nTP2      ${tp2:>10,.0f}  +{abs(tp2-entry)/entry*100:.2f}%" if tp2 else ""
+        rr_str = f"R/R      1:{tp1_pct/sl_pct:.2f}" if sl_pct > 0 else "R/R      —"
+        lines.append(
+            f"<code>Entry    ${entry:>10,.0f}\n"
+            f"Trail SL ${sl:>10,.0f}  -{sl_pct:.2f}%\n"
+            f"TP1      ${tp1:>10,.0f}  +{tp1_pct:.2f}%"
+            f"{tp2_str}\n"
+            f"{rr_str}</code>"
+        )
+
+    # ── Technicals (one-liner) ──────────────────────────────
+    if last:
+        price  = signal.get("entry_price", last.get("close", 0))
+        rsi    = last.get("rsi", 0)
+        ema200 = last.get("ema200", 0)
+        macd   = last.get("macd", 0)
+        msig   = last.get("macd_sig", 0)
+        vwap   = last.get("vwap")
+        atr    = last.get("atr", 0)
+        sk     = last.get("stoch_k")
+        sd     = last.get("stoch_d")
+        obv    = last.get("obv_slope", 0)
+
+        trend  = _UP if price > ema200 else _DOWN
+        macd_d = _UP if macd > msig else _DOWN
+        vwap_d = _UP if vwap and price > vwap else (_DOWN if vwap else "")
+        obv_d  = _UP if obv > 0 else _DOWN
+
+        tech_parts = [
+            f"RSI <code>{rsi:.0f}</code>"
+            f"{' OB' if rsi > 70 else ' OS' if rsi < 30 else ''}",
+        ]
+        if sk is not None and not (isinstance(sk, float) and sk != sk):  # not NaN
+            tech_parts.append(f"Stoch <code>{sk:.0f}/{sd:.0f}</code>")
+        tech_parts.append(f"MACD {macd_d}")
+        tech_parts.append(f"OBV {obv_d}")
+        if vwap:
+            tech_parts.append(f"VWAP <code>${vwap:,.0f}</code>{vwap_d}")
+        tech_parts.append(f"EMA200 <code>${ema200:,.0f}</code>{trend}")
+        tech_parts.append(f"ATR <code>${atr:,.0f}</code>")
+
+        lines.append("  ·  ".join(tech_parts))
+
+    # ── HTF ─────────────────────────────────────────────────
+    htf = signal.get("_htf", {})
+    if htf:
+        htf_keys = [k for k in htf if k != "aligned"]
+        htf_parts = []
+        for k in htf_keys:
+            icon = _UP if htf[k] == "BULLISH" else _DOWN
+            htf_parts.append(f"{k.upper()}{icon}")
+        aligned = "✓" if htf.get("aligned") else "✗ Diverge"
+        lines.append("HTF  " + "  ".join(htf_parts) + f"  {aligned}")
+
+    # ── Market Structure (compact) ──────────────────────────
+    if mkt:
+        mkt_parts = []
+        if mode == "futures":
+            funding = mkt.get("funding", {})
+            ls      = mkt.get("long_short", {})
+            fund_pct = funding.get("rate_pct", 0)
+            fund_d   = _UP if fund_pct < 0 else _DOWN
+            mkt_parts.append(f"Fund <code>{fund_pct:+.4f}%</code>{fund_d}")
+            mkt_parts.append(f"L/S <code>{ls.get('ratio',1):.2f}</code>")
+
+        sp500 = mkt.get("sp500", {})
+        sp_d  = sp500.get("change_pct", 0)
+        if sp500.get("current"):
+            sp_icon = _UP if sp_d > 0 else _DOWN
+            mkt_parts.append(f"S&P <code>{sp500['current']:,.0f}</code> {sp_icon}")
+
+        dxy = mkt.get("dxy", {})
+        if dxy.get("current"):
+            mkt_parts.append(f"DXY <code>{dxy['current']:.1f}</code>")
+
+        btcdom = mkt.get("btc_dom", {})
+        if btcdom.get("current"):
+            btc_d = _dir(btcdom.get("change_pct", 0))
+            mkt_parts.append(f"BTC.D <code>{btcdom['current']:.1f}%</code>{btc_d}")
+
+        stable = mkt.get("stablecoin", {})
+        if stable.get("total_b"):
+            s_d = _dir(stable.get("change_pct", 0))
+            mkt_parts.append(f"Stable <code>${stable['total_b']:.0f}B</code>{s_d}")
+
+        if mkt_parts:
+            lines.append("  ·  ".join(mkt_parts))
+
+    # ── Sentiment ───────────────────────────────────────────
+    fng_val = signal.get("fear_greed_value", 50)
+    fng_lbl = signal.get("fear_greed_label", "Neutral")
+    news    = signal.get("news_sentiment", "NEUTRAL")
+    lines.append(f"F&amp;G <code>{fng_val}</code> {_esc(fng_lbl)}  ·  News {news}")
+
+    # ── Reasons (compact, top 7) ────────────────────────────
+    reasons = signal.get("reasons", [])
+    if reasons:
+        lines.append(_SIGNAL_SEP)
+        lines.append(f"<b>Top signals</b> ({len(reasons)}):")
+        for r in reasons[:7]:
+            icon = "✓" if r.startswith("✓") else ("✗" if r.startswith("✗") else "•")
+            body = r[2:].strip() if r[:1] in "✓✗⚠" else r.strip()
+            lines.append(f"  {icon} {_esc(body[:70])}")
+
+    return "\n".join(lines)
+
+
+def _format_position_telegram():
+    """Short position status + performance footer. ~400 chars."""
+    sections = []
+
+    # ── Open Positions ──────────────────────────────────────
+    spot_pos = _sh.get_open_positions("spot")
+    fut_pos  = _sh.get_open_positions("futures")
+    all_pos  = list(spot_pos) + list(fut_pos)
+    if all_pos:
+        pos_lines = ["<b>📝 Open</b>"]
+        for pos in all_pos:
+            icon  = "🟢" if pos["type"] == "BUY" else "🔴"
+            mode  = pos.get("mode", "fut")[:3].upper()
+            entry = pos["entry_price"]
+            trail = pos.get("trailing_stop") or pos["stop_loss"]
+            tp1   = pos.get("tp1") or pos["take_profit"]
+            tp1pct = abs(entry - tp1) / entry * 100 if entry else 0
+            partial = " ½" if pos.get("partial_closed") else ""
+            pos_lines.append(
+                f"{icon} {mode}{partial} <code>${entry:,.0f}</code>  "
+                f"Trail <code>${trail:,.0f}</code>  "
+                f"TP1 <code>${tp1:,.0f}</code> (+{tp1pct:.1f}%)"
+            )
+        sections.append("\n".join(pos_lines))
+
+    # ── Performance ─────────────────────────────────────────
+    try:
+        spot_pnl, spot_cnt, _ = _sh.get_closed_pnl("spot")
+        fut_pnl, fut_cnt, _   = _sh.get_closed_pnl("futures")
+        total_trades = spot_cnt + fut_cnt
+        if total_trades > 0:
+            bd = _sh.get_outcome_breakdown()
+            w  = bd.get("WIN", 0)
+            l  = bd.get("LOSS", 0)
+            mc = bd.get("MACRO_CLOSE", 0)
+            wr = f" WR {w/(w+l)*100:.0f}%" if (w + l) > 0 else ""
+
+            perf_lines = ["<b>📉 P&amp;L</b>"]
+            if spot_cnt > 0:
+                perf_lines.append(f"SPOT  {spot_cnt}t  P&amp;L {_esc(f'{spot_pnl:+.2f}%')}")
+            if fut_cnt > 0:
+                perf_lines.append(f"FUT  {fut_cnt}t  P&amp;L {_esc(f'{fut_pnl:+.2f}%')}")
+            outcome_parts = [f"{w}W", f"{l}L"]
+            if mc:
+                outcome_parts.append(f"{mc}MC")
+            perf_lines.append(" · ".join(outcome_parts) + wr)
+            sections.append("\n".join(perf_lines))
+    except Exception:
+        pass
+
+    return "\n\n".join(sections) if sections else None
+
+
+# ---------------------------------------------------------------------------
 # Combined formatters
 # ---------------------------------------------------------------------------
 
@@ -872,17 +1073,17 @@ def send_signal_alert(spot_signal=None, futures_signal=None, symbol="BTC/USDT"):
         _send_combined_telegram(spot_signal, futures_signal, symbol)
         _send_combined_discord(spot_signal, futures_signal, symbol)
     elif spot_active:
-        send_telegram_alert(spot_signal, symbol)
+        _send_telegram_message(_format_compact_signal_telegram(spot_signal), "spot-signal")
         send_discord_alert(spot_signal, symbol)
     elif futures_active:
-        send_telegram_alert(futures_signal, symbol)
+        _send_telegram_message(_format_compact_signal_telegram(futures_signal), "futures-signal")
         send_discord_alert(futures_signal, symbol)
 
 
-def _send_combined_telegram(spot_signal, futures_signal, symbol):
+def _send_telegram_message(text, label="alert"):
+    """Send a single Telegram HTML message. Returns True on success."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        return
-    text = _format_combined_telegram(spot_signal, futures_signal, symbol)
+        return False
     try:
         resp = HTTP_SESSION.post(
             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
@@ -890,11 +1091,49 @@ def _send_combined_telegram(spot_signal, futures_signal, symbol):
             timeout=5,
         )
         if resp.status_code == 200:
-            logger.info("Telegram combined alert sent.")
+            logger.info("Telegram %s sent.", label)
+            return True
         else:
-            logger.warning("Telegram returned %d: %s", resp.status_code, resp.text[:200])
+            logger.warning("Telegram %s returned %d: %s", label, resp.status_code, resp.text[:200])
+            return False
     except Exception as e:
-        logger.warning("Telegram combined alert failed: %s", e)
+        logger.warning("Telegram %s failed: %s", label, e)
+        return False
+
+
+def _send_combined_telegram(spot_signal, futures_signal, symbol):
+    """Send compact signal cards — one per mode, plus position/performance summary."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+
+    sent = 0
+
+    # Macro risk banner (if applicable)
+    macro_warn = _macro_banner(spot_signal) or _macro_banner(futures_signal)
+    if macro_warn:
+        if _send_telegram_message(macro_warn, "macro-warning"):
+            sent += 1
+
+    # SPOT signal card
+    if spot_signal and spot_signal.get("type") != "HOLD":
+        text = _format_compact_signal_telegram(spot_signal)
+        if _send_telegram_message(text, "spot-signal"):
+            sent += 1
+
+    # FUTURES signal card
+    if futures_signal and futures_signal.get("type") != "HOLD":
+        text = _format_compact_signal_telegram(futures_signal)
+        if _send_telegram_message(text, "futures-signal"):
+            sent += 1
+
+    # Position + performance summary (always send as long as there's data)
+    pos_text = _format_position_telegram()
+    if pos_text:
+        if _send_telegram_message(pos_text, "positions"):
+            sent += 1
+
+    if sent:
+        logger.info("Telegram: %d message(s) delivered", sent)
 
 
 def _send_combined_discord(spot_signal, futures_signal, symbol):
