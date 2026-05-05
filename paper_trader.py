@@ -1,9 +1,10 @@
 """Paper trading — trailing stop + partial take-profit position management.
 
 Each cycle:
-  1. Advance trailing stop if price moved in our favour.
-  2. First half exits at TP1 → trailing stop moves to breakeven.
-  3. Second half exits at TP2 or when trailing stop is hit.
+  1. Force-close all positions if HIGH impact macro event is <2h away.
+  2. Advance trailing stop if price moved in our favour.
+  3. First half exits at TP1 → trailing stop moves to breakeven.
+  4. Second half exits at TP2 or when trailing stop is hit.
 """
 
 import logging
@@ -15,13 +16,73 @@ logger = logging.getLogger(__name__)
 
 _TRAIL = RISK_CONFIG["trailing_atr_factor"]
 
+# Slippage threshold — warn when fill price is this far past the trigger
+_SLIPPAGE_WARN_PCT = 0.01  # 1%
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _calc_pnl(pos, price):
+    """Calculate blended P&L percentage for a position at the given exit price."""
+    entry    = pos["entry_price"]
+    partial  = pos.get("partial_closed", 0)
+
+    if pos["type"] == "BUY":
+        exit_pnl = (price - entry) / entry * 100
+    else:
+        exit_pnl = (entry - price) / entry * 100
+
+    if partial:
+        partial_pnl = pos.get("partial_pnl") or 0
+        return partial_pnl * 0.5 + exit_pnl * 0.5
+    return exit_pnl
+
+
+def _check_slippage(trigger_price, fill_price, pos_id):
+    """Log a warning when the fill price is far past the trigger (trailing stop / TP)."""
+    if trigger_price and trigger_price > 0:
+        slip = abs(fill_price - trigger_price) / trigger_price
+        if slip > _SLIPPAGE_WARN_PCT:
+            logger.warning(
+                "Slippage %.2f%% on %s — trigger $%.2f, filled $%.2f (%.0f min gap)",
+                slip * 100, pos_id, trigger_price, fill_price, slip * 100,
+            )
+
 
 # ---------------------------------------------------------------------------
 # Position management
 # ---------------------------------------------------------------------------
 
 def check_and_close_positions(current_price, mode=None):
-    """Check open paper positions against *current_price*, optionally filtered by mode."""
+    """Check open paper positions against *current_price*, optionally filtered by mode.
+
+    If a HIGH impact USD macro event is within 2 hours, all open positions
+    are force-closed at *current_price* regardless of mode — macro risk
+    trumps technical setups.
+    """
+    from core_analysis import check_upcoming_macro_events
+
+    # ── Macro gate — force-close ALL positions ──────────────────────
+    has_macro, event_name = check_upcoming_macro_events()
+    if has_macro:
+        all_open = sh.get_open_positions(None)  # all modes
+        if all_open:
+            logger.warning(
+                "⚠️  MACRO: %s in <2h — force closing %d position(s) at market",
+                event_name, len(all_open),
+            )
+            for pos in all_open:
+                exit_pnl = _calc_pnl(pos, current_price)
+                sh.close_paper_position(pos["id"], "MACRO_CLOSE", exit_pnl)
+                logger.info(
+                    "Paper %s %s → MACRO_CLOSE at $%.2f (%.2f%%)",
+                    pos["type"], pos["id"], current_price, exit_pnl,
+                )
+        return
+
+    # ── Normal position management ──────────────────────────────────
     open_positions = sh.get_open_positions(mode)
     if not open_positions:
         return
@@ -66,6 +127,7 @@ def check_and_close_positions(current_price, mode=None):
                     pos_id, tp2, combined_pnl,
                 )
             elif current_price <= trail:
+                _check_slippage(trail, current_price, pos_id)
                 exit_pnl = (trail - entry) / entry * 100
                 if partial:
                     partial_pnl = pos.get("partial_pnl") or 0
@@ -73,8 +135,8 @@ def check_and_close_positions(current_price, mode=None):
                 outcome = "WIN" if trail >= entry else "LOSS"
                 sh.close_paper_position(pos_id, outcome, exit_pnl)
                 logger.info(
-                    "Paper BUY %s → %s at trailing $%.2f (%.2f%%)",
-                    pos_id, outcome, trail, exit_pnl,
+                    "Paper BUY %s → %s at trailing $%.2f (filled $%.2f, %.2f%%)",
+                    pos_id, outcome, trail, current_price, exit_pnl,
                 )
 
         elif pos["type"] == "SELL":
@@ -107,6 +169,7 @@ def check_and_close_positions(current_price, mode=None):
                     pos_id, tp2, combined_pnl,
                 )
             elif current_price >= trail:
+                _check_slippage(trail, current_price, pos_id)
                 exit_pnl = (entry - trail) / entry * 100
                 if partial:
                     partial_pnl = pos.get("partial_pnl") or 0
@@ -114,8 +177,8 @@ def check_and_close_positions(current_price, mode=None):
                 outcome = "WIN" if trail <= entry else "LOSS"
                 sh.close_paper_position(pos_id, outcome, exit_pnl)
                 logger.info(
-                    "Paper SELL %s → %s at trailing $%.2f (%.2f%%)",
-                    pos_id, outcome, trail, exit_pnl,
+                    "Paper SELL %s → %s at trailing $%.2f (filled $%.2f, %.2f%%)",
+                    pos_id, outcome, trail, current_price, exit_pnl,
                 )
 
 
