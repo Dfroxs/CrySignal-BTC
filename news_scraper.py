@@ -161,41 +161,70 @@ def fetch_coingecko_trending():
     return articles
 
 
-def fetch_reddit_sentiment():
-    """Reddit hot posts from r/Bitcoin and r/CryptoCurrency — free, no key.
-    Scores titles with the same keyword sentiment engine and returns
-    pre-scored article dicts."""
-    articles = []
-    subreddits = [("Bitcoin", "r/Bitcoin"), ("CryptoCurrency", "r/CryptoCurrency")]
-    for _, sub_name in subreddits:
-        try:
-            resp = HTTP_SESSION.get(
-                f"https://www.reddit.com/{sub_name}/hot.json?limit=10",
-                headers={**_HEADERS, "Accept": "application/json"},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            children = resp.json().get("data", {}).get("children", [])
-            for post in children:
-                data = post.get("data", {})
-                title = data.get("title", "")
-                label, score = analyze_sentiment(title)
-                # Only include posts with non-neutral sentiment
-                if label == "NEUTRAL":
-                    continue
-                articles.append({
-                    "timestamp": datetime.now(UTC).strftime(
-                        "%a, %d %b %Y %H:%M:%S +0000"),
-                    "source":    f"Reddit/{sub_name}",
-                    "title":     title,
-                    "link":      f"https://www.reddit.com{data.get('permalink', '')}",
-                    "sentiment_label": label,
-                    "sentiment_score":  score,
-                    "category":  "crypto",
-                })
-        except Exception as e:
-            logger.warning("Reddit %s fetch failed: %s", sub_name, e)
-    return articles
+def fetch_beincrypto():
+    """BeInCrypto RSS — no key required."""
+    news = []
+    try:
+        resp = HTTP_SESSION.get(
+            "https://beincrypto.com/feed/",
+            headers=_HEADERS, timeout=10,
+        )
+        resp.raise_for_status()
+        root = ET.fromstring(resp.content)
+        for item in root.findall("./channel/item"):
+            news.append({
+                "timestamp": item.findtext("pubDate") or "",
+                "source":    "BeInCrypto",
+                "title":     (item.findtext("title") or "").strip(),
+                "link":      item.findtext("link") or "",
+            })
+    except Exception as e:
+        logger.warning("BeInCrypto fetch failed: %s", e)
+    return news
+
+
+def fetch_coindesk():
+    """CoinDesk RSS — no key required."""
+    news = []
+    try:
+        resp = HTTP_SESSION.get(
+            "https://www.coindesk.com/arc/outboundfeeds/rss/",
+            headers=_HEADERS, timeout=10,
+        )
+        resp.raise_for_status()
+        root = ET.fromstring(resp.content)
+        for item in root.findall("./channel/item"):
+            news.append({
+                "timestamp": item.findtext("pubDate") or "",
+                "source":    "CoinDesk",
+                "title":     (item.findtext("title") or "").strip(),
+                "link":      item.findtext("link") or "",
+            })
+    except Exception as e:
+        logger.warning("CoinDesk fetch failed: %s", e)
+    return news
+
+
+def fetch_bitcoinist():
+    """Bitcoinist RSS — no key required."""
+    news = []
+    try:
+        resp = HTTP_SESSION.get(
+            "https://bitcoinist.com/feed/",
+            headers=_HEADERS, timeout=10,
+        )
+        resp.raise_for_status()
+        root = ET.fromstring(resp.content)
+        for item in root.findall("./channel/item"):
+            news.append({
+                "timestamp": item.findtext("pubDate") or "",
+                "source":    "Bitcoinist",
+                "title":     (item.findtext("title") or "").strip(),
+                "link":      item.findtext("link") or "",
+            })
+    except Exception as e:
+        logger.warning("Bitcoinist fetch failed: %s", e)
+    return news
 
 
 # ---------------------------------------------------------------------------
@@ -205,36 +234,125 @@ def fetch_reddit_sentiment():
 # Whole-word tokens (avoid false positives on short words)
 _POSITIVE_WORDS = {
     "bull", "bulls", "gain", "gains", "rise", "rises",
-    "buy", "bought", "soar", "soars",
+    "buy", "bought", "soar", "soars", "long", "win",
 }
 _NEGATIVE_WORDS = {
     "bear", "bears", "loss", "losses", "sell", "sells",
     "ban", "bans", "drop", "drops", "dump",
+    # "short" intentionally excluded — ambiguous (short squeeze = bullish)
 }
 # Longer unambiguous substrings
 _POSITIVE_SUB = (
     "surge", "rally", "pump", "bullish", "profit", "approval",
     "breakout", "adoption", "upgrade", "accumulat",
+    # 2025+ ETF / institutional drivers
+    "etf inflow", "record inflow", "whale accumulat",
+    "institutional buy", "institutional demand",
+    "halving", "supply shock", "short squeeze", "short liquidat",
+    "regulatory clarity", "pro-bitcoin", "strategic reserve",
+    "all-time high", "new high", "outperform",
 )
 _NEGATIVE_SUB = (
     "crash", "bearish", "decline", "hack", "exploit", "lawsuit",
     "crackdown", "downturn", "reject", "liquidat",
+    # 2025+ ETF / institutional drivers
+    "etf outflow", "record outflow", "whale dump",
+    "whale sell", "institutional sell",
+    "miner capitulation", "hash rate drop",
+    "sec lawsuit", "doj", "regulatory crackdown",
+    "delist", "suspension", "underperform",
+)
+
+# Negation prefixes — when these appear before a sentiment word, flip or skip
+_NEGATION_PATTERNS = (
+    "not ", "no ", "isn't ", "aren't ", "wasn't ", "weren't ",
+    "doesn't ", "don't ", "didn't ", "won't ", "wouldn't ",
+    "avoid ", "avoids ", "avoiding ", "despite ",
+    "signs of ", "fears of ", "concerns of ",
 )
 
 
-def analyze_sentiment(text):
-    """Crypto-specific sentiment via keyword counting.
+def _strip_negations(text_lower, pos_words=None, neg_words=None,
+                    pos_subs=None, neg_subs=None):
+    """Adjust sentiment for negation patterns.
+    \"avoids sell-off\" → sell-off is negative, flip to positive.
+    \"not bullish\" → bullish is positive, flip to negative.
+    Returns (cleaned_text, adjustment) where adjustment is added to final score.
+    Keyword sets default to crypto lists; override for geopolitical."""
+    if pos_words is None: pos_words = _POSITIVE_WORDS
+    if neg_words is None: neg_words = _NEGATIVE_WORDS
+    if pos_subs  is None: pos_subs  = _POSITIVE_SUB
+    if neg_subs  is None: neg_subs  = _NEGATIVE_SUB
 
-    Uses whole-word matching for short/ambiguous tokens and substring
-    matching for longer unambiguous ones.  ``risk`` intentionally excluded
-    — too contextual (risk-on is bullish for BTC)."""
-    text_lower = text.lower()
+    cleaned = text_lower
+    adjustment = 0
+
+    for neg in _NEGATION_PATTERNS:
+        idx = cleaned.find(neg)
+        if idx < 0:
+            continue
+
+        start = idx + len(neg)
+        window = cleaned[start:start + 40]
+
+        # Check substrings first (longer, more specific)
+        for sub in sorted(pos_subs, key=len, reverse=True):
+            if sub in window:
+                cleaned = cleaned.replace(sub, "___", 1)
+                adjustment -= 1  # negated positive → flip to negative
+                break
+        else:
+            for sub in sorted(neg_subs, key=len, reverse=True):
+                if sub in window:
+                    cleaned = cleaned.replace(sub, "___", 1)
+                    adjustment += 1  # negated negative → flip to positive
+                    break
+            else:
+                # Check word tokens
+                window_words = window.split()[:3]
+                for word in pos_words:
+                    if word in window_words:
+                        pos = cleaned.find(word, start)
+                        if 0 <= pos <= start + 40:
+                            cleaned = cleaned[:pos] + "___" + cleaned[pos+len(word):]
+                            adjustment -= 1
+                            break
+                else:
+                    for word in neg_words:
+                        if word in window_words:
+                            pos = cleaned.find(word, start)
+                            if 0 <= pos <= start + 40:
+                                cleaned = cleaned[:pos] + "___" + cleaned[pos+len(word):]
+                                adjustment += 1
+                                break
+
+    return cleaned, adjustment
+
+
+def analyze_sentiment(text):
+    """Crypto-specific sentiment via keyword counting with negation handling.
+
+    Negation patterns (\"not bullish\", \"avoids crash\") are stripped before
+    counting to prevent false signals.  ``risk`` intentionally excluded
+    — too contextual (risk-on is bullish for BTC).
+
+    Word tokens are only counted when NOT already captured by a substring
+    match to avoid double-counting (e.g. \"bull\" inside \"bullish\")."""
+    text_lower, neg_adj = _strip_negations(text.lower())
     words = {re.sub(r"[^a-z0-9]", "", w) for w in text_lower.split()}
+
+    pos_sub_hits = sum(1 for s in _POSITIVE_SUB if s in text_lower)
+    neg_sub_hits = sum(1 for s in _NEGATIVE_SUB if s in text_lower)
+
+    pos_sub_covered = {w for w in _POSITIVE_WORDS if any(s.startswith(w) and s in text_lower for s in _POSITIVE_SUB)}
+    neg_sub_covered = {w for w in _NEGATIVE_WORDS if any(s.startswith(w) and s in text_lower for s in _NEGATIVE_SUB)}
+
     score = (
-        sum(1 for w in _POSITIVE_WORDS if w in words)
-        + sum(1 for s in _POSITIVE_SUB if s in text_lower)
-        - sum(1 for w in _NEGATIVE_WORDS if w in words)
-        - sum(1 for s in _NEGATIVE_SUB if s in text_lower)
+        sum(1 for w in _POSITIVE_WORDS if w in words and w not in pos_sub_covered)
+        + pos_sub_hits
+        - sum(1 for w in _NEGATIVE_WORDS if w in words and w not in neg_sub_covered)
+        - neg_sub_hits
+        + neg_adj  # flip sentiment for negated phrases
     )
     if score > 0:
         return "BULLISH", score
@@ -265,11 +383,17 @@ def analyze_geopolitical_impact(text):
         "ceasefire", "peace deal", "peace talks", "de-escalat",
         "trade deal", "agreement reached", "stabiliz", "recovery",
     )
-    t = text.lower()
+    # Apply negation — geo keywords are substrings, no separate word tokens
+    t, neg_adj = _strip_negations(
+        text.lower(),
+        pos_words=set(), neg_words=set(),  # no short word tokens for geo
+        pos_subs=_financial_risk,           # financial risk = bullish for BTC
+        neg_subs=_military_risk + _stability,  # conflict/stability = bearish
+    )
     fin = sum(1 for w in _financial_risk if w in t)
     mil = sum(1 for w in _military_risk if w in t)
     stab = sum(1 for w in _stability if w in t)
-    net = fin - mil - stab
+    net = fin - mil - stab + neg_adj
     if net > 0:
         return "BULLISH", net
     if net < 0:
@@ -322,6 +446,9 @@ def scrape_and_export():
     raw.extend(fetch_financialjuice())
     raw.extend(fetch_cointelegraph())
     raw.extend(fetch_decrypt())
+    raw.extend(fetch_beincrypto())
+    raw.extend(fetch_coindesk())
+    raw.extend(fetch_bitcoinist())
 
     # Deduplicate by title
     seen, unique = set(), []
@@ -347,7 +474,6 @@ def scrape_and_export():
             filtered.append(item)
 
     filtered.extend(fetch_coingecko_trending())
-    filtered.extend(fetch_reddit_sentiment())
 
     if filtered:
         crypto_count = sum(1 for a in filtered if a["category"] == "crypto")

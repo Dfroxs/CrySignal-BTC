@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 LOOKBACK_DAYS = 90
 MAX_HOLD_CANDLES = 72  # max candles to wait for TP/SL hit (72h)
 MIN_WARMUP = 200  # candles needed for EMA200
+SLIPPAGE_PCT = 0.001  # 0.1% per side (entry + exit) — typical BTC/USDT market impact
 
 
 # ---------------------------------------------------------------------------
@@ -71,38 +72,49 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h",
             continue
 
         # Simulate forward
-        entry = signal["entry_price"]
-        sl = signal["stop_loss"]
-        tp = signal["take_profit"]
+        raw_entry = signal["entry_price"]
+        raw_sl    = signal["stop_loss"]
+        raw_tp    = signal["take_profit"]
+
+        # Apply slippage: BUY pays more on entry, receives less on exit
+        if signal["type"] == "BUY":
+            entry = raw_entry * (1 + SLIPPAGE_PCT)
+            sl    = raw_sl    * (1 - SLIPPAGE_PCT)
+            tp    = raw_tp    * (1 - SLIPPAGE_PCT)
+        else:
+            entry = raw_entry * (1 - SLIPPAGE_PCT)
+            sl    = raw_sl    * (1 + SLIPPAGE_PCT)
+            tp    = raw_tp    * (1 + SLIPPAGE_PCT)
 
         outcome = "OPEN"
         hit_candle = None
-        hit_price = None
 
         for j in range(i + 1, min(i + 1 + MAX_HOLD_CANDLES, len(df))):
             high = df.iloc[j]["high"]
-            low = df.iloc[j]["low"]
+            low  = df.iloc[j]["low"]
 
             if signal["type"] == "BUY":
                 if high >= tp:
-                    outcome, hit_candle, hit_price = "WIN", j, tp
+                    outcome, hit_candle = "WIN", j
                     break
                 if low <= sl:
-                    outcome, hit_candle, hit_price = "LOSS", j, sl
+                    outcome, hit_candle = "LOSS", j
                     break
             else:  # SELL
                 if low <= tp:
-                    outcome, hit_candle, hit_price = "WIN", j, tp
+                    outcome, hit_candle = "WIN", j
                     break
                 if high >= sl:
-                    outcome, hit_candle, hit_price = "LOSS", j, sl
+                    outcome, hit_candle = "LOSS", j
                     break
 
         pnl_pct = 0
         if outcome == "WIN":
             pnl_pct = abs(tp - entry) / entry * 100
+            if signal["type"] == "SELL":
+                pnl_pct = abs(entry - tp) / entry * 100
         elif outcome == "LOSS":
-            pnl_pct = -abs(entry - sl) / entry * 100
+            pnl_pct = -(abs(entry - sl) / entry * 100)
 
         entry_time = df.iloc[i]["timestamp"]
         exit_time = df.iloc[hit_candle]["timestamp"] if hit_candle else None

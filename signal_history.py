@@ -7,6 +7,7 @@ preserving CSV export as fallback.
 import logging
 import os
 import sqlite3
+import threading
 from datetime import UTC, datetime
 from typing import Optional
 
@@ -17,6 +18,7 @@ from config import SIGNAL_HISTORY_CSV, SIGNAL_HISTORY_DB
 logger = logging.getLogger(__name__)
 
 DB = None  # lazy-init connection
+_DB_LOCK = threading.RLock()  # reentrant — _conn() is called from _init_tables/_migrate
 
 
 # ---------------------------------------------------------------------------
@@ -24,12 +26,13 @@ DB = None  # lazy-init connection
 # ---------------------------------------------------------------------------
 
 def _conn() -> sqlite3.Connection:
-    """Return (lazy-initialized) database connection."""
+    """Return (lazy-initialized) thread-safe database connection."""
     global DB
-    if DB is None:
-        DB = sqlite3.connect(SIGNAL_HISTORY_DB)
-        DB.row_factory = sqlite3.Row
-        _init_tables()
+    with _DB_LOCK:
+        if DB is None:
+            DB = sqlite3.connect(SIGNAL_HISTORY_DB, check_same_thread=False)
+            DB.row_factory = sqlite3.Row
+            _init_tables()
     return DB
 
 
@@ -56,18 +59,92 @@ def _init_tables():
             closed_at     TEXT
         );
 
-        CREATE TABLE IF NOT EXISTS paper_positions (
+        CREATE TABLE IF NOT EXISTS cycle_log (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            signal_id     INTEGER REFERENCES signals(id),
+            timestamp     TEXT    NOT NULL,
+            mode          TEXT    NOT NULL,
             type          TEXT    NOT NULL,
-            entry_price   REAL    NOT NULL,
-            stop_loss     REAL    NOT NULL,
-            take_profit   REAL    NOT NULL,
-            opened_at     TEXT    NOT NULL,
-            closed_at     TEXT,
-            outcome       TEXT,
-            pnl_pct       REAL
+            price         REAL    NOT NULL,
+            buy_score     REAL,
+            sell_score    REAL,
+            strength      REAL,
+            threshold     REAL,
+            gap_to_fire   REAL,
+            rsi           REAL,
+            stoch_k       REAL,
+            stoch_d       REAL,
+            macd          REAL,
+            macd_signal   REAL,
+            vwap          REAL,
+            ema200        REAL,
+            atr           REAL,
+            obv_slope     REAL,
+            bb_upper      REAL,
+            bb_lower      REAL,
+            rsi_div       TEXT,
+            funding_rate  REAL,
+            ls_ratio      REAL,
+            dxy           REAL,
+            dxy_change    REAL,
+            sp500         REAL,
+            sp500_change  REAL,
+            btc_dom       REAL,
+            stablecoin_b  REAL,
+            oi_change     REAL,
+            basis_pct     REAL,
+            fear_greed    INTEGER,
+            news_sentiment TEXT,
+            htf_data      TEXT,
+            reasons       TEXT,
+            open_positions INTEGER
         );
+
+        CREATE TABLE IF NOT EXISTS paper_positions (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            signal_id       INTEGER REFERENCES signals(id),
+            type            TEXT    NOT NULL,
+            entry_price     REAL    NOT NULL,
+            stop_loss       REAL    NOT NULL,
+            take_profit     REAL    NOT NULL,
+            opened_at       TEXT    NOT NULL,
+            closed_at       TEXT,
+            outcome         TEXT,
+            pnl_pct         REAL,
+            atr             REAL,
+            trailing_stop   REAL,
+            tp1             REAL,
+            tp2             REAL,
+            partial_closed  INTEGER DEFAULT 0,
+            partial_pnl     REAL
+        );
+    """)
+    c.commit()
+    _migrate_paper_positions()
+
+
+def _migrate_paper_positions():
+    """Add trailing-stop / partial-TP columns to existing paper_positions rows."""
+    c = _conn()
+    new_cols = [
+        ("atr",            "REAL"),
+        ("trailing_stop",  "REAL"),
+        ("tp1",            "REAL"),
+        ("tp2",            "REAL"),
+        ("partial_closed", "INTEGER DEFAULT 0"),
+        ("partial_pnl",    "REAL"),
+        ("mode",           "TEXT DEFAULT 'futures'"),
+    ]
+    for col, coltype in new_cols:
+        try:
+            c.execute(f"ALTER TABLE paper_positions ADD COLUMN {col} {coltype}")
+        except Exception:
+            pass  # column already exists
+    c.commit()
+
+    # Back-fill tp1 = take_profit for existing open positions that lack it
+    c.execute("""
+        UPDATE paper_positions SET tp1 = take_profit
+        WHERE tp1 IS NULL AND outcome IS NULL
     """)
     c.commit()
 
@@ -149,7 +226,7 @@ def log_signal(signal, df, htf=None):
         "",
     )
     c = _conn()
-    c.execute(
+    cur = c.execute(
         """INSERT INTO signals
            (timestamp, type, entry_price, stop_loss, take_profit,
             strength, rsi, stoch_k, vwap, htf_4h, htf_1d,
@@ -181,6 +258,96 @@ def log_signal(signal, df, htf=None):
         SIGNAL_HISTORY_CSV, mode="a", header=write_header, index=False,
     )
     logger.info("Signal logged → %s", SIGNAL_HISTORY_DB)
+    return cur.lastrowid
+
+
+def log_cycle(signal, df, market_structure, htf, mode):
+    """Log every cycle (including HOLD) to cycle_log for later analysis."""
+    last     = df.iloc[-1]
+    buy_s    = signal.get("buy_score", 0)
+    sell_s   = signal.get("sell_score", 0)
+    thresh   = signal.get("_threshold", 0)
+
+    # Market structure
+    mkt = market_structure or {}
+    funding  = mkt.get("funding", {})
+    ls       = mkt.get("long_short", {})
+    dxy      = mkt.get("dxy", {})
+    sp500    = mkt.get("sp500", {})
+    btcdom   = mkt.get("btc_dom", {})
+    stable   = mkt.get("stablecoin", {})
+    oi       = mkt.get("open_interest", {})
+
+    # HTF as JSON
+    htf_clean = {}
+    if htf:
+        for k, v in htf.items():
+            if k.endswith("_indicators") and isinstance(v, dict):
+                htf_clean[k] = {ik: iv for ik, iv in v.items()
+                                if not isinstance(iv, float) or iv == iv}  # skip NaN
+            else:
+                htf_clean[k] = v
+    import json
+    htf_json = json.dumps(htf_clean) if htf_clean else ""
+
+    # Reasons — top 10, cleaned
+    reasons_raw = signal.get("reasons", [])
+    reasons_clean = [r[2:].strip() if r[:1] in "✓✗⚠" else r.strip()
+                     for r in reasons_raw[:10]]
+
+    # Open positions count for this mode
+    open_count = len(get_open_positions(mode))
+
+    row = (
+        datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+        mode,
+        signal["type"],
+        round(last["close"], 2),
+        round(buy_s, 2),
+        round(sell_s, 2),
+        round(signal.get("strength", 0), 2),
+        round(thresh, 2),
+        round(thresh - max(buy_s, sell_s), 2) if signal["type"] == "HOLD" else 0,
+        round(last.get("RSI_14", 0), 2),
+        round(last.get("StochRSI_K") or 0, 2),
+        round(last.get("StochRSI_D") or 0, 2),
+        round(last.get("MACD", 0), 2),
+        round(last.get("MACD_Signal", 0), 2),
+        round(last.get("VWAP_24") or 0, 2),
+        round(last.get("EMA_200", 0), 2),
+        round(last.get("ATR_14", 0), 2),
+        round(df["OBV"].iloc[-1] - df["OBV"].iloc[-5], 2),
+        round(last.get("BB_Upper", 0), 2),
+        round(last.get("BB_Lower", 0), 2),
+        signal.get("rsi_divergence", "NONE"),
+        round(funding.get("rate_pct", 0), 6) if funding else 0,
+        round(ls.get("ratio", 1), 4) if ls else 0,
+        round(dxy.get("current", 0), 3) if dxy else 0,
+        round(dxy.get("change_pct", 0), 4) if dxy else 0,
+        round(sp500.get("current", 0), 2) if sp500 else 0,
+        round(sp500.get("change_pct", 0), 4) if sp500 else 0,
+        round(btcdom.get("current", 0), 2) if btcdom else 0,
+        round(stable.get("total_b", 0), 2) if stable else 0,
+        round(oi.get("change_pct", 0), 4) if oi else 0,
+        round(funding.get("basis_pct", 0), 6) if funding else 0,
+        signal.get("fear_greed_value"),
+        signal.get("news_sentiment", "NEUTRAL"),
+        htf_json,
+        " | ".join(reasons_clean),
+        open_count,
+    )
+    c = _conn()
+    c.execute(
+        """INSERT INTO cycle_log
+           (timestamp, mode, type, price, buy_score, sell_score, strength, threshold,
+            gap_to_fire, rsi, stoch_k, stoch_d, macd, macd_signal, vwap, ema200, atr,
+            obv_slope, bb_upper, bb_lower, rsi_div, funding_rate, ls_ratio, dxy,
+            dxy_change, sp500, sp500_change, btc_dom, stablecoin_b, oi_change,
+            basis_pct, fear_greed, news_sentiment, htf_data, reasons, open_positions)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        row,
+    )
+    c.commit()
 
 
 def update_signal_outcome(signal_id, outcome, closed_at=None):
@@ -197,35 +364,66 @@ def update_signal_outcome(signal_id, outcome, closed_at=None):
 # Paper position CRUD
 # ---------------------------------------------------------------------------
 
-def open_paper_position(signal):
+def open_paper_position(signal, mode='futures'):
     """Record a new open paper position from a BUY/SELL signal.
 
     Returns the position row id.
     """
     conn = _conn()
+    tp1 = signal["take_profit"]
+    tp2 = signal.get("tp2", tp1)
+    atr = signal.get("atr")
     cur = conn.execute(
         """INSERT INTO paper_positions
-           (type, entry_price, stop_loss, take_profit, opened_at)
-           VALUES (?,?,?,?,?)""",
+           (signal_id, type, entry_price, stop_loss, take_profit,
+            opened_at, atr, trailing_stop, tp1, tp2, partial_closed, mode)
+           VALUES (?,?,?,?,?,?,?,?,?,?,0,?)""",
         (
+            signal.get("db_id"),
             signal["type"],
             signal["entry_price"],
             signal["stop_loss"],
-            signal["take_profit"],
+            tp1,
             datetime.now(UTC).isoformat(),
+            atr,
+            signal["stop_loss"],   # trailing_stop starts at original SL
+            tp1,
+            tp2,
+            mode,
         ),
     )
     conn.commit()
     return cur.lastrowid
 
 
-def get_open_positions():
-    """Return list of dicts for all open paper positions."""
+def get_open_positions(mode=None):
+    """Return list of dicts for all open paper positions, optionally filtered by mode."""
     c = _conn()
-    rows = c.execute(
-        "SELECT * FROM paper_positions WHERE outcome IS NULL"
-    ).fetchall()
+    if mode is not None:
+        rows = c.execute(
+            "SELECT * FROM paper_positions WHERE outcome IS NULL AND mode = ?", (mode,)
+        ).fetchall()
+    else:
+        rows = c.execute(
+            "SELECT * FROM paper_positions WHERE outcome IS NULL"
+        ).fetchall()
     return [dict(r) for r in rows]
+
+
+def has_open_position_same_direction(direction, mode=None):
+    """Return True if an open position already exists with the same direction."""
+    c = _conn()
+    if mode is not None:
+        row = c.execute(
+            "SELECT COUNT(*) FROM paper_positions WHERE outcome IS NULL AND type = ? AND mode = ?",
+            (direction, mode),
+        ).fetchone()
+    else:
+        row = c.execute(
+            "SELECT COUNT(*) FROM paper_positions WHERE outcome IS NULL AND type = ?",
+            (direction,),
+        ).fetchone()
+    return row[0] > 0
 
 
 def close_paper_position(pos_id, outcome, pnl_pct, closed_at=None):
@@ -243,6 +441,32 @@ def close_paper_position(pos_id, outcome, pnl_pct, closed_at=None):
     c.commit()
 
 
+def update_trailing_stop(pos_id, new_sl):
+    """Move the trailing stop to *new_sl*."""
+    c = _conn()
+    c.execute(
+        "UPDATE paper_positions SET trailing_stop=? WHERE id=?",
+        (round(new_sl, 2), pos_id),
+    )
+    c.commit()
+
+
+def partial_close_position(pos_id, pnl_pct, new_sl):
+    """Record the first-half exit at TP1.
+
+    Marks partial_closed=1, stores partial_pnl, and moves
+    trailing_stop to breakeven (*new_sl* = entry price).
+    """
+    c = _conn()
+    c.execute(
+        """UPDATE paper_positions
+           SET partial_closed=1, partial_pnl=?, trailing_stop=?
+           WHERE id=?""",
+        (round(pnl_pct, 3), round(new_sl, 2), pos_id),
+    )
+    c.commit()
+
+
 # ---------------------------------------------------------------------------
 # Statistics
 # ---------------------------------------------------------------------------
@@ -256,41 +480,62 @@ def get_recent_signals(limit=50):
 
 
 def get_win_rate():
-    """Win rate (WINS / all resolved signals) as a float, or None."""
+    """Win rate = WINS / (WINS + LOSSES) from paper_positions.
+
+    MACRO_CLOSE and BREAKEVEN excluded from denominator.
+    Returns None when there is no resolved data.
+    """
     c = _conn()
     total = c.execute(
-        "SELECT COUNT(*) FROM signals WHERE outcome IN ('WIN','LOSS','BREAKEVEN')"
+        "SELECT COUNT(*) FROM paper_positions WHERE outcome IN ('WIN','LOSS')"
     ).fetchone()[0]
     if total == 0:
         return None
     wins = c.execute(
-        "SELECT COUNT(*) FROM signals WHERE outcome='WIN'"
+        "SELECT COUNT(*) FROM paper_positions WHERE outcome='WIN'"
     ).fetchone()[0]
     return wins / total
 
 
+def get_outcome_breakdown():
+    """Return dict of outcome → count from paper_positions for stats display."""
+    c = _conn()
+    rows = c.execute(
+        "SELECT outcome, COUNT(*) as cnt FROM paper_positions "
+        "WHERE outcome IS NOT NULL GROUP BY outcome"
+    ).fetchall()
+    return {r["outcome"]: r["cnt"] for r in rows}
+
+
 def get_profit_factor():
-    """Profit factor (total TP wins / total SL losses).  None if no data."""
+    """Profit factor = gross winning P&L / gross losing P&L from paper_positions.
+
+    Returns float('inf') when there are wins but no losses.
+    Returns None when there is no resolved data at all.
+    """
     c = _conn()
     wins = c.execute(
-        """SELECT COALESCE(SUM(ABS(take_profit - entry_price)), 0)
-           FROM signals WHERE outcome='WIN'"""
+        "SELECT COALESCE(SUM(pnl_pct), 0) FROM paper_positions WHERE outcome='WIN'"
     ).fetchone()[0]
     losses = c.execute(
-        """SELECT COALESCE(SUM(ABS(entry_price - stop_loss)), 0)
-           FROM signals WHERE outcome='LOSS'"""
+        "SELECT COALESCE(SUM(ABS(pnl_pct)), 0) FROM paper_positions WHERE outcome='LOSS'"
     ).fetchone()[0]
     if losses == 0:
-        return None
+        return float("inf") if wins > 0 else None
     return wins / losses
 
 
-def get_closed_pnl():
+def get_closed_pnl(mode=None):
     """Return (total_pnl_pct, total_trades, avg_pnl_pct) for paper positions."""
     c = _conn()
-    rows = c.execute(
-        "SELECT pnl_pct FROM paper_positions WHERE pnl_pct IS NOT NULL"
-    ).fetchall()
+    if mode is not None:
+        rows = c.execute(
+            "SELECT pnl_pct FROM paper_positions WHERE pnl_pct IS NOT NULL AND mode = ?", (mode,)
+        ).fetchall()
+    else:
+        rows = c.execute(
+            "SELECT pnl_pct FROM paper_positions WHERE pnl_pct IS NOT NULL"
+        ).fetchall()
     if not rows:
         return 0, 0, 0
     pnls = [r["pnl_pct"] for r in rows]
