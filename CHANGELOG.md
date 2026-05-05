@@ -4,6 +4,18 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-06 — Clean Notification Sections + Position Close Alerts
+
+### Changed
+
+- **Signal card redesigned with section headers** (`notifier.py`) — sections now grouped under emoji headers: 📊 Trade, 📈 Technicals, 🏦 Market, 📰 Sentiment, ✅ Reasons. Each section on its own line group for easy scanning.
+- **Position close notifications** (`notifier.py`, `paper_trader.py`, `run_bot.py`) — when positions exit (TP1/TP2/trailing stop/SL/macro force-close), a dedicated Telegram message is sent showing: type, entry→exit, P&L%, and outcome label.
+  - `check_and_close_positions()` now returns list of close-event dicts
+  - `_format_close_notification()` renders them as compact close cards
+  - Phase 3 in `run_bot.py` collects close events and sends notification
+
+---
+
 ## 2026-05-06 — Compact Telegram Notifications (Split per Mode)
 
 ### Changed
