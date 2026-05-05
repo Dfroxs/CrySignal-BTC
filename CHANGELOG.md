@@ -4,6 +4,23 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-06 — Notifikasi Diperkaya & Position Safety
+
+### Added
+
+- **Open position status in notifications** (`notifier.py`) — Telegram/Discord messages now include a section showing all open positions with entry, trailing stop, and TP1 progress. Also added `_format_position_status()` / `_format_position_status_discord()` helpers.
+- **Macro risk warning banner** (`notifier.py`) — when a signal is penalized for an upcoming HIGH impact event, a prominent "MACRO RISK" banner appears at the top of the notification.
+- **Outcome breakdown in performance footer** (`notifier.py`) — format `0W · 0L · 1MC` showing WIN / LOSS / MACRO_CLOSE / BREAKEVEN counts plus win rate. `get_outcome_breakdown()` added to `signal_history.py`.
+- **Macro-driven position force-close** (`paper_trader.py`) — `check_and_close_positions()` now gates on `check_upcoming_macro_events()`. If a HIGH impact USD event is <2h away, ALL open positions are force-closed at market price with outcome `MACRO_CLOSE`, regardless of mode. Macro risk trumps technical setups.
+- **Slippage warnings** (`paper_trader.py`) — `_check_slippage()` logs a warning when fill price is >1% past the trailing stop trigger, making 60-min cycle lag visible in logs.
+- **Duplicate same-direction position prevention** (`run_bot.py`, `signal_history.py`) — `has_open_position_same_direction()` checks whether an open position already exists with the same direction before opening a new one. This prevents stacking nearly identical entries when the same signal fires on consecutive cycles.
+
+### Fixed
+
+- **Win rate always None** (`signal_history.py`) — `get_win_rate()` was querying the `signals` table (never populated with outcomes) instead of `paper_positions`. Now queries `paper_positions WHERE outcome IN ('WIN','LOSS')`.
+
+---
+
 ## 2026-05-06 — Signal Quality & Performance Metrics Fixes
 
 ### Changed
@@ -29,7 +46,7 @@ All notable changes to the SpotSignal project.
 ### Changed
 
 - **`_format_section_telegram()` / `_format_section_discord()`** — Redesigned from compact one-liner to full-detail sections matching terminal output. Both HOLD and non-HOLD signals now show: Price & Trend (price, EMA200, 24h range, S/R), HTF alignment, Technicals (RSI, StochRSI, MACD, VWAP, ATR, OBV, divergence), Market Structure (mode-appropriate fields), Sentiment (F&G, news, top 3 headlines), and Signal Reasons (up to 10). Trade Setup (Entry/SL/TP/RR) only shown for BUY/SELL.
-- **Combined message char count** — ~2850 chars for two full sections (SPOT + FUTURES), well under the 4096-char Telegram limit.
+- **Combined message char count** — ~3200 chars for two full sections (SPOT + FUTURES) plus open positions and performance footer, still well under the 4096-char Telegram limit.
 
 ---
 
