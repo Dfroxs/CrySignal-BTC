@@ -4,6 +4,14 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-05 — Notifikasi Telegram & Discord Diperbarui
+
+### Changed
+
+- **Format pesan Telegram & Discord** — notifikasi BUY/SELL sekarang mencantumkan `Trail SL`, `TP1 (50%)`, dan `TP2 (50%)` sesuai mekanisme partial exit yang baru. TP2 hanya muncul jika tersedia di signal dict. Label `Stop Loss` dan `Take Profit` lama diganti dengan terminologi yang mencerminkan trailing stop dan split exit.
+
+---
+
 ## 2026-05-05 — Trailing Stop + Partial Take Profit
 
 ### Added

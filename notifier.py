@@ -19,24 +19,37 @@ logger = logging.getLogger(__name__)
 
 def _format_signal_message(signal, symbol="BTC/USDT"):
     """Build a plain-text alert string from a signal dict."""
-    icon = "\U0001f7e2" if signal["type"] == "BUY" else "\U0001f534"
+    icon  = "\U0001f7e2" if signal["type"] == "BUY" else "\U0001f534"
     entry = signal["entry_price"]
     sl    = signal["stop_loss"]
-    tp    = signal["take_profit"]
-    sl_pct = abs(entry - sl) / entry * 100
-    tp_pct = abs(tp - entry) / entry * 100
-    rr     = tp_pct / sl_pct if sl_pct > 0 else 0
+    tp1   = signal["take_profit"]
+    tp2   = signal.get("tp2")
+    atr   = signal.get("atr", 0)
 
-    return (
-        f"{icon} *{signal['type']} {symbol}*\n"
-        f"Entry:       `${entry:,.2f}`\n"
-        f"Stop Loss:   `${sl:,.2f}` (-{sl_pct:.2f}%)\n"
-        f"Take Profit: `${tp:,.2f}` (+{tp_pct:.2f}%)\n"
-        f"R/R:         `1:{rr:.2f}`\n"
-        f"Strength:    `{signal['strength']:.2f} / {SIGNAL_MAX_SCORE}`\n"
-        f"F&G:         `{signal.get('fear_greed_value', 'N/A')}"
-        f" — {signal.get('fear_greed_label', '')}`"
-    )
+    sl_pct  = abs(entry - sl)  / entry * 100
+    tp1_pct = abs(tp1 - entry) / entry * 100
+    rr      = tp1_pct / sl_pct if sl_pct > 0 else 0
+
+    trail_init = abs(atr * 1.0)   # trailing_atr_factor = 1.0
+    trail_pct  = trail_init / entry * 100 if entry else 0
+
+    lines = [
+        f"{icon} *{signal['type']} {symbol}*",
+        f"Entry:         `${entry:,.2f}`",
+        f"Trail SL:      `${sl:,.2f}` (-{sl_pct:.2f}%)",
+        f"TP1 (50%):     `${tp1:,.2f}` (+{tp1_pct:.2f}%)",
+    ]
+    if tp2:
+        tp2_pct = abs(tp2 - entry) / entry * 100
+        lines.append(f"TP2 (50%):     `${tp2:,.2f}` (+{tp2_pct:.2f}%)")
+
+    lines += [
+        f"R/R:           `1:{rr:.2f}`",
+        f"Strength:      `{signal['strength']:.2f} / {SIGNAL_MAX_SCORE}`",
+        f"F&G:           `{signal.get('fear_greed_value', 'N/A')}"
+        f" — {signal.get('fear_greed_label', '')}`",
+    ]
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -80,21 +93,28 @@ def send_discord_alert(signal, symbol="BTC/USDT"):
     if signal["type"] == "HOLD":
         return
 
-    icon = "\U0001f7e2" if signal["type"] == "BUY" else "\U0001f534"
+    icon  = "\U0001f7e2" if signal["type"] == "BUY" else "\U0001f534"
     entry = signal["entry_price"]
     sl    = signal["stop_loss"]
-    tp    = signal["take_profit"]
-    sl_pct = abs(entry - sl) / entry * 100
-    tp_pct = abs(tp - entry) / entry * 100
-    rr     = tp_pct / sl_pct if sl_pct > 0 else 0
+    tp1   = signal["take_profit"]
+    tp2   = signal.get("tp2")
+    sl_pct  = abs(entry - sl)  / entry * 100
+    tp1_pct = abs(tp1 - entry) / entry * 100
+    rr      = tp1_pct / sl_pct if sl_pct > 0 else 0
+
+    tp2_line = ""
+    if tp2:
+        tp2_pct = abs(tp2 - entry) / entry * 100
+        tp2_line = f"\nTP2 (50%): `{tp2:,.2f}` (+{tp2_pct:.2f}%)"
 
     text = (
         f"{icon} **{signal['type']} {symbol}**\n"
-        f"Entry:  `{entry:,.2f}`\n"
-        f"SL:     `{sl:,.2f}` (-{sl_pct:.2f}%)\n"
-        f"TP:     `{tp:,.2f}` (+{tp_pct:.2f}%)\n"
-        f"R/R:    `1:{rr:.2f}`\n"
-        f"Strength: `{signal['strength']:.2f}/{SIGNAL_MAX_SCORE}`"
+        f"Entry:     `{entry:,.2f}`\n"
+        f"Trail SL:  `{sl:,.2f}` (-{sl_pct:.2f}%)\n"
+        f"TP1 (50%): `{tp1:,.2f}` (+{tp1_pct:.2f}%)"
+        f"{tp2_line}\n"
+        f"R/R:       `1:{rr:.2f}`\n"
+        f"Strength:  `{signal['strength']:.2f}/{SIGNAL_MAX_SCORE}`"
     )
 
     try:
