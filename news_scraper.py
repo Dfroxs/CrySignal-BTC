@@ -234,33 +234,104 @@ def fetch_bitcoinist():
 # Whole-word tokens (avoid false positives on short words)
 _POSITIVE_WORDS = {
     "bull", "bulls", "gain", "gains", "rise", "rises",
-    "buy", "bought", "soar", "soars",
+    "buy", "bought", "soar", "soars", "long", "win",
 }
 _NEGATIVE_WORDS = {
     "bear", "bears", "loss", "losses", "sell", "sells",
     "ban", "bans", "drop", "drops", "dump",
+    # "short" intentionally excluded — ambiguous (short squeeze = bullish)
 }
 # Longer unambiguous substrings
 _POSITIVE_SUB = (
     "surge", "rally", "pump", "bullish", "profit", "approval",
     "breakout", "adoption", "upgrade", "accumulat",
+    # 2025+ ETF / institutional drivers
+    "etf inflow", "record inflow", "whale accumulat",
+    "institutional buy", "institutional demand",
+    "halving", "supply shock", "short squeeze", "short liquidat",
+    "regulatory clarity", "pro-bitcoin", "strategic reserve",
+    "all-time high", "new high", "outperform",
 )
 _NEGATIVE_SUB = (
     "crash", "bearish", "decline", "hack", "exploit", "lawsuit",
     "crackdown", "downturn", "reject", "liquidat",
+    # 2025+ ETF / institutional drivers
+    "etf outflow", "record outflow", "whale dump",
+    "whale sell", "institutional sell",
+    "miner capitulation", "hash rate drop",
+    "sec lawsuit", "doj", "regulatory crackdown",
+    "delist", "suspension", "underperform",
+)
+
+# Negation prefixes — when these appear before a sentiment word, flip or skip
+_NEGATION_PATTERNS = (
+    "not ", "no ", "isn't ", "aren't ", "wasn't ", "weren't ",
+    "doesn't ", "don't ", "didn't ", "won't ", "wouldn't ",
+    "avoid ", "avoids ", "avoiding ", "despite ",
+    "signs of ", "fears of ", "concerns of ",
 )
 
 
-def analyze_sentiment(text):
-    """Crypto-specific sentiment via keyword counting.
+def _strip_negations(text_lower):
+    """Adjust sentiment for negation patterns.
+    \"avoids sell-off\" → sell-off is negative, flip to positive.
+    \"not bullish\" → bullish is positive, flip to negative.
+    Returns (cleaned_text, adjustment) where adjustment is added to final score."""
+    cleaned = text_lower
+    adjustment = 0
 
-    Uses whole-word matching for short/ambiguous tokens and substring
-    matching for longer unambiguous ones.  ``risk`` intentionally excluded
+    for neg in _NEGATION_PATTERNS:
+        idx = cleaned.find(neg)
+        if idx < 0:
+            continue
+
+        start = idx + len(neg)
+        window = cleaned[start:start + 40]
+
+        # Check substrings first (longer, more specific)
+        for sub in sorted(_POSITIVE_SUB, key=len, reverse=True):
+            if sub in window:
+                cleaned = cleaned.replace(sub, "___", 1)
+                adjustment -= 1  # negated positive → flip to negative
+                break
+        else:
+            for sub in sorted(_NEGATIVE_SUB, key=len, reverse=True):
+                if sub in window:
+                    cleaned = cleaned.replace(sub, "___", 1)
+                    adjustment += 1  # negated negative → flip to positive
+                    break
+            else:
+                # Check word tokens
+                window_words = window.split()[:3]
+                for word in _POSITIVE_WORDS:
+                    if word in window_words:
+                        pos = cleaned.find(word, start)
+                        if 0 <= pos <= start + 40:
+                            cleaned = cleaned[:pos] + "___" + cleaned[pos+len(word):]
+                            adjustment -= 1
+                            break
+                else:
+                    for word in _NEGATIVE_WORDS:
+                        if word in window_words:
+                            pos = cleaned.find(word, start)
+                            if 0 <= pos <= start + 40:
+                                cleaned = cleaned[:pos] + "___" + cleaned[pos+len(word):]
+                                adjustment += 1
+                                break
+
+    return cleaned, adjustment
+
+
+def analyze_sentiment(text):
+    """Crypto-specific sentiment via keyword counting with negation handling.
+
+    Negation patterns (\"not bullish\", \"avoids crash\") are stripped before
+    counting to prevent false signals.  ``risk`` intentionally excluded
     — too contextual (risk-on is bullish for BTC).
 
     Word tokens are only counted when NOT already captured by a substring
-    match to avoid double-counting (e.g. "bull" inside "bullish")."""
-    text_lower = text.lower()
+    match to avoid double-counting (e.g. \"bull\" inside \"bullish\")."""
+    text_lower, neg_adj = _strip_negations(text.lower())
     words = {re.sub(r"[^a-z0-9]", "", w) for w in text_lower.split()}
 
     pos_sub_hits = sum(1 for s in _POSITIVE_SUB if s in text_lower)
@@ -274,6 +345,7 @@ def analyze_sentiment(text):
         + pos_sub_hits
         - sum(1 for w in _NEGATIVE_WORDS if w in words and w not in neg_sub_covered)
         - neg_sub_hits
+        + neg_adj  # flip sentiment for negated phrases
     )
     if score > 0:
         return "BULLISH", score
