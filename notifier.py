@@ -460,13 +460,19 @@ def _format_compact_signal_telegram(signal):
         # HTF
         htf = signal.get("_htf", {})
         if htf:
-            htf_keys = [k for k in htf if k != "aligned"]
+            htf_keys = [k for k in htf if k != "aligned" and not k.endswith("_indicators")]
             htf_parts = []
             for k in htf_keys:
+                ind = htf.get(f'{k}_indicators', {})
                 icon = _UP if htf[k] == "BULLISH" else _DOWN
-                htf_parts.append(f"{k.upper()}{icon}")
+                macd_icon = _UP if ind.get('macd') == 'BULLISH' else (_DOWN if ind.get('macd') == 'BEARISH' else '')
+                rsi_v = ind.get('rsi', 0)
+                rsi_tag = " OB" if rsi_v > 70 else (" OS" if rsi_v < 30 else "")
+                htf_parts.append(
+                    f"{k.upper()}{icon} RSI<code>{rsi_v:.0f}</code>{rsi_tag} MACD{macd_icon}"
+                )
             aligned = "✓" if htf.get("aligned") else "✗ Diverge"
-            lines.append("HTF  " + "  ".join(htf_parts) + f"  {aligned}")
+            lines.append("HTF  " + "  ·  ".join(htf_parts) + f"  {aligned}")
 
     # ── Market Structure ────────────────────────────────────
     if mkt:

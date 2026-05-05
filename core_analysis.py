@@ -548,15 +548,71 @@ def update_spot_threshold_state(signal_type):
 # MULTI-TIMEFRAME ANALYSIS
 # ============================================================================
 
+def _htf_indicators(df):
+    """Compute multi-timeframe indicators from OHLCV DataFrame.
+    Returns dict with trend, RSI, MACD, volume trend, and price position."""
+    close = df['close']
+    ema200 = calculate_ema(close, 200)
+    rsi14  = calculate_rsi(close, 14)
+    macd, macd_sig, _ = calculate_macd(close)
+
+    last     = close.iloc[-1]
+    ema_last = ema200.iloc[-1]
+    trend    = 'BULLISH' if last > ema_last else 'BEARISH'
+
+    # RSI zone
+    rsi_val = rsi14.iloc[-1]
+    if rsi_val < 30:
+        rsi_zone = 'oversold'
+    elif rsi_val < 45:
+        rsi_zone = 'low'
+    elif rsi_val <= 55:
+        rsi_zone = 'neutral'
+    elif rsi_val <= 70:
+        rsi_zone = 'elevated'
+    else:
+        rsi_zone = 'overbought'
+
+    # MACD
+    macd_bias = 'BULLISH' if macd.iloc[-1] > macd_sig.iloc[-1] else 'BEARISH'
+
+    # Volume trend (last 5 candles vs 20-period avg)
+    vol_avg  = df['volume'].rolling(20).mean().iloc[-1]
+    vol_last = df['volume'].tail(5).mean()
+    if vol_last > vol_avg * 1.3:
+        vol_trend = 'RISING'
+    elif vol_last < vol_avg * 0.7:
+        vol_trend = 'FALLING'
+    else:
+        vol_trend = 'FLAT'
+
+    # Price position — how far above/below EMA200
+    pct_from_ema = (last - ema_last) / ema_last * 100
+
+    return {
+        'trend': trend,
+        'rsi': round(rsi_val, 1),
+        'rsi_zone': rsi_zone,
+        'macd': macd_bias,
+        'vol_trend': vol_trend,
+        'pct_ema': round(pct_from_ema, 2),
+    }
+
+
 def get_htf_trend():
-    """Fetch 4H + 1D EMA200 trend for futures (1H base) analysis."""
-    htf = {'4h': 'NEUTRAL', '1d': 'NEUTRAL', 'aligned': False}
+    """Fetch 4H + 1D multi-timeframe analysis for futures (1H base).
+    Returns trend bias, RSI, MACD, and volume for each HTF."""
+    htf = {
+        '4h': 'NEUTRAL', '1d': 'NEUTRAL', 'aligned': False,
+        '4h_indicators': {}, '1d_indicators': {},
+    }
     try:
         for tf, key in [('4h', '4h'), ('1d', '1d')]:
-            bars = exchange.fetch_ohlcv('BTC/USDT', timeframe=tf, limit=220)
+            bars = exchange.fetch_ohlcv('BTC/USDT', timeframe=tf, limit=250)
             df   = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            ema200 = calculate_ema(df['close'], 200)
-            htf[key] = 'BULLISH' if df['close'].iloc[-1] > ema200.iloc[-1] else 'BEARISH'
+            ind  = _htf_indicators(df)
+            htf[key] = ind['trend']
+            htf[f'{key}_indicators'] = ind
         htf['aligned'] = htf['4h'] == htf['1d']
     except Exception as e:
         logger.warning(f"HTF fetch failed: {e}")
@@ -564,14 +620,19 @@ def get_htf_trend():
 
 
 def get_spot_htf_trend():
-    """Fetch 1D + 1W EMA200 trend for spot (4H base) analysis."""
-    htf = {'1d': 'NEUTRAL', '1w': 'NEUTRAL', 'aligned': False}
+    """Fetch 1D + 1W multi-timeframe analysis for spot (4H base).
+    Returns trend bias, RSI, MACD, and volume for each HTF."""
+    htf = {
+        '1d': 'NEUTRAL', '1w': 'NEUTRAL', 'aligned': False,
+        '1d_indicators': {}, '1w_indicators': {},
+    }
     try:
         for tf, key in [('1d', '1d'), ('1w', '1w')]:
-            bars = exchange.fetch_ohlcv('BTC/USDT', timeframe=tf, limit=220)
+            bars = exchange.fetch_ohlcv('BTC/USDT', timeframe=tf, limit=250)
             df   = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            ema200 = calculate_ema(df['close'], 200)
-            htf[key] = 'BULLISH' if df['close'].iloc[-1] > ema200.iloc[-1] else 'BEARISH'
+            ind  = _htf_indicators(df)
+            htf[key] = ind['trend']
+            htf[f'{key}_indicators'] = ind
         htf['aligned'] = htf['1d'] == htf['1w']
     except Exception as e:
         logger.warning(f"Spot HTF fetch failed: {e}")
@@ -794,18 +855,71 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     else:
         sell_conditions += 0.25
 
-    # 6 — Multi-timeframe alignment
+    # 6 — Multi-timeframe alignment (with RSI/MACD/volume confirmation)
     if htf:
-        htf_keys    = [k for k in htf if k != 'aligned']
+        htf_keys    = [k for k in htf if k != 'aligned' and not k.endswith('_indicators')]
         primary_key = '4h' if '4h' in htf else '1d'
         htf_label   = '  '.join(f"{k.upper()}: {htf[k]}" for k in htf_keys)
-        if htf['aligned']:
-            if htf.get(primary_key) == 'BULLISH':
-                buy_conditions += 1.5
-                signal['reasons'].append(f"✓ HTF Aligned BULLISH ({htf_label})")
-            elif htf.get(primary_key) == 'BEARISH':
-                sell_conditions += 1.5
-                signal['reasons'].append(f"✗ HTF Aligned BEARISH ({htf_label})")
+
+        # Extract indicators
+        ind_keys = [f'{k}_indicators' for k in htf_keys]
+        indicators = [htf.get(ik, {}) for ik in ind_keys if htf.get(ik)]
+
+        def _htf_score(direction, indicators):
+            """Score HTF alignment with RSI & MACD confirmation."""
+            score = 0.0
+            rsi_all_ok = all(
+                (direction == 'BUY' and ind.get('rsi_zone') in ('oversold', 'low', 'neutral')) or
+                (direction == 'SELL' and ind.get('rsi_zone') in ('overbought', 'elevated', 'neutral'))
+                for ind in indicators
+            )
+            macd_all_ok = all(ind.get('macd') == ('BULLISH' if direction == 'BUY' else 'BEARISH')
+                             for ind in indicators)
+            vol_rising = any(ind.get('vol_trend') == 'RISING' for ind in indicators)
+
+            if htf['aligned']:
+                if rsi_all_ok:
+                    score = 1.5   # full weight — RSI confirms trend
+                else:
+                    score = 0.75  # reduced — trend exists but RSI warns
+                if macd_all_ok:
+                    score += 0.25  # MACD bonus
+            else:
+                # HTF diverging, but check for extreme RSI — potential reversal
+                for ind in indicators:
+                    if direction == 'BUY' and ind.get('rsi_zone') == 'oversold':
+                        score += 0.75  # one HTF deeply oversold
+                    elif direction == 'SELL' and ind.get('rsi_zone') == 'overbought':
+                        score += 0.75
+
+            if vol_rising:
+                score += 0.25  # volume bonus
+
+            return min(score, 2.0)  # cap
+
+        buy_add = _htf_score('BUY', indicators)
+        sell_add = _htf_score('SELL', indicators)
+
+        if buy_add > 0:
+            buy_conditions += buy_add
+            detail = f"HTF{' aligned' if htf['aligned'] else ''}"
+            if any(ind.get('rsi_zone') in ('oversold', 'low') for ind in indicators):
+                detail += " + RSI supports"
+            if any(ind.get('macd') == 'BULLISH' for ind in indicators):
+                detail += " + MACD confirms"
+            if any(ind.get('vol_trend') == 'RISING' for ind in indicators):
+                detail += " + Vol rising"
+            signal['reasons'].append(f"✓ {detail} ({htf_label})")
+        elif sell_add > 0:
+            sell_conditions += sell_add
+            detail = f"HTF{' aligned' if htf['aligned'] else ''}"
+            if any(ind.get('rsi_zone') in ('overbought', 'elevated') for ind in indicators):
+                detail += " + RSI supports"
+            if any(ind.get('macd') == 'BEARISH' for ind in indicators):
+                detail += " + MACD confirms"
+            if any(ind.get('vol_trend') == 'RISING' for ind in indicators):
+                detail += " + Vol rising"
+            signal['reasons'].append(f"✗ {detail} ({htf_label})")
         else:
             signal['reasons'].append(f"⚠️  HTF Disagreement ({htf_label}) — caution")
 
@@ -1443,8 +1557,16 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
         print(f"  {_C['bld']}MULTI-TIMEFRAME{_C['rst']}")
         print(sep)
         a = f"{_C['grn']}✓ ALIGNED{_C['rst']}" if htf["aligned"] else f"{_C['red']}✗ DIVERGING{_C['rst']}"
-        for k in [k for k in htf if k != 'aligned']:
-            _kv(k.upper(), htf[k])
+        for k in [k for k in htf if k != 'aligned' and not k.endswith('_indicators')]:
+            ind = htf.get(f'{k}_indicators', {})
+            rsi_v  = ind.get('rsi', 0)
+            macd_v = ind.get('macd', '')
+            vol_v  = ind.get('vol_trend', '')
+            rsi_str = f"{_C['grn']}OS{_C['rst']}" if rsi_v < 30 else (f"{_C['red']}OB{_C['rst']}" if rsi_v > 70 else f"{rsi_v:.0f}")
+            macd_str = f"{_C['grn']}▲{_C['rst']}" if macd_v == 'BULLISH' else (f"{_C['red']}▼{_C['rst']}" if macd_v == 'BEARISH' else "─")
+            vol_str  = f"{_C['grn']}▲{_C['rst']}" if vol_v == 'RISING' else (f"{_C['red']}▼{_C['rst']}" if vol_v == 'FALLING' else "─")
+            detail = f"{htf[k]}  RSI {rsi_str}  MACD {macd_str}  Vol {vol_str}"
+            _kv(k.upper(), detail)
         _kv("Alignment", a)
 
     # ── MARKET STRUCTURE ───────────────────────────────────────────
