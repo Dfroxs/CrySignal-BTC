@@ -64,15 +64,15 @@ def run_cycle():
     logger.info("[PHASE 3] Updating paper positions ...")
     phase3_actions = []  # track what happened for summary
     try:
-        # Spot positions
+        # Spot positions — max 1 BUY + 1 SELL (one per direction)
         if spot_signal and spot_signal["type"] != "HOLD":
             spot_open = len(get_open_positions("spot"))
             if spot_open >= RISK_CONFIG["max_positions"]:
-                msg = f"Max spot ({RISK_CONFIG['max_positions']}) — skipping {spot_signal['type']}"
+                msg = f"Spot max {RISK_CONFIG['max_positions']} positions — skipping {spot_signal['type']}"
                 logger.info(msg)
                 phase3_actions.append(f"⏭ SPOT: {msg}")
             elif has_open_position_same_direction(spot_signal["type"], "spot"):
-                msg = f"Duplicate {spot_signal['type']} direction — skipping spot"
+                msg = f"Already have open {spot_signal['type']} spot — skipping"
                 logger.info(msg)
                 phase3_actions.append(f"⏭ SPOT: {msg}")
             else:
@@ -81,15 +81,15 @@ def run_cycle():
                 logger.info(msg)
                 phase3_actions.append(f"✅ {msg}")
 
-        # Futures positions
+        # Futures positions — max 1 LONG + 1 SHORT (one per direction)
         if futures_signal and futures_signal["type"] != "HOLD":
             fut_open = len(get_open_positions("futures"))
             if fut_open >= FUTURES_CONFIG["max_positions"]:
-                msg = f"Max futures ({FUTURES_CONFIG['max_positions']}) — skipping {futures_signal['type']}"
+                msg = f"Futures max {FUTURES_CONFIG['max_positions']} positions — skipping {futures_signal['type']}"
                 logger.info(msg)
                 phase3_actions.append(f"⏭ FUT: {msg}")
             elif has_open_position_same_direction(futures_signal["type"], "futures"):
-                msg = f"Duplicate {futures_signal['type']} direction — skipping futures"
+                msg = f"Already have open {futures_signal['type']} futures — skipping"
                 logger.info(msg)
                 phase3_actions.append(f"⏭ FUT: {msg}")
             else:

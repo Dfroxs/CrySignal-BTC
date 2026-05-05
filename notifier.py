@@ -398,8 +398,13 @@ def _format_compact_signal_telegram(signal):
         lines = [f"🔴 <b>SELL</b> · {label}{conf_str}"]
     else:
         lines = [f"⏸ <b>HOLD</b> · {label}"]
-
-    lines.append(f"Score {score:.2f}/{mscore}  ·  Threshold <i>{_esc(str(signal.get('_threshold', '')))}</i>")
+        # Show gap — how close to firing
+        buy_s  = signal.get("buy_score", 0)
+        sell_s = signal.get("sell_score", 0)
+        threshold = signal.get("_threshold", 0)
+        gap = threshold - max(buy_s, sell_s)
+        dir_str = "BUY" if buy_s > sell_s else ("SELL" if sell_s > buy_s else "—")
+        lines.append(f"Score {score:.2f}/{mscore}  ·  Gap to {dir_str} <code>{gap:.2f}</code>")
 
     # ── Trade Setup ─────────────────────────────────────────
     if stype != "HOLD" and signal.get("stop_loss"):
@@ -551,15 +556,16 @@ def _format_close_notification(closed):
 
 
 def _format_position_telegram():
-    """Short position status + performance footer. ~400 chars."""
-    sections = []
+    """Position status + P&amp;L report — clean, one message. ~350 chars."""
+    lines = []
 
     # ── Open Positions ──────────────────────────────────────
     spot_pos = _sh.get_open_positions("spot")
     fut_pos  = _sh.get_open_positions("futures")
     all_pos  = list(spot_pos) + list(fut_pos)
+
     if all_pos:
-        pos_lines = ["<b>📝 Open</b>"]
+        lines.append("<b>📝 Open</b>")
         for pos in all_pos:
             icon  = "🟢" if pos["type"] == "BUY" else "🔴"
             mode  = pos.get("mode", "fut")[:3].upper()
@@ -568,39 +574,39 @@ def _format_position_telegram():
             tp1   = pos.get("tp1") or pos["take_profit"]
             tp1pct = abs(entry - tp1) / entry * 100 if entry else 0
             partial = " ½" if pos.get("partial_closed") else ""
-            pos_lines.append(
-                f"{icon} {mode}{partial} <code>${entry:,.0f}</code>  "
-                f"Trail <code>${trail:,.0f}</code>  "
-                f"TP1 <code>${tp1:,.0f}</code> (+{tp1pct:.1f}%)"
+            lines.append(
+                f"{icon} {mode}{partial} "
+                f"<code>${entry:,.0f}</code> → TP1 <code>${tp1:,.0f}</code> "
+                f"(+{tp1pct:.1f}%)  Trail <code>${trail:,.0f}</code>"
             )
-        sections.append("\n".join(pos_lines))
+        lines.append("")  # blank line before P&L
 
     # ── Performance ─────────────────────────────────────────
     try:
         spot_pnl, spot_cnt, _ = _sh.get_closed_pnl("spot")
         fut_pnl, fut_cnt, _   = _sh.get_closed_pnl("futures")
         total_trades = spot_cnt + fut_cnt
+
         if total_trades > 0:
             bd = _sh.get_outcome_breakdown()
             w  = bd.get("WIN", 0)
             l  = bd.get("LOSS", 0)
             mc = bd.get("MACRO_CLOSE", 0)
-            wr = f" WR {w/(w+l)*100:.0f}%" if (w + l) > 0 else ""
+            wr = f"WR {w/(w+l)*100:.0f}%" if (w + l) > 0 else ""
 
-            perf_lines = ["<b>📉 P&amp;L</b>"]
+            lines.append("<b>📉 P&amp;L</b>")
             if spot_cnt > 0:
-                perf_lines.append(f"SPOT  {spot_cnt}t  P&amp;L {_esc(f'{spot_pnl:+.2f}%')}")
+                lines.append(f"SPOT {spot_cnt}t  {_esc(f'{spot_pnl:+.2f}%')}")
             if fut_cnt > 0:
-                perf_lines.append(f"FUT  {fut_cnt}t  P&amp;L {_esc(f'{fut_pnl:+.2f}%')}")
-            outcome_parts = [f"{w}W", f"{l}L"]
-            if mc:
-                outcome_parts.append(f"{mc}MC")
-            perf_lines.append(" · ".join(outcome_parts) + wr)
-            sections.append("\n".join(perf_lines))
+                lines.append(f"FUT  {fut_cnt}t  {_esc(f'{fut_pnl:+.2f}%')}")
+            outcome = " · ".join([f"{w}W", f"{l}L"] + ([f"{mc}MC"] if mc else []))
+            lines.append(f"{outcome}  {wr}")
+        elif all_pos:
+            lines.append("<b>📉 P&amp;L</b>  No closed trades yet")
     except Exception:
         pass
 
-    return "\n\n".join(sections) if sections else None
+    return "\n".join(lines) if lines else None
 
 
 # ---------------------------------------------------------------------------
@@ -1084,20 +1090,19 @@ def send_signal_alert(spot_signal=None, futures_signal=None, symbol="BTC/USDT"):
     # Backward compat: positional single-signal call
     if futures_signal is None and spot_signal is not None and isinstance(spot_signal, dict):
         if "mode" not in spot_signal:
-            # Old-style call: send_signal_alert(signal)
             single = spot_signal
-            if single["type"] != "HOLD":
-                send_telegram_alert(single, symbol)
-                send_discord_alert(single, symbol)
+            text = _format_compact_signal_telegram(single)
+            _send_telegram_message(text, "signal")
+            send_discord_alert(single, symbol)
             return
 
     has_spot    = spot_signal is not None
     has_futures = futures_signal is not None
-    spot_active    = has_spot    and spot_signal.get("type") != "HOLD"
-    futures_active = has_futures and futures_signal.get("type") != "HOLD"
+    spot_active    = has_spot and spot_signal is not None
+    futures_active = has_futures and futures_signal is not None
 
     if not spot_active and not futures_active:
-        return  # both HOLD — silent
+        return  # nothing to send
 
     if has_spot and has_futures:
         _send_combined_telegram(spot_signal, futures_signal, symbol)
@@ -1144,14 +1149,14 @@ def _send_combined_telegram(spot_signal, futures_signal, symbol):
         if _send_telegram_message(macro_warn, "macro-warning"):
             sent += 1
 
-    # SPOT signal card
-    if spot_signal and spot_signal.get("type") != "HOLD":
+    # SPOT signal card — always send (even HOLD)
+    if spot_signal:
         text = _format_compact_signal_telegram(spot_signal)
         if _send_telegram_message(text, "spot-signal"):
             sent += 1
 
-    # FUTURES signal card
-    if futures_signal and futures_signal.get("type") != "HOLD":
+    # FUTURES signal card — always send (even HOLD)
+    if futures_signal:
         text = _format_compact_signal_telegram(futures_signal)
         if _send_telegram_message(text, "futures-signal"):
             sent += 1

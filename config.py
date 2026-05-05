@@ -37,7 +37,7 @@ RISK_CONFIG = {
     "atr_multiplier":        1.5,
     "take_profit_rr":        2.5,
     "trailing_atr_factor":   1.0,   # trail distance = ATR × this (tighter than entry SL)
-    "max_positions":         2,     # max concurrent spot paper positions
+    "max_positions":         2,     # max 1 BUY + 1 SELL (one per direction)
 }
 
 FUTURES_CONFIG = {
@@ -46,7 +46,7 @@ FUTURES_CONFIG = {
     "futures_balance":       float(os.getenv("FUTURES_BALANCE", 500)),
     "risk_per_trade":        0.03,
     "max_margin_pct":        0.20,
-    "max_positions":         2,     # max concurrent futures paper positions
+    "max_positions":         2,     # max 1 LONG + 1 SHORT (one per direction)
 }
 
 
