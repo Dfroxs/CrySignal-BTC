@@ -1,7 +1,7 @@
 # SpotSignal
 
 BTC/USDT trading signal generator — fetches live market data, scrapes news sentiment
-from 7 free sources, scores 17 weighted conditions, and outputs BUY / SELL / HOLD
+from 6 free sources, scores 17 weighted conditions, and outputs BUY / SELL / HOLD
 signals with ATR-based stop-loss and take-profit levels.
 
 ## Quick Start
@@ -13,6 +13,19 @@ cp .env.example .env                  # optional — add Telegram/Discord tokens
 python3 run_bot.py                    # one shot
 python3 run_bot.py --loop 60          # run every 60 min until Ctrl+C
 ```
+
+---
+
+## Disclaimer
+
+**This is a hobby project for studying and experimenting with crypto
+signal algorithms.** It is not financial advice. Do not trade real
+money based on these signals. Have fun, learn something, break stuff —
+just don't YOLO your rent money on a bot written on a Sunday afternoon.
+
+Paper trading is simulated. Past backtest results do not guarantee
+future performance. Markets are unpredictable. The bot will be wrong
+sometimes. That's the fun part — figuring out why.
 
 ---
 
@@ -230,6 +243,10 @@ All values in `config.py`, overridable via `.env` or environment variables:
 | `data/macro_events.csv` | USD macro calendar events |
 | `data/signal_history.csv` | Signal log (CSV fallback) |
 | `data/signal_history.db` | Signal log + paper positions (SQLite) |
+| `data/stablecoin_cache.json` | Previous stablecoin market cap for trend |
+| `data/btc_dom_cache.json` | Previous BTC dominance for trend |
+| `data/oi_cache.json` | Previous open interest for trend |
+| `data/threshold_state.json` | Adaptive threshold signal counter |
 
 ## Backtesting
 

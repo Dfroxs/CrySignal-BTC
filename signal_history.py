@@ -202,8 +202,8 @@ def open_paper_position(signal):
 
     Returns the position row id.
     """
-    c = _conn()
-    c.execute(
+    conn = _conn()
+    cur = conn.execute(
         """INSERT INTO paper_positions
            (type, entry_price, stop_loss, take_profit, opened_at)
            VALUES (?,?,?,?,?)""",
@@ -215,8 +215,8 @@ def open_paper_position(signal):
             datetime.now(UTC).isoformat(),
         ),
     )
-    c.commit()
-    return c.lastrowid
+    conn.commit()
+    return cur.lastrowid
 
 
 def get_open_positions():

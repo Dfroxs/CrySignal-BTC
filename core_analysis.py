@@ -1182,6 +1182,7 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None):
     time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
     print(f"{_C['dim']}│{_C['rst']} {_C['bld']}{_C['wht']}{title:^{_M - 4}}{_C['dim']} │{_C['rst']}")
     print(f"{_C['dim']}│{_C['rst']} {_C['gry']}{time_str:^{_M - 4}}{_C['dim']} │{_C['rst']}")
+    print(f"{_C['dim']}│{_C['rst']} {_C['gry']}{'hobby · study · experiment — not financial advice · have fun':^{_M - 4}}{_C['dim']} │{_C['rst']}")
     print(f"{_C['dim']}╰{'─' * (_M - 2)}╯{_C['rst']}")
 
     # ── signal verdict ────────────────────────────────────────────
@@ -1361,28 +1362,126 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None):
     except Exception:
         pass
 
-    # ── POSITION SIZING ───────────────────────────────────────────
-    pos = calculate_position_size(signal)
-    if signal["type"] != "HOLD" and signal.get("stop_loss"):
-        futures = calculate_futures_position(signal)
-        print()
-        print(f"  {_C['bld']}POSITION SIZING{_C['rst']}")
-        print(sep)
-        rr = abs(signal["take_profit"] - signal["entry_price"]) / abs(signal["entry_price"] - signal["stop_loss"])
-        _kv("Entry",       f"${signal['entry_price']:,.0f}")
-        _kv("Stop Loss",   f"${signal['stop_loss']:,.0f}")
-        _kv("Take Profit", f"${signal['take_profit']:,.0f}")
-        _kv("R/R",         f"1:{rr:.2f}")
-        _kv("Spot Size",   f"${pos['usdt_amount']:,.0f}  ({pos['position_ratio']:.1f}% of acct)")
-        _kv("Risk",        f"${pos['risk_amount']:,.0f}  ({RISK_CONFIG['risk_per_trade']*100:.0f}% per trade)")
-        if futures:
-            _kv("Futures",  f"{futures['direction']} {futures['leverage']}x  Margin ${futures['margin']:,.0f}  Liq ${futures['liquidation_price']:,.0f}")
-
-    # ── NOTE ───────────────────────────────────────────────────────
+    # ── POSITION SIZING (always shown) ─────────────────────────────
     buy_s  = signal.get("buy_score", 0)
     sell_s = signal.get("sell_score", 0)
-    gap    = effective_threshold - max(buy_s, sell_s)
     direction = "BUY" if buy_s > sell_s else ("SELL" if sell_s > buy_s else "neutral")
+
+    pos = calculate_position_size(signal)
+    is_active = signal["type"] != "HOLD" and signal.get("stop_loss")
+    futures = calculate_futures_position(signal) if is_active else None
+    entry_px = signal.get("entry_price", last["close"])
+    atr = last.get("ATR_14", 0)
+
+    # Simulation balances
+    spot_start     = RISK_CONFIG["account_balance"]
+    futures_start  = FUTURES_CONFIG["futures_balance"]
+    try:
+        total_pnl_pct, closed_count, avg_pnl = _sh.get_closed_pnl()
+    except Exception:
+        total_pnl_pct, closed_count, avg_pnl = 0, 0, 0
+    spot_pnl_pct    = total_pnl_pct * 0.6
+    futures_pnl_pct = total_pnl_pct * 0.4
+    spot_now        = spot_start    * (1 + spot_pnl_pct    / 100)
+    futures_now     = futures_start * (1 + futures_pnl_pct / 100)
+
+    print()
+    print(f"  {_C['bld']}POSITION SIZING{_C['rst']}")
+    print(sep)
+    _kv("Entry Price", f"${entry_px:,.0f}" if is_active else f"${last['close']:,.0f}")
+
+    # -- SPOT --------------------------------------------------------
+    print(f"  {_C['bld']}SPOT{_C['rst']}  ──  {_C['dim']}Balance  ${spot_start:,.0f}{_C['rst']}", end="")
+    if closed_count > 0:
+        pnl_col = "grn" if spot_pnl_pct >= 0 else "red"
+        print(f"  {_C['dim']}→  now {_C[pnl_col]}${spot_now:,.0f}{_C['rst']}  {_C[('dim' if abs(spot_pnl_pct) < 1 else pnl_col)]}({spot_pnl_pct:+.1f}%){_C['rst']}")
+    else:
+        print()
+    if is_active:
+        sl = signal["stop_loss"]
+        tp = signal["take_profit"]
+        sl_pct = abs(entry_px - sl) / entry_px * 100
+        tp_pct = abs(tp - entry_px) / entry_px * 100
+        rr = tp_pct / sl_pct if sl_pct > 0 else 0
+        _kv("  Stop Loss",   f"${sl:,.0f}  (-{sl_pct:.2f}%)")
+        _kv("  Take Profit", f"${tp:,.0f}  (+{tp_pct:.2f}%)")
+        _kv("  Risk/Reward", f"1:{rr:.2f}")
+        _kv("  Position",    f"${pos['usdt_amount']:,.0f}  ({pos['position_ratio']:.1f}% of balance)")
+        _kv("  Max Risk",    f"${pos['risk_amount']:,.0f}  ({RISK_CONFIG['risk_per_trade']*100:.0f}% per trade)")
+    else:
+        if atr > 0 and direction != "neutral":
+            sl_dist = atr * RISK_CONFIG["atr_multiplier"]
+            tp_dist = sl_dist * RISK_CONFIG["take_profit_rr"]
+            if direction == "BUY":
+                hypo_sl = last["close"] - sl_dist
+                hypo_tp = last["close"] + tp_dist
+            else:
+                hypo_sl = last["close"] + sl_dist
+                hypo_tp = last["close"] - tp_dist
+            _kv("  Stop Loss",   f"{_C['gry']}~${hypo_sl:,.0f} (if fired){_C['rst']}")
+            _kv("  Take Profit", f"{_C['gry']}~${hypo_tp:,.0f} (if fired){_C['rst']}")
+            _kv("  Risk/Reward", f"{_C['gry']}1:{RISK_CONFIG['take_profit_rr']:.1f}{_C['rst']}")
+        else:
+            _kv("  Stop Loss",   "-")
+            _kv("  Take Profit", "-")
+            _kv("  Risk/Reward", "-")
+        _kv("  Position",   f"{_C['gry']}—  (no trade){_C['rst']}")
+        _kv("  Max Risk",   f"${spot_start * RISK_CONFIG['risk_per_trade']:,.0f}  ({RISK_CONFIG['risk_per_trade']*100:.0f}% per trade)")
+
+    # -- FUTURES -----------------------------------------------------
+    print(f"  {_C['bld']}FUTURES{_C['rst']}  ──  {_C['dim']}Balance  ${futures_start:,.0f}{_C['rst']}", end="")
+    if closed_count > 0:
+        pnl_col = "grn" if futures_pnl_pct >= 0 else "red"
+        print(f"  {_C['dim']}→  now {_C[pnl_col]}${futures_now:,.0f}{_C['rst']}  {_C[('dim' if abs(futures_pnl_pct) < 1 else pnl_col)]}({futures_pnl_pct:+.1f}%){_C['rst']}")
+    else:
+        print()
+    if is_active:
+        sl = signal["stop_loss"]
+        tp = signal["take_profit"]
+        sl_pct = abs(entry_px - sl) / entry_px * 100
+        tp_pct = abs(tp - entry_px) / entry_px * 100
+        rr = tp_pct / sl_pct if sl_pct > 0 else 0
+        _kv("  Stop Loss",   f"${sl:,.0f}  (-{sl_pct:.2f}%)")
+        _kv("  Take Profit", f"${tp:,.0f}  (+{tp_pct:.2f}%)")
+        _kv("  Risk/Reward", f"1:{rr:.2f}")
+        if futures:
+            _kv("  Direction",  f"{futures['direction']}")
+            _kv("  Leverage",   f"{futures['leverage']}x  [{futures['tier']}]")
+            _kv("  Margin",     f"${futures['margin']:,.0f}  ({futures['margin_pct']:.1f}% of balance)")
+            _kv("  Pos. Value", f"${futures['position_value']:,.0f}")
+            _kv("  Liquidation",f"${futures['liquidation_price']:,.0f}")
+            _kv("  Max Risk",   f"${futures['risk_amount']:,.0f}  ({FUTURES_CONFIG['risk_per_trade']*100:.0f}% per trade)")
+        else:
+            _kv("  Direction",  "-")
+            _kv("  Leverage",   "-")
+            _kv("  Margin",     "-")
+            _kv("  Liquidation","-")
+            _kv("  Max Risk",   "-")
+    else:
+        if atr > 0 and direction != "neutral":
+            sl_dist = atr * RISK_CONFIG["atr_multiplier"]
+            tp_dist = sl_dist * RISK_CONFIG["take_profit_rr"]
+            if direction == "BUY":
+                hypo_sl = last["close"] - sl_dist
+                hypo_tp = last["close"] + tp_dist
+            else:
+                hypo_sl = last["close"] + sl_dist
+                hypo_tp = last["close"] - tp_dist
+            _kv("  Stop Loss",   f"{_C['gry']}~${hypo_sl:,.0f} (if fired){_C['rst']}")
+            _kv("  Take Profit", f"{_C['gry']}~${hypo_tp:,.0f} (if fired){_C['rst']}")
+            _kv("  Risk/Reward", f"{_C['gry']}1:{RISK_CONFIG['take_profit_rr']:.1f}{_C['rst']}")
+        else:
+            _kv("  Stop Loss",   "-")
+            _kv("  Take Profit", "-")
+            _kv("  Risk/Reward", "-")
+        _kv("  Direction",   "-")
+        _kv("  Leverage",    "-")
+        _kv("  Margin",      "-")
+        _kv("  Liquidation", "-")
+        _kv("  Max Risk",    f"${futures_start * FUTURES_CONFIG['risk_per_trade']:,.0f}  ({FUTURES_CONFIG['risk_per_trade']*100:.0f}% per trade)")
+
+    # ── NOTE ───────────────────────────────────────────────────────
+    gap = effective_threshold - max(buy_s, sell_s)
 
     print()
     print(f"  {_C['bld']}NOTE{_C['rst']}")
@@ -1417,6 +1516,60 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None):
             print(f"  {'Paper P&L:':<14} {_C['dim']}{count} closed trades{_C['rst']}  avg {_C[pnl_col]}{avg_pnl:+.2f}%{_C['rst']}")
     except Exception:
         pass
+
+    # ── VERDICT (plain‑English for new traders) ────────────────────
+    print()
+    print(f"  {_C['bld']}WHAT THIS MEANS{_C['rst']}")
+    print(sep)
+
+    if signal["type"] == "BUY":
+        print(f"  {_C['grn']}▶ OPEN A LONG{_C['rst']} — indicators agree on upward move.")
+        print(f"  {_C['dim']}  Buy spot or open a futures long.  Use the SL and TP above.{_C['rst']}")
+    elif signal["type"] == "SELL":
+        print(f"  {_C['red']}▶ OPEN A SHORT{_C['rst']} — indicators agree on downward move.")
+        print(f"  {_C['dim']}  Short spot or open a futures short.  Use the SL and TP above.{_C['rst']}")
+    else:
+        if direction == "BUY":
+            print(f"  {_C['yel']}■ WAIT{_C['rst']} — bullish signals are building, but not enough to buy yet.")
+        elif direction == "SELL":
+            print(f"  {_C['yel']}■ WAIT{_C['rst']} — bearish signals are building, but not enough to sell yet.")
+        else:
+            print(f"  {_C['yel']}■ WAIT{_C['rst']} — market is neutral.  No clear direction.")
+        print(f"  {_C['dim']}  The bot waits for strong agreement before risking capital.{_C['rst']}")
+        if gap > 0:
+            print(f"  {_C['dim']}  Need {_C['yel']}~{gap:.1f}{_C['dim']} more points to fire a {direction.upper()} signal.{_C['rst']}")
+
+    # ── INDICATOR GUIDE (compact) ──────────────────────────────────
+    print()
+    print(f"  {_C['bld']}INDICATOR GUIDE{_C['rst']} {_C['dim']}(what each number means){_C['rst']}")
+    print(sep)
+
+    guides = [
+        ("Price > EMA200", "Long-term trend is up.  BTC in a bull market.",
+         last["close"] > last["EMA_200"]),
+        ("RSI", f"{last['RSI_14']:.0f}.  Over 70 = overbought (due for pullback).  Under 30 = oversold (bounce likely).",
+         last["RSI_14"] < 70 and last["RSI_14"] > 30),
+        ("MACD", "Short-term momentum.  Bullish cross = trend starting up.  Bearish = losing steam.",
+         last["MACD"] > last["MACD_Signal"]),
+        ("HTF Diverging", "4H and 1D charts disagree.  Market is uncertain — expect chop.",
+         htf and not htf.get("aligned", True)),
+        ("L/S Ratio 0.60", "More shorts than longs.  If price goes up, shorts get squeezed = fast pump.",
+         True),
+        ("Funding flat", "No one is paying to hold positions.  No extreme leverage either way.",
+         abs(funding.get("rate_pct", 0)) < 0.01) if market_structure else ("", "", False),
+        ("S&P 500 flat", "Equities are sideways.  BTC usually follows equities sentiment.",
+         abs(sp500.get("change_pct", 0)) < 0.5) if market_structure and sp500.get("current") else ("", "", False),
+        ("Fear & Greed 47", "Neutral sentiment.  Extreme fear (<20) is often a buy signal.  Extreme greed (>80) is often a sell signal.",
+         news_data and news_data.get("fear_greed", {}).get("value", 50) < 60 and news_data.get("fear_greed", {}).get("value", 50) > 40),
+    ]
+
+    for label, explanation, active in guides:
+        if not label:
+            continue
+        if active:
+            print(f"  {_C['grn']}▶{_C['rst']} {_C['bld']}{label}{_C['rst']} — {_C['dim']}{explanation}{_C['rst']}")
+        else:
+            print(f"  {_C['gry']}·{_C['rst']} {_C['bld']}{label}{_C['rst']} — {_C['gry']}{explanation}{_C['rst']}")
 
     print()
 
