@@ -4,6 +4,17 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-06 — Terminal Display & Output Improvements
+
+### Changed
+
+- **`print_open_status()`** (`paper_trader.py`) — now shows mode label `[SPOT]` / `[FUTURES]`, outcome breakdown in closed-trades line (`1MC`, `2W · 1L`), and win rate percentage.
+- **`print_paper_summary()`** (`paper_trader.py`) — now shows mode label and Outcomes line with WIN/LOSS/MACRO_CLOSE/BREAKEVEN counts.
+- **`check_and_close_positions()`** (`paper_trader.py`) — prints a visible terminal banner when macro event force-closes positions (not just log-level).
+- **Phase 3 summary** (`run_bot.py`) — all position-management actions are tracked and printed as a summary line at the end of the cycle: `✅ SPOT BUY opened (#N) @ $XX` or `⏭ FUT: Duplicate BUY direction — skipping futures`.
+
+---
+
 ## 2026-05-06 — Notifikasi Diperkaya & Position Safety
 
 ### Added
