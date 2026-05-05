@@ -16,7 +16,7 @@ from news_scraper import scrape_and_export
 from notifier import send_signal_alert
 from paper_trader import check_and_close_positions, print_open_status, print_paper_summary
 from config import RISK_CONFIG, FUTURES_CONFIG
-from signal_history import close as close_db, get_open_positions, open_paper_position
+from signal_history import close as close_db, get_open_positions, has_open_position_same_direction, open_paper_position
 
 logging.basicConfig(
     level=logging.INFO,
@@ -66,24 +66,34 @@ def run_cycle():
         # Spot positions
         if spot_signal and spot_signal["type"] != "HOLD":
             spot_open = len(get_open_positions("spot"))
-            if spot_open < RISK_CONFIG["max_positions"]:
-                open_paper_position(spot_signal, mode="spot")
-            else:
+            if spot_open >= RISK_CONFIG["max_positions"]:
                 logger.info(
                     "Max spot positions (%d) reached — skipping %s",
                     RISK_CONFIG["max_positions"], spot_signal["type"],
                 )
+            elif has_open_position_same_direction(spot_signal["type"], "spot"):
+                logger.info(
+                    "Open %s spot position already exists — skipping duplicate signal",
+                    spot_signal["type"],
+                )
+            else:
+                open_paper_position(spot_signal, mode="spot")
 
         # Futures positions
         if futures_signal and futures_signal["type"] != "HOLD":
             fut_open = len(get_open_positions("futures"))
-            if fut_open < FUTURES_CONFIG["max_positions"]:
-                open_paper_position(futures_signal, mode="futures")
-            else:
+            if fut_open >= FUTURES_CONFIG["max_positions"]:
                 logger.info(
                     "Max futures positions (%d) reached — skipping %s",
                     FUTURES_CONFIG["max_positions"], futures_signal["type"],
                 )
+            elif has_open_position_same_direction(futures_signal["type"], "futures"):
+                logger.info(
+                    "Open %s futures position already exists — skipping duplicate signal",
+                    futures_signal["type"],
+                )
+            else:
+                open_paper_position(futures_signal, mode="futures")
 
         # Determine current price for position checks
         if futures_signal and futures_signal.get("entry_price"):

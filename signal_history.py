@@ -281,6 +281,22 @@ def get_open_positions(mode=None):
     return [dict(r) for r in rows]
 
 
+def has_open_position_same_direction(direction, mode=None):
+    """Return True if an open position already exists with the same direction."""
+    c = _conn()
+    if mode is not None:
+        row = c.execute(
+            "SELECT COUNT(*) FROM paper_positions WHERE outcome IS NULL AND type = ? AND mode = ?",
+            (direction, mode),
+        ).fetchone()
+    else:
+        row = c.execute(
+            "SELECT COUNT(*) FROM paper_positions WHERE outcome IS NULL AND type = ?",
+            (direction,),
+        ).fetchone()
+    return row[0] > 0
+
+
 def close_paper_position(pos_id, outcome, pnl_pct, closed_at=None):
     """Mark a paper position as closed."""
     c = _conn()
