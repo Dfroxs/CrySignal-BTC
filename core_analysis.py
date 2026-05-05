@@ -39,7 +39,7 @@ from config import (
     load_cache,
     save_cache,
 )
-from signal_history import log_signal
+from signal_history import log_cycle, log_signal
 
 logger = logging.getLogger(__name__)
 
@@ -1317,6 +1317,7 @@ def analyze_futures_signal(symbol='BTC/USDT', include_news=True):
 
         signal['mode']       = 'futures'
         signal['_threshold'] = threshold
+        log_cycle(signal, df, market_structure, htf, 'futures')
         signal['_htf']       = htf
         signal['_market']   = market_structure
         signal['_news_data']= news_data
@@ -1387,6 +1388,7 @@ def analyze_spot_signal(symbol='BTC/USDT', include_news=True):
 
         signal['mode']       = 'spot'
         signal['_threshold'] = threshold
+        log_cycle(signal, df, market_structure, htf, 'spot')
         signal['_htf']       = htf
         signal['_market']   = market_structure
         signal['_news_data']= news_data

@@ -59,6 +59,46 @@ def _init_tables():
             closed_at     TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS cycle_log (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp     TEXT    NOT NULL,
+            mode          TEXT    NOT NULL,
+            type          TEXT    NOT NULL,
+            price         REAL    NOT NULL,
+            buy_score     REAL,
+            sell_score    REAL,
+            strength      REAL,
+            threshold     REAL,
+            gap_to_fire   REAL,
+            rsi           REAL,
+            stoch_k       REAL,
+            stoch_d       REAL,
+            macd          REAL,
+            macd_signal   REAL,
+            vwap          REAL,
+            ema200        REAL,
+            atr           REAL,
+            obv_slope     REAL,
+            bb_upper      REAL,
+            bb_lower      REAL,
+            rsi_div       TEXT,
+            funding_rate  REAL,
+            ls_ratio      REAL,
+            dxy           REAL,
+            dxy_change    REAL,
+            sp500         REAL,
+            sp500_change  REAL,
+            btc_dom       REAL,
+            stablecoin_b  REAL,
+            oi_change     REAL,
+            basis_pct     REAL,
+            fear_greed    INTEGER,
+            news_sentiment TEXT,
+            htf_data      TEXT,
+            reasons       TEXT,
+            open_positions INTEGER
+        );
+
         CREATE TABLE IF NOT EXISTS paper_positions (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             signal_id       INTEGER REFERENCES signals(id),
@@ -219,6 +259,95 @@ def log_signal(signal, df, htf=None):
     )
     logger.info("Signal logged → %s", SIGNAL_HISTORY_DB)
     return cur.lastrowid
+
+
+def log_cycle(signal, df, market_structure, htf, mode):
+    """Log every cycle (including HOLD) to cycle_log for later analysis."""
+    last     = df.iloc[-1]
+    buy_s    = signal.get("buy_score", 0)
+    sell_s   = signal.get("sell_score", 0)
+    thresh   = signal.get("_threshold", 0)
+
+    # Market structure
+    mkt = market_structure or {}
+    funding  = mkt.get("funding", {})
+    ls       = mkt.get("long_short", {})
+    dxy      = mkt.get("dxy", {})
+    sp500    = mkt.get("sp500", {})
+    btcdom   = mkt.get("btc_dom", {})
+    stable   = mkt.get("stablecoin", {})
+    oi       = mkt.get("open_interest", {})
+
+    # HTF as JSON
+    htf_clean = {}
+    if htf:
+        for k, v in htf.items():
+            if k.endswith("_indicators") and isinstance(v, dict):
+                htf_clean[k] = {ik: iv for ik, iv in v.items()
+                                if not isinstance(iv, float) or iv == iv}  # skip NaN
+            else:
+                htf_clean[k] = v
+    import json
+    htf_json = json.dumps(htf_clean) if htf_clean else ""
+
+    # Reasons — top 10, cleaned
+    reasons_raw = signal.get("reasons", [])
+    reasons_clean = [r[2:].strip() if r[:1] in "✓✗⚠" else r.strip()
+                     for r in reasons_raw[:10]]
+
+    # Open positions count for this mode
+    open_count = len(get_open_positions(mode))
+
+    row = (
+        datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+        mode,
+        signal["type"],
+        round(last["close"], 2),
+        round(buy_s, 2),
+        round(sell_s, 2),
+        round(signal.get("strength", 0), 2),
+        round(thresh, 2),
+        round(thresh - max(buy_s, sell_s), 2) if signal["type"] == "HOLD" else 0,
+        round(last.get("RSI_14", 0), 2),
+        round(last.get("StochRSI_K") or 0, 2),
+        round(last.get("StochRSI_D") or 0, 2),
+        round(last.get("MACD", 0), 2),
+        round(last.get("MACD_Signal", 0), 2),
+        round(last.get("VWAP_24") or 0, 2),
+        round(last.get("EMA_200", 0), 2),
+        round(last.get("ATR_14", 0), 2),
+        round(df["OBV"].iloc[-1] - df["OBV"].iloc[-5], 2),
+        round(last.get("BB_Upper", 0), 2),
+        round(last.get("BB_Lower", 0), 2),
+        signal.get("rsi_divergence", "NONE"),
+        round(funding.get("rate_pct", 0), 6) if funding else 0,
+        round(ls.get("ratio", 1), 4) if ls else 0,
+        round(dxy.get("current", 0), 3) if dxy else 0,
+        round(dxy.get("change_pct", 0), 4) if dxy else 0,
+        round(sp500.get("current", 0), 2) if sp500 else 0,
+        round(sp500.get("change_pct", 0), 4) if sp500 else 0,
+        round(btcdom.get("current", 0), 2) if btcdom else 0,
+        round(stable.get("total_b", 0), 2) if stable else 0,
+        round(oi.get("change_pct", 0), 4) if oi else 0,
+        round(funding.get("basis_pct", 0), 6) if funding else 0,
+        signal.get("fear_greed_value"),
+        signal.get("news_sentiment", "NEUTRAL"),
+        htf_json,
+        " | ".join(reasons_clean),
+        open_count,
+    )
+    c = _conn()
+    c.execute(
+        """INSERT INTO cycle_log
+           (timestamp, mode, type, price, buy_score, sell_score, strength, threshold,
+            gap_to_fire, rsi, stoch_k, stoch_d, macd, macd_signal, vwap, ema200, atr,
+            obv_slope, bb_upper, bb_lower, rsi_div, funding_rate, ls_ratio, dxy,
+            dxy_change, sp500, sp500_change, btc_dom, stablecoin_b, oi_change,
+            basis_pct, fear_greed, news_sentiment, htf_data, reasons, open_positions)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        row,
+    )
+    c.commit()
 
 
 def update_signal_outcome(signal_id, outcome, closed_at=None):
