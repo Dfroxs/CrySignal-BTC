@@ -5,7 +5,9 @@ import logging
 import signal_history as _sh
 from config import (
     DISCORD_WEBHOOK_URL,
+    FUTURES_CONFIG,
     HTTP_SESSION,
+    RISK_CONFIG,
     SIGNAL_MAX_SCORE,
     SPOT_MAX_SCORE,
     TELEGRAM_BOT_TOKEN,
@@ -374,8 +376,87 @@ def _format_section_discord(signal, symbol="BTC/USDT"):
 # Combined formatters
 # ---------------------------------------------------------------------------
 
+def _format_position_status(mode):
+    """Return a short text summary of open positions for one mode."""
+    positions = _sh.get_open_positions(mode)
+    if not positions:
+        return None
+
+    lines = []
+    for pos in positions:
+        icon    = "🟢" if pos["type"] == "BUY" else "🔴"
+        entry   = pos["entry_price"]
+        trail   = pos.get("trailing_stop") or pos["stop_loss"]
+        tp1     = pos.get("tp1") or pos["take_profit"]
+        partial = pos.get("partial_closed", 0)
+        pct     = abs(entry - tp1) / entry * 100 if entry > 0 else 0
+        tag     = " [½]" if partial else ""
+        lines.append(
+            f"{icon} {pos['type']}{tag}  "
+            f"Entry <code>${entry:,.0f}</code>  "
+            f"Trail <code>${trail:,.0f}</code>  "
+            f"TP1 <code>${tp1:,.0f}</code> (+{pct:.1f}%)"
+        )
+    return "\n".join(["<b>📝 Open Positions</b>"] + lines)
+
+
+def _format_position_status_discord(mode):
+    """Return a short text summary of open positions for Discord."""
+    positions = _sh.get_open_positions(mode)
+    if not positions:
+        return None
+
+    lines = ["**📝 Open Positions**"]
+    for pos in positions:
+        icon    = "🟢" if pos["type"] == "BUY" else "🔴"
+        entry   = pos["entry_price"]
+        trail   = pos.get("trailing_stop") or pos["stop_loss"]
+        tp1     = pos.get("tp1") or pos["take_profit"]
+        partial = pos.get("partial_closed", 0)
+        pct     = abs(entry - tp1) / entry * 100 if entry > 0 else 0
+        tag     = " [½]" if partial else ""
+        lines.append(
+            f"{icon} {pos['type']}{tag}  "
+            f"Entry ${entry:,.0f}  Trail ${trail:,.0f}  "
+            f"TP1 ${tp1:,.0f} (+{pct:.1f}%)"
+        )
+    return "\n".join(lines)
+
+
+def _macro_banner(signal):
+    """Return a warning banner if the signal was penalized for a macro event."""
+    for r in signal.get("reasons", []):
+        if "MACRO CAUTION" in r:
+            return "⚠️ <b>MACRO RISK: High-impact event approaching — position may be force-closed</b>"
+    return None
+
+
+def _outcome_line():
+    """Return a one-line outcome summary: W / L / MACRO / BE."""
+    bd = _sh.get_outcome_breakdown()
+    if not bd:
+        return None
+    w = bd.get("WIN", 0)
+    l = bd.get("LOSS", 0)
+    m = bd.get("MACRO_CLOSE", 0)
+    be = bd.get("BREAKEVEN", 0)
+    parts = [f"{w}W", f"{l}L"]
+    if m:
+        parts.append(f"{m}MC")
+    if be:
+        parts.append(f"{be}BE")
+    return " · ".join(parts) + f"  WR: {w/(w+l)*100:.0f}%" if (w + l) > 0 else " · ".join(parts)
+
+
 def _format_combined_telegram(spot_signal, futures_signal, symbol="BTC/USDT"):
     parts = []
+
+    # ── Macro risk banner ──────────────────────────────────────
+    macro_warn = _macro_banner(spot_signal) or _macro_banner(futures_signal)
+    if macro_warn:
+        parts.append(macro_warn)
+        parts.append("")
+
     parts.append(_format_section_telegram(spot_signal, symbol))
     parts.append("")
     parts.append("━" * 35)
@@ -383,11 +464,26 @@ def _format_combined_telegram(spot_signal, futures_signal, symbol="BTC/USDT"):
     parts.append(_format_section_telegram(futures_signal, symbol))
     parts.append("")
 
-    # Paper performance footer
+    # ── Open Positions ─────────────────────────────────────────
+    spot_pos = _format_position_status("spot")
+    fut_pos  = _format_position_status("futures")
+    if spot_pos or fut_pos:
+        if spot_pos:
+            parts.append(spot_pos)
+        if fut_pos:
+            if spot_pos:
+                parts.append("")
+            parts.append(fut_pos)
+        parts.append("")
+
+    # ── Paper performance footer ───────────────────────────────
     try:
         spot_pnl, spot_cnt, _ = _sh.get_closed_pnl("spot")
         fut_pnl, fut_cnt, _   = _sh.get_closed_pnl("futures")
         perf_lines = ["<b>📉 Paper Performance</b>"]
+        outcome = _outcome_line()
+        if outcome:
+            perf_lines.append(outcome)
         if spot_cnt > 0:
             perf_lines.append(f"SPOT: {spot_cnt} trades  ·  P&amp;L {_esc(f'{spot_pnl:+.2f}%')}")
         if fut_cnt > 0:
@@ -402,15 +498,36 @@ def _format_combined_telegram(spot_signal, futures_signal, symbol="BTC/USDT"):
 
 def _format_combined_discord(spot_signal, futures_signal, symbol="BTC/USDT"):
     parts = []
+
+    # ── Macro risk banner ──────────────────────────────────────
+    macro_warn = _macro_banner(spot_signal) or _macro_banner(futures_signal)
+    if macro_warn:
+        parts.append("⚠️ **MACRO RISK: High-impact event approaching — position may be force-closed**")
+        parts.append("")
+
     parts.append(_format_section_discord(spot_signal, symbol))
     parts.append("━" * 30)
     parts.append(_format_section_discord(futures_signal, symbol))
 
+    # ── Open Positions ─────────────────────────────────────────
+    spot_pos = _format_position_status_discord("spot")
+    fut_pos  = _format_position_status_discord("futures")
+    if spot_pos or fut_pos:
+        if spot_pos:
+            parts.append("\n" + spot_pos)
+        if fut_pos:
+            parts.append((f"\n{fut_pos}" if not spot_pos else fut_pos))
+        parts.append("")
+
+    # ── Paper performance footer ───────────────────────────────
     try:
         spot_pnl, spot_cnt, _ = _sh.get_closed_pnl("spot")
         fut_pnl, fut_cnt, _   = _sh.get_closed_pnl("futures")
         if spot_cnt > 0 or fut_cnt > 0:
             parts.append("**📉 Paper Performance**")
+            outcome = _outcome_line()
+            if outcome:
+                parts.append(outcome)
             if spot_cnt > 0:
                 parts.append(f"SPOT: {spot_cnt} trades · P&L {spot_pnl:+.2f}%")
             if fut_cnt > 0:

@@ -351,20 +351,31 @@ def get_recent_signals(limit=50):
 
 
 def get_win_rate():
-    """Win rate (WINS / resolved WIN+LOSS trades) as a float, or None.
+    """Win rate = WINS / (WINS + LOSSES) from paper_positions.
 
-    BREAKEVEN excluded from denominator — it's neither a win nor a loss.
+    MACRO_CLOSE and BREAKEVEN excluded from denominator.
+    Returns None when there is no resolved data.
     """
     c = _conn()
     total = c.execute(
-        "SELECT COUNT(*) FROM signals WHERE outcome IN ('WIN','LOSS')"
+        "SELECT COUNT(*) FROM paper_positions WHERE outcome IN ('WIN','LOSS')"
     ).fetchone()[0]
     if total == 0:
         return None
     wins = c.execute(
-        "SELECT COUNT(*) FROM signals WHERE outcome='WIN'"
+        "SELECT COUNT(*) FROM paper_positions WHERE outcome='WIN'"
     ).fetchone()[0]
     return wins / total
+
+
+def get_outcome_breakdown():
+    """Return dict of outcome → count from paper_positions for stats display."""
+    c = _conn()
+    rows = c.execute(
+        "SELECT outcome, COUNT(*) as cnt FROM paper_positions "
+        "WHERE outcome IS NOT NULL GROUP BY outcome"
+    ).fetchall()
+    return {r["outcome"]: r["cnt"] for r in rows}
 
 
 def get_profit_factor():
