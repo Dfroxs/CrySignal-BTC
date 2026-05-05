@@ -36,6 +36,7 @@ RISK_CONFIG = {
     "max_position_size":     0.10,
     "atr_multiplier":        1.5,
     "take_profit_rr":        2.5,
+    "trailing_atr_factor":   1.0,   # trail distance = ATR × this (tighter than entry SL)
     "max_positions":         3,
 }
 

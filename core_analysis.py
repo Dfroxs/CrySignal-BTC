@@ -106,14 +106,16 @@ def detect_rsi_divergence(df, lookback=5):
     """Returns 'BULLISH', 'BEARISH', or 'NONE'."""
     # Exclude current candle so we compare it against prior history
     tail          = df.iloc[-lookback - 1:-1]
-    price_min_idx = tail['close'].idxmin()
-    price_max_idx = tail['close'].idxmax()
     current_close = df['close'].iloc[-1]
     current_rsi   = df['RSI_14'].iloc[-1]
 
-    if current_close <= tail['close'].min() and current_rsi > tail['RSI_14'].loc[price_min_idx]:
+    # Use iloc-based argmin/argmax to avoid index-label mismatch on datetime-indexed DFs
+    rsi_at_price_min = tail['RSI_14'].iloc[tail['close'].values.argmin()]
+    rsi_at_price_max = tail['RSI_14'].iloc[tail['close'].values.argmax()]
+
+    if current_close <= tail['close'].min() and current_rsi > rsi_at_price_min:
         return 'BULLISH'
-    if current_close >= tail['close'].max() and current_rsi < tail['RSI_14'].loc[price_max_idx]:
+    if current_close >= tail['close'].max() and current_rsi < rsi_at_price_max:
         return 'BEARISH'
     return 'NONE'
 
@@ -182,6 +184,9 @@ def fetch_funding_rate():
         elif rate > 0.01 / 100:
             result['label'] = 'HIGH'
             result['bias']  = 'SLIGHTLY_BEARISH'
+        elif rate < -0.05 / 100:
+            result['label'] = 'VERY NEGATIVE'
+            result['bias']  = 'BULLISH'
         elif rate < -0.01 / 100:
             result['label'] = 'NEGATIVE'
             result['bias']  = 'BULLISH'
@@ -562,7 +567,9 @@ def check_upcoming_macro_events():
         pending = pending[pending['impact'] == 'High']
         for _, row in pending.iterrows():
             try:
-                event_dt = datetime.strptime(row['timestamp'].strip(), "%m-%d-%Y %I:%M%p").replace(tzinfo=UTC)
+                import zoneinfo
+                _ET = zoneinfo.ZoneInfo("America/New_York")
+                event_dt = datetime.strptime(row['timestamp'].strip(), "%m-%d-%Y %I:%M%p").replace(tzinfo=_ET).astimezone(UTC)
                 diff     = event_dt - datetime.now(UTC)
                 if timedelta(0) <= diff <= timedelta(hours=2):
                     return True, row['event']
@@ -855,6 +862,15 @@ def generate_signals(df, htf=None, market_structure=None, sr=None):
 
     signal['buy_score']  = round(buy_conditions, 2)
     signal['sell_score'] = round(sell_conditions, 2)
+    signal['atr']        = current['ATR_14']
+
+    # TP2 = 2× the TP1 distance from entry (target for second half of position)
+    if signal['type'] != 'HOLD' and signal['take_profit'] is not None:
+        tp1_dist = abs(signal['take_profit'] - signal['entry_price'])
+        if signal['type'] == 'BUY':
+            signal['tp2'] = signal['entry_price'] + tp1_dist * 2
+        else:
+            signal['tp2'] = signal['entry_price'] - tp1_dist * 2
 
     return signal
 

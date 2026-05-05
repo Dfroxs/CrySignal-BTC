@@ -7,6 +7,7 @@ preserving CSV export as fallback.
 import logging
 import os
 import sqlite3
+import threading
 from datetime import UTC, datetime
 from typing import Optional
 
@@ -17,6 +18,7 @@ from config import SIGNAL_HISTORY_CSV, SIGNAL_HISTORY_DB
 logger = logging.getLogger(__name__)
 
 DB = None  # lazy-init connection
+_DB_LOCK = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -24,12 +26,13 @@ DB = None  # lazy-init connection
 # ---------------------------------------------------------------------------
 
 def _conn() -> sqlite3.Connection:
-    """Return (lazy-initialized) database connection."""
+    """Return (lazy-initialized) thread-safe database connection."""
     global DB
-    if DB is None:
-        DB = sqlite3.connect(SIGNAL_HISTORY_DB)
-        DB.row_factory = sqlite3.Row
-        _init_tables()
+    with _DB_LOCK:
+        if DB is None:
+            DB = sqlite3.connect(SIGNAL_HISTORY_DB, check_same_thread=False)
+            DB.row_factory = sqlite3.Row
+            _init_tables()
     return DB
 
 
@@ -57,17 +60,50 @@ def _init_tables():
         );
 
         CREATE TABLE IF NOT EXISTS paper_positions (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            signal_id     INTEGER REFERENCES signals(id),
-            type          TEXT    NOT NULL,
-            entry_price   REAL    NOT NULL,
-            stop_loss     REAL    NOT NULL,
-            take_profit   REAL    NOT NULL,
-            opened_at     TEXT    NOT NULL,
-            closed_at     TEXT,
-            outcome       TEXT,
-            pnl_pct       REAL
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            signal_id       INTEGER REFERENCES signals(id),
+            type            TEXT    NOT NULL,
+            entry_price     REAL    NOT NULL,
+            stop_loss       REAL    NOT NULL,
+            take_profit     REAL    NOT NULL,
+            opened_at       TEXT    NOT NULL,
+            closed_at       TEXT,
+            outcome         TEXT,
+            pnl_pct         REAL,
+            atr             REAL,
+            trailing_stop   REAL,
+            tp1             REAL,
+            tp2             REAL,
+            partial_closed  INTEGER DEFAULT 0,
+            partial_pnl     REAL
         );
+    """)
+    c.commit()
+    _migrate_paper_positions()
+
+
+def _migrate_paper_positions():
+    """Add trailing-stop / partial-TP columns to existing paper_positions rows."""
+    c = _conn()
+    new_cols = [
+        ("atr",            "REAL"),
+        ("trailing_stop",  "REAL"),
+        ("tp1",            "REAL"),
+        ("tp2",            "REAL"),
+        ("partial_closed", "INTEGER DEFAULT 0"),
+        ("partial_pnl",    "REAL"),
+    ]
+    for col, coltype in new_cols:
+        try:
+            c.execute(f"ALTER TABLE paper_positions ADD COLUMN {col} {coltype}")
+        except Exception:
+            pass  # column already exists
+    c.commit()
+
+    # Back-fill tp1 = take_profit for existing open positions that lack it
+    c.execute("""
+        UPDATE paper_positions SET tp1 = take_profit
+        WHERE tp1 IS NULL AND outcome IS NULL
     """)
     c.commit()
 
@@ -158,7 +194,6 @@ def log_signal(signal, df, htf=None):
         row,
     )
     c.commit()
-    return cur.lastrowid
 
     # CSV fallback
     write_header = not os.path.exists(SIGNAL_HISTORY_CSV)
@@ -182,6 +217,7 @@ def log_signal(signal, df, htf=None):
         SIGNAL_HISTORY_CSV, mode="a", header=write_header, index=False,
     )
     logger.info("Signal logged → %s", SIGNAL_HISTORY_DB)
+    return cur.lastrowid
 
 
 def update_signal_outcome(signal_id, outcome, closed_at=None):
@@ -204,17 +240,25 @@ def open_paper_position(signal):
     Returns the position row id.
     """
     conn = _conn()
+    tp1 = signal["take_profit"]
+    tp2 = signal.get("tp2", tp1)
+    atr = signal.get("atr")
     cur = conn.execute(
         """INSERT INTO paper_positions
-           (signal_id, type, entry_price, stop_loss, take_profit, opened_at)
-           VALUES (?,?,?,?,?,?)""",
+           (signal_id, type, entry_price, stop_loss, take_profit,
+            opened_at, atr, trailing_stop, tp1, tp2, partial_closed)
+           VALUES (?,?,?,?,?,?,?,?,?,?,0)""",
         (
             signal.get("db_id"),
             signal["type"],
             signal["entry_price"],
             signal["stop_loss"],
-            signal["take_profit"],
+            tp1,
             datetime.now(UTC).isoformat(),
+            atr,
+            signal["stop_loss"],   # trailing_stop starts at original SL
+            tp1,
+            tp2,
         ),
     )
     conn.commit()
@@ -241,6 +285,32 @@ def close_paper_position(pos_id, outcome, pnl_pct, closed_at=None):
             outcome, round(pnl_pct, 3),
             closed_at or datetime.now(UTC).isoformat(), pos_id,
         ),
+    )
+    c.commit()
+
+
+def update_trailing_stop(pos_id, new_sl):
+    """Move the trailing stop to *new_sl*."""
+    c = _conn()
+    c.execute(
+        "UPDATE paper_positions SET trailing_stop=? WHERE id=?",
+        (round(new_sl, 2), pos_id),
+    )
+    c.commit()
+
+
+def partial_close_position(pos_id, pnl_pct, new_sl):
+    """Record the first-half exit at TP1.
+
+    Marks partial_closed=1, stores partial_pnl, and moves
+    trailing_stop to breakeven (*new_sl* = entry price).
+    """
+    c = _conn()
+    c.execute(
+        """UPDATE paper_positions
+           SET partial_closed=1, partial_pnl=?, trailing_stop=?
+           WHERE id=?""",
+        (round(pnl_pct, 3), round(new_sl, 2), pos_id),
     )
     c.commit()
 

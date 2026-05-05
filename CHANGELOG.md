@@ -4,6 +4,34 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-05 — Trailing Stop + Partial Take Profit
+
+### Added
+
+- **Trailing stop loss** — `paper_trader.py` now advances the stop loss every cycle as price moves in our favour. For BUY: `trail = price − ATR × trailing_atr_factor`; for SELL: `trail = price + ATR × trailing_atr_factor`. Trail only moves forward (never against the position). Configured via `RISK_CONFIG["trailing_atr_factor"]` (default `1.0`).
+- **Partial take profit (TP1 / TP2)** — positions now exit in two halves:
+  - **TP1** (first 50%) = original ATR-based TP. When hit, trailing stop moves to breakeven (entry price), locking in no-loss on the remainder.
+  - **TP2** (remaining 50%) = 2× the TP1 distance from entry. Closes when TP2 is hit or trailing stop is triggered.
+  - Combined P&L = average of both exits.
+- **`signal['atr']`** and **`signal['tp2']`** added to signal dict in `generate_signals()`.
+- **`update_trailing_stop(pos_id, new_sl)`** and **`partial_close_position(pos_id, pnl_pct, new_sl)`** added to `signal_history.py`.
+- **`paper_positions` schema extended** with: `atr`, `trailing_stop`, `tp1`, `tp2`, `partial_closed`, `partial_pnl`. Existing DBs auto-migrated via `_migrate_paper_positions()`.
+- Display (`print_open_status`) now shows `Trail` and `TP2` instead of static `SL` and `TP`, plus `[½ taken]` tag after partial exit.
+
+---
+
+## 2026-05-05 — Bug Fixes Round 2
+
+### Fixed
+
+- **CSV fallback dead code** — `log_signal()` had `return cur.lastrowid` placed before the CSV write block, making the backup CSV never update after the SQLite migration. `return` moved to after the CSV write.
+- **RSI divergence index mismatch** — `detect_rsi_divergence()` used `.idxmin()` / `.idxmax()` + `.loc[]` to look up RSI at price extremes. On a datetime-indexed DataFrame, label-based lookup can silently return wrong values on duplicate timestamps. Replaced with `tail['close'].values.argmin()` + `.iloc[]` (position-based), which is always correct regardless of index type.
+- **Macro event timezone off by 4–5 hours** — ForexFactory exports timestamps in US Eastern Time (ET), but `check_upcoming_macro_events()` was treating them as UTC after the previous fix (`.replace(tzinfo=UTC)`). Events would be shifted 4–5 hours, causing the 2-hour hedge window to fire at wrong times or miss events. Now parsed as ET then converted: `.replace(tzinfo=ZoneInfo("America/New_York")).astimezone(UTC)`.
+- **Funding rate missing moderate-positive zone** — Funding rates between +0.01% and +0.05% fell through all conditions and scored as NEUTRAL. Added `VERY NEGATIVE` label for rates below -0.05% and confirmed the symmetric coverage now matches positive and negative zones.
+- **SQLite connection not thread-safe** — `_conn()` used a bare global `DB` variable without locking. Added `threading.Lock()` (`_DB_LOCK`) and `check_same_thread=False` to prevent "database is locked" errors when scraper and analyzer run concurrently.
+
+---
+
 ## 2026-05-05 — Bug Fixes & Signal Integrity
 
 ### Fixed
