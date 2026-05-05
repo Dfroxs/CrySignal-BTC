@@ -272,11 +272,18 @@ _NEGATION_PATTERNS = (
 )
 
 
-def _strip_negations(text_lower):
+def _strip_negations(text_lower, pos_words=None, neg_words=None,
+                    pos_subs=None, neg_subs=None):
     """Adjust sentiment for negation patterns.
     \"avoids sell-off\" → sell-off is negative, flip to positive.
     \"not bullish\" → bullish is positive, flip to negative.
-    Returns (cleaned_text, adjustment) where adjustment is added to final score."""
+    Returns (cleaned_text, adjustment) where adjustment is added to final score.
+    Keyword sets default to crypto lists; override for geopolitical."""
+    if pos_words is None: pos_words = _POSITIVE_WORDS
+    if neg_words is None: neg_words = _NEGATIVE_WORDS
+    if pos_subs  is None: pos_subs  = _POSITIVE_SUB
+    if neg_subs  is None: neg_subs  = _NEGATIVE_SUB
+
     cleaned = text_lower
     adjustment = 0
 
@@ -289,13 +296,13 @@ def _strip_negations(text_lower):
         window = cleaned[start:start + 40]
 
         # Check substrings first (longer, more specific)
-        for sub in sorted(_POSITIVE_SUB, key=len, reverse=True):
+        for sub in sorted(pos_subs, key=len, reverse=True):
             if sub in window:
                 cleaned = cleaned.replace(sub, "___", 1)
                 adjustment -= 1  # negated positive → flip to negative
                 break
         else:
-            for sub in sorted(_NEGATIVE_SUB, key=len, reverse=True):
+            for sub in sorted(neg_subs, key=len, reverse=True):
                 if sub in window:
                     cleaned = cleaned.replace(sub, "___", 1)
                     adjustment += 1  # negated negative → flip to positive
@@ -303,7 +310,7 @@ def _strip_negations(text_lower):
             else:
                 # Check word tokens
                 window_words = window.split()[:3]
-                for word in _POSITIVE_WORDS:
+                for word in pos_words:
                     if word in window_words:
                         pos = cleaned.find(word, start)
                         if 0 <= pos <= start + 40:
@@ -311,7 +318,7 @@ def _strip_negations(text_lower):
                             adjustment -= 1
                             break
                 else:
-                    for word in _NEGATIVE_WORDS:
+                    for word in neg_words:
                         if word in window_words:
                             pos = cleaned.find(word, start)
                             if 0 <= pos <= start + 40:
@@ -376,11 +383,17 @@ def analyze_geopolitical_impact(text):
         "ceasefire", "peace deal", "peace talks", "de-escalat",
         "trade deal", "agreement reached", "stabiliz", "recovery",
     )
-    t = text.lower()
+    # Apply negation — geo keywords are substrings, no separate word tokens
+    t, neg_adj = _strip_negations(
+        text.lower(),
+        pos_words=set(), neg_words=set(),  # no short word tokens for geo
+        pos_subs=_financial_risk,           # financial risk = bullish for BTC
+        neg_subs=_military_risk + _stability,  # conflict/stability = bearish
+    )
     fin = sum(1 for w in _financial_risk if w in t)
     mil = sum(1 for w in _military_risk if w in t)
     stab = sum(1 for w in _stability if w in t)
-    net = fin - mil - stab
+    net = fin - mil - stab + neg_adj
     if net > 0:
         return "BULLISH", net
     if net < 0:
