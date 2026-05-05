@@ -23,8 +23,6 @@ from config import (
     NEWS_CSV,
     OI_CACHE_FILE,
     RISK_CONFIG,
-    SIGNAL_HISTORY_CSV,
-    SIGNAL_HISTORY_DB,
     SIGNAL_MAX_SCORE,
     SIGNAL_THRESHOLD,
     STABLECOIN_CACHE_FILE,
@@ -36,6 +34,7 @@ from config import (
     load_cache,
     save_cache,
 )
+from signal_history import log_signal
 
 logger = logging.getLogger(__name__)
 
@@ -563,7 +562,7 @@ def check_upcoming_macro_events():
         pending = pending[pending['impact'] == 'High']
         for _, row in pending.iterrows():
             try:
-                event_dt = datetime.strptime(row['timestamp'].strip(), "%m-%d-%Y %I:%M%p")
+                event_dt = datetime.strptime(row['timestamp'].strip(), "%m-%d-%Y %I:%M%p").replace(tzinfo=UTC)
                 diff     = event_dt - datetime.now(UTC)
                 if timedelta(0) <= diff <= timedelta(hours=2):
                     return True, row['event']
@@ -582,7 +581,8 @@ def generate_signals(df, htf=None, market_structure=None, sr=None):
     current  = df.iloc[-1]
     previous = df.iloc[-2]
 
-    atr_stop = current['ATR_14'] * RISK_CONFIG['atr_multiplier']
+    atr_stop  = current['ATR_14'] * RISK_CONFIG['atr_multiplier']
+    threshold = get_adaptive_threshold()
 
     signal = {
         'type':               'HOLD',
@@ -821,7 +821,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None):
             signal['reasons'].append(f"✗ Price below VWAP ${vwap:,.2f} — institutional selling")
 
     # Determine final signal
-    if buy_conditions >= SIGNAL_THRESHOLD and buy_conditions > sell_conditions:
+    if buy_conditions >= threshold and buy_conditions > sell_conditions:
         signal['type']      = 'BUY'
         signal['strength']  = buy_conditions
         signal['stop_loss'] = current['close'] - atr_stop
@@ -835,7 +835,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None):
                         f"⚠️  TP capped at resistance ${sr['resistance']:,.0f}")
                     raw_tp = capped_tp
         signal['take_profit'] = raw_tp
-    elif sell_conditions >= SIGNAL_THRESHOLD and sell_conditions > buy_conditions:
+    elif sell_conditions >= threshold and sell_conditions > buy_conditions:
         signal['type']      = 'SELL'
         signal['strength']  = sell_conditions
         signal['stop_loss'] = current['close'] + atr_stop
@@ -993,34 +993,6 @@ def fetch_ohlcv_df(symbol='BTC/USDT', timeframe='1h', limit=500):
     df['VWAP_24']                         = calculate_vwap(df)
 
     return df
-
-
-# ============================================================================
-# SIGNAL HISTORY
-# ============================================================================
-
-def log_signal(signal, df, htf=None):
-    """Append one row to signal_history.csv for performance tracking."""
-    last = df.iloc[-1]
-    row = {
-        'timestamp':      datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S'),
-        'type':           signal['type'],
-        'entry_price':    signal['entry_price'],
-        'stop_loss':      signal.get('stop_loss', ''),
-        'take_profit':    signal.get('take_profit', ''),
-        'strength':       round(signal['strength'], 2),
-        'rsi':            round(last['RSI_14'], 2),
-        'stoch_k':        round(last.get('StochRSI_K') or 0, 2),
-        'vwap':           round(last.get('VWAP_24') or 0, 2),
-        'htf_4h':         htf.get('4h', '') if htf else '',
-        'htf_1d':         htf.get('1d', '') if htf else '',
-        'fear_greed':     signal.get('fear_greed_value', ''),
-        'news_sentiment': signal.get('news_sentiment', ''),
-        'outcome':        '',   # fill manually: WIN / LOSS / BREAKEVEN
-    }
-    write_header = not os.path.exists(SIGNAL_HISTORY_CSV)
-    pd.DataFrame([row]).to_csv(SIGNAL_HISTORY_CSV, mode='a', header=write_header, index=False)
-    logger.info(f"Signal logged → {SIGNAL_HISTORY_CSV}")
 
 
 # ============================================================================
