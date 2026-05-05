@@ -2,7 +2,10 @@ import json
 import os
 from datetime import UTC, datetime
 
+from dotenv import load_dotenv
 from requests import Session
+
+load_dotenv()
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
