@@ -684,8 +684,8 @@ def generate_signals(df, htf=None, market_structure=None, sr=None):
 
     # 8 — OBV slope (5-candle) — skip when flat to avoid noise
     obv_slope   = df['OBV'].iloc[-1] - df['OBV'].iloc[-5]
-    obv_denom   = abs(df['OBV'].iloc[-5])
-    obv_rel     = abs(obv_slope) / obv_denom if obv_denom > 1 else 0
+    obv_denom   = df['volume'].iloc[-5:].sum()
+    obv_rel     = abs(obv_slope) / obv_denom if obv_denom > 0 else 0
     if obv_rel >= 0.001:
         if obv_slope > 0:
             buy_conditions += 0.75
@@ -1051,7 +1051,7 @@ def analyze_btc_signal(symbol='BTC/USDT', timeframe='1h', include_news=True):
             signal    = integrate_news_with_signal(signal, news_data)
 
         display_analysis(df, signal, news_data, htf, market_structure)
-        log_signal(signal, df, htf)
+        signal['db_id'] = log_signal(signal, df, htf)
         update_threshold_state(signal['type'])
         return signal
 

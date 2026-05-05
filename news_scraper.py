@@ -227,14 +227,24 @@ def analyze_sentiment(text):
 
     Uses whole-word matching for short/ambiguous tokens and substring
     matching for longer unambiguous ones.  ``risk`` intentionally excluded
-    — too contextual (risk-on is bullish for BTC)."""
+    — too contextual (risk-on is bullish for BTC).
+
+    Word tokens are only counted when NOT already captured by a substring
+    match to avoid double-counting (e.g. "bull" inside "bullish")."""
     text_lower = text.lower()
     words = {re.sub(r"[^a-z0-9]", "", w) for w in text_lower.split()}
+
+    pos_sub_hits = sum(1 for s in _POSITIVE_SUB if s in text_lower)
+    neg_sub_hits = sum(1 for s in _NEGATIVE_SUB if s in text_lower)
+
+    pos_sub_covered = {w for w in _POSITIVE_WORDS if any(s.startswith(w) and s in text_lower for s in _POSITIVE_SUB)}
+    neg_sub_covered = {w for w in _NEGATIVE_WORDS if any(s.startswith(w) and s in text_lower for s in _NEGATIVE_SUB)}
+
     score = (
-        sum(1 for w in _POSITIVE_WORDS if w in words)
-        + sum(1 for s in _POSITIVE_SUB if s in text_lower)
-        - sum(1 for w in _NEGATIVE_WORDS if w in words)
-        - sum(1 for s in _NEGATIVE_SUB if s in text_lower)
+        sum(1 for w in _POSITIVE_WORDS if w in words and w not in pos_sub_covered)
+        + pos_sub_hits
+        - sum(1 for w in _NEGATIVE_WORDS if w in words and w not in neg_sub_covered)
+        - neg_sub_hits
     )
     if score > 0:
         return "BULLISH", score

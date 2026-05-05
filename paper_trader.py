@@ -101,4 +101,5 @@ def print_paper_summary():
 
     pf = sh.get_profit_factor()
     if pf is not None:
-        print(f"   Profit Factor:    {pf:.2f}")
+        pf_str = "∞" if pf == float("inf") else f"{pf:.2f}"
+        print(f"   Profit Factor:    {pf_str}")

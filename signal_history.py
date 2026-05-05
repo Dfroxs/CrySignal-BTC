@@ -149,7 +149,7 @@ def log_signal(signal, df, htf=None):
         "",
     )
     c = _conn()
-    c.execute(
+    cur = c.execute(
         """INSERT INTO signals
            (timestamp, type, entry_price, stop_loss, take_profit,
             strength, rsi, stoch_k, vwap, htf_4h, htf_1d,
@@ -158,6 +158,7 @@ def log_signal(signal, df, htf=None):
         row,
     )
     c.commit()
+    return cur.lastrowid
 
     # CSV fallback
     write_header = not os.path.exists(SIGNAL_HISTORY_CSV)
@@ -205,9 +206,10 @@ def open_paper_position(signal):
     conn = _conn()
     cur = conn.execute(
         """INSERT INTO paper_positions
-           (type, entry_price, stop_loss, take_profit, opened_at)
-           VALUES (?,?,?,?,?)""",
+           (signal_id, type, entry_price, stop_loss, take_profit, opened_at)
+           VALUES (?,?,?,?,?,?)""",
         (
+            signal.get("db_id"),
             signal["type"],
             signal["entry_price"],
             signal["stop_loss"],
@@ -256,10 +258,13 @@ def get_recent_signals(limit=50):
 
 
 def get_win_rate():
-    """Win rate (WINS / all resolved signals) as a float, or None."""
+    """Win rate (WINS / resolved WIN+LOSS trades) as a float, or None.
+
+    BREAKEVEN excluded from denominator — it's neither a win nor a loss.
+    """
     c = _conn()
     total = c.execute(
-        "SELECT COUNT(*) FROM signals WHERE outcome IN ('WIN','LOSS','BREAKEVEN')"
+        "SELECT COUNT(*) FROM signals WHERE outcome IN ('WIN','LOSS')"
     ).fetchone()[0]
     if total == 0:
         return None
@@ -270,7 +275,11 @@ def get_win_rate():
 
 
 def get_profit_factor():
-    """Profit factor (total TP wins / total SL losses).  None if no data."""
+    """Profit factor (total TP wins / total SL losses).
+
+    Returns float('inf') when there are wins but no losses.
+    Returns None when there is no resolved data at all.
+    """
     c = _conn()
     wins = c.execute(
         """SELECT COALESCE(SUM(ABS(take_profit - entry_price)), 0)
@@ -281,7 +290,7 @@ def get_profit_factor():
            FROM signals WHERE outcome='LOSS'"""
     ).fetchone()[0]
     if losses == 0:
-        return None
+        return float("inf") if wins > 0 else None
     return wins / losses
 
 
