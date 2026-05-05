@@ -2,3 +2,4 @@ ccxt==4.5.50
 numpy==2.4.4
 pandas==3.0.2
 requests==2.33.1
+python-dotenv
