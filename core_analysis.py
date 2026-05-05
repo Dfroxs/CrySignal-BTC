@@ -25,6 +25,11 @@ from config import (
     RISK_CONFIG,
     SIGNAL_MAX_SCORE,
     SIGNAL_THRESHOLD,
+    SPOT_MAX_SCORE,
+    SPOT_THRESHOLD,
+    SPOT_THRESHOLD_MIN,
+    SPOT_THRESHOLD_MAX,
+    SPOT_THRESHOLD_STATE_FILE,
     STABLECOIN_CACHE_FILE,
     THRESHOLD_STATE_FILE,
     THRESHOLD_MIN,
@@ -447,43 +452,60 @@ def get_signal_confidence(strength, threshold):
     return "WEAK"
 
 
-def get_adaptive_threshold():
-    """Return the current adaptive SIGNAL_THRESHOLD.
+def _get_adaptive_threshold(base, t_min, t_max, state_file, env_var):
+    """Shared adaptive threshold logic."""
+    override = float(os.getenv(env_var, 0))
+    if override > 0:
+        return override
 
-    Reads signal count from the rolling window in *THRESHOLD_STATE_FILE*.
-    Raises threshold if too many signals, lowers if none.
-    """
-    threshold = float(os.getenv("SIGNAL_THRESHOLD", 0))
-    if threshold > 0:
-        return threshold
-
-    state = load_cache(THRESHOLD_STATE_FILE)
-    base = SIGNAL_THRESHOLD
-    now = datetime.now(UTC)
-
-    signals = state.get("signals", [])
+    state  = load_cache(state_file)
+    now    = datetime.now(UTC)
     cutoff = (now - timedelta(hours=ADAPTIVE_WINDOW_HOURS)).isoformat()
-    recent = [ts for ts in signals if ts > cutoff]
+    recent = [ts for ts in state.get("signals", []) if ts > cutoff]
+    all_ts = state.get("signals", [])
 
     if len(recent) > ADAPTIVE_MAX_SIGNALS:
-        base = min(base + 0.5, THRESHOLD_MAX)
-    elif len(recent) == 0 and len(signals) > 0:
-        base = max(base - 0.25, THRESHOLD_MIN)
-
+        base = min(base + 0.5, t_max)
+    elif len(recent) == 0 and len(all_ts) > 0:
+        base = max(base - 0.25, t_min)
     return base
 
 
-def update_threshold_state(signal_type):
-    """Record that a signal was fired for adaptive threshold tracking."""
+def _update_threshold_state(signal_type, state_file):
+    """Shared adaptive threshold state update."""
     if signal_type == "HOLD":
         return
-    state = load_cache(THRESHOLD_STATE_FILE)
+    state   = load_cache(state_file)
     signals = state.get("signals", [])
     signals.append(datetime.now(UTC).isoformat())
-    now = datetime.now(UTC)
-    cutoff = (now - timedelta(hours=ADAPTIVE_WINDOW_HOURS * 2)).isoformat()
-    signals = [ts for ts in signals if ts > cutoff]
-    save_cache(THRESHOLD_STATE_FILE, {"signals": signals})
+    cutoff  = (datetime.now(UTC) - timedelta(hours=ADAPTIVE_WINDOW_HOURS * 2)).isoformat()
+    save_cache(state_file, {"signals": [ts for ts in signals if ts > cutoff]})
+
+
+def get_adaptive_threshold():
+    """Return the current adaptive futures SIGNAL_THRESHOLD."""
+    return _get_adaptive_threshold(
+        SIGNAL_THRESHOLD, THRESHOLD_MIN, THRESHOLD_MAX,
+        THRESHOLD_STATE_FILE, "SIGNAL_THRESHOLD",
+    )
+
+
+def get_spot_adaptive_threshold():
+    """Return the current adaptive spot SPOT_THRESHOLD."""
+    return _get_adaptive_threshold(
+        SPOT_THRESHOLD, SPOT_THRESHOLD_MIN, SPOT_THRESHOLD_MAX,
+        SPOT_THRESHOLD_STATE_FILE, "SPOT_THRESHOLD",
+    )
+
+
+def update_threshold_state(signal_type):
+    """Record a futures signal for adaptive threshold tracking."""
+    _update_threshold_state(signal_type, THRESHOLD_STATE_FILE)
+
+
+def update_spot_threshold_state(signal_type):
+    """Record a spot signal for adaptive threshold tracking."""
+    _update_threshold_state(signal_type, SPOT_THRESHOLD_STATE_FILE)
 
 
 # ============================================================================
@@ -491,6 +513,7 @@ def update_threshold_state(signal_type):
 # ============================================================================
 
 def get_htf_trend():
+    """Fetch 4H + 1D EMA200 trend for futures (1H base) analysis."""
     htf = {'4h': 'NEUTRAL', '1d': 'NEUTRAL', 'aligned': False}
     try:
         for tf, key in [('4h', '4h'), ('1d', '1d')]:
@@ -501,6 +524,21 @@ def get_htf_trend():
         htf['aligned'] = htf['4h'] == htf['1d']
     except Exception as e:
         logger.warning(f"HTF fetch failed: {e}")
+    return htf
+
+
+def get_spot_htf_trend():
+    """Fetch 1D + 1W EMA200 trend for spot (4H base) analysis."""
+    htf = {'1d': 'NEUTRAL', '1w': 'NEUTRAL', 'aligned': False}
+    try:
+        for tf, key in [('1d', '1d'), ('1w', '1w')]:
+            bars = exchange.fetch_ohlcv('BTC/USDT', timeframe=tf, limit=220)
+            df   = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            ema200 = calculate_ema(df['close'], 200)
+            htf[key] = 'BULLISH' if df['close'].iloc[-1] > ema200.iloc[-1] else 'BEARISH'
+        htf['aligned'] = htf['1d'] == htf['1w']
+    except Exception as e:
+        logger.warning(f"Spot HTF fetch failed: {e}")
     return htf
 
 
@@ -622,12 +660,12 @@ def check_upcoming_macro_events():
 # SIGNAL GENERATION
 # ============================================================================
 
-def generate_signals(df, htf=None, market_structure=None, sr=None):
+def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures', threshold_override=None):
     current  = df.iloc[-1]
     previous = df.iloc[-2]
 
     atr_stop  = current['ATR_14'] * RISK_CONFIG['atr_multiplier']
-    threshold = get_adaptive_threshold()
+    threshold = threshold_override if threshold_override is not None else get_adaptive_threshold()
 
     signal = {
         'type':               'HOLD',
@@ -707,15 +745,18 @@ def generate_signals(df, htf=None, market_structure=None, sr=None):
 
     # 6 — Multi-timeframe alignment
     if htf:
+        htf_keys    = [k for k in htf if k != 'aligned']
+        primary_key = '4h' if '4h' in htf else '1d'
+        htf_label   = '  '.join(f"{k.upper()}: {htf[k]}" for k in htf_keys)
         if htf['aligned']:
-            if htf['4h'] == 'BULLISH':
+            if htf.get(primary_key) == 'BULLISH':
                 buy_conditions += 1.5
-                signal['reasons'].append(f"✓ HTF Aligned BULLISH (4H: {htf['4h']}, 1D: {htf['1d']})")
-            elif htf['4h'] == 'BEARISH':
+                signal['reasons'].append(f"✓ HTF Aligned BULLISH ({htf_label})")
+            elif htf.get(primary_key) == 'BEARISH':
                 sell_conditions += 1.5
-                signal['reasons'].append(f"✗ HTF Aligned BEARISH (4H: {htf['4h']}, 1D: {htf['1d']})")
+                signal['reasons'].append(f"✗ HTF Aligned BEARISH ({htf_label})")
         else:
-            signal['reasons'].append(f"⚠️  HTF Disagreement (4H: {htf['4h']}, 1D: {htf['1d']}) — caution")
+            signal['reasons'].append(f"⚠️  HTF Disagreement ({htf_label}) — caution")
 
     # 7 — RSI Divergence
     divergence = detect_rsi_divergence(df)
@@ -739,28 +780,29 @@ def generate_signals(df, htf=None, market_structure=None, sr=None):
             sell_conditions += 0.75
             signal['reasons'].append("✗ OBV falling — distribution detected")
 
-    # 9 — Market structure (funding rate, L/S ratio, DXY)
+    # 9 — Market structure (funding rate + L/S: futures-only · DXY: all modes)
     if market_structure:
         funding = market_structure.get('funding', {})
         ls      = market_structure.get('long_short', {})
         dxy     = market_structure.get('dxy', {})
 
-        if funding.get('bias') == 'BULLISH':
-            buy_conditions += 0.5
-            signal['reasons'].append(f"✓ Funding negative ({funding.get('rate_pct', 0):.4f}%) — shorts dominant")
-        elif funding.get('bias') == 'BEARISH':
-            sell_conditions += 1.0
-            signal['reasons'].append(f"✗ Funding VERY HIGH ({funding.get('rate_pct', 0):.4f}%) — longs overleveraged")
-        elif funding.get('bias') == 'SLIGHTLY_BEARISH':
-            sell_conditions += 0.25
-            signal['reasons'].append(f"✗ Funding elevated ({funding.get('rate_pct', 0):.4f}%)")
+        if mode == 'futures':
+            if funding.get('bias') == 'BULLISH':
+                buy_conditions += 0.5
+                signal['reasons'].append(f"✓ Funding negative ({funding.get('rate_pct', 0):.4f}%) — shorts dominant")
+            elif funding.get('bias') == 'BEARISH':
+                sell_conditions += 1.0
+                signal['reasons'].append(f"✗ Funding VERY HIGH ({funding.get('rate_pct', 0):.4f}%) — longs overleveraged")
+            elif funding.get('bias') == 'SLIGHTLY_BEARISH':
+                sell_conditions += 0.25
+                signal['reasons'].append(f"✗ Funding elevated ({funding.get('rate_pct', 0):.4f}%)")
 
-        if ls.get('bias') == 'BULLISH':
-            buy_conditions += 0.75
-            signal['reasons'].append(f"✓ L/S Ratio {ls.get('ratio', 1):.2f} — shorts crowded, squeeze risk")
-        elif ls.get('bias') == 'BEARISH':
-            sell_conditions += 0.75
-            signal['reasons'].append(f"✗ L/S Ratio {ls.get('ratio', 1):.2f} — longs crowded")
+            if ls.get('bias') == 'BULLISH':
+                buy_conditions += 0.75
+                signal['reasons'].append(f"✓ L/S Ratio {ls.get('ratio', 1):.2f} — shorts crowded, squeeze risk")
+            elif ls.get('bias') == 'BEARISH':
+                sell_conditions += 0.75
+                signal['reasons'].append(f"✗ L/S Ratio {ls.get('ratio', 1):.2f} — longs crowded")
 
         if dxy.get('bias') == 'BULLISH':
             buy_conditions += 0.5
@@ -797,24 +839,25 @@ def generate_signals(df, htf=None, market_structure=None, sr=None):
             sell_conditions += 0.75
             signal['reasons'].append(f"✗ BTC Dominance FALLING ({btc_dom.get('current',0):.1f}%) — capital rotating out")
 
-        # 13 — Open Interest
-        oi = market_structure.get('open_interest', {})
-        if oi.get('bias') == 'BULLISH':
-            buy_conditions += 0.5
-            signal['reasons'].append(f"✓ Open Interest RISING ({oi.get('change_pct',0):+.2f}%) — trend confirmation")
-        elif oi.get('bias') == 'BEARISH':
-            sell_conditions += 0.5
-            signal['reasons'].append(f"✗ Open Interest FALLING ({oi.get('change_pct',0):+.2f}%) — positions closing")
+        # 13 — Open Interest (futures only)
+        if mode == 'futures':
+            oi = market_structure.get('open_interest', {})
+            if oi.get('bias') == 'BULLISH':
+                buy_conditions += 0.5
+                signal['reasons'].append(f"✓ Open Interest RISING ({oi.get('change_pct',0):+.2f}%) — trend confirmation")
+            elif oi.get('bias') == 'BEARISH':
+                sell_conditions += 0.5
+                signal['reasons'].append(f"✗ Open Interest FALLING ({oi.get('change_pct',0):+.2f}%) — positions closing")
 
-        # 14 — Futures basis (mark vs index spread)
-        basis_pct = funding.get('basis_pct', 0)
-        basis_bias = funding.get('basis_bias', 'NEUTRAL')
-        if basis_bias == 'BULLISH':
-            buy_conditions += 0.5
-            signal['reasons'].append(f"✓ Futures premium ({basis_pct:+.3f}%) — long demand")
-        elif basis_bias == 'BEARISH':
-            sell_conditions += 0.5
-            signal['reasons'].append(f"✗ Futures discount ({basis_pct:+.3f}%) — weak demand")
+            # 14 — Futures basis (mark vs index spread) — futures only
+            basis_pct  = funding.get('basis_pct', 0)
+            basis_bias = funding.get('basis_bias', 'NEUTRAL')
+            if basis_bias == 'BULLISH':
+                buy_conditions += 0.5
+                signal['reasons'].append(f"✓ Futures premium ({basis_pct:+.3f}%) — long demand")
+            elif basis_bias == 'BEARISH':
+                sell_conditions += 0.5
+                signal['reasons'].append(f"✗ Futures discount ({basis_pct:+.3f}%) — weak demand")
 
     # 15 — Stochastic RSI (reduced weight when RSI already in same extreme zone)
     sk, sd  = current.get('StochRSI_K'), current.get('StochRSI_D')
@@ -1039,7 +1082,7 @@ def calculate_futures_position(signal):
 # DATA FETCHING
 # ============================================================================
 
-def fetch_ohlcv_df(symbol='BTC/USDT', timeframe='1h', limit=500):
+def fetch_ohlcv_df(symbol='BTC/USDT', timeframe='1h', limit=500, vwap_period=24):
     bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
     df   = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
@@ -1051,7 +1094,7 @@ def fetch_ohlcv_df(symbol='BTC/USDT', timeframe='1h', limit=500):
     df['ATR_14']                          = calculate_atr(df)
     df['OBV']                             = calculate_obv(df)
     df['StochRSI_K'], df['StochRSI_D']   = calculate_stoch_rsi(df['close'])
-    df['VWAP_24']                         = calculate_vwap(df)
+    df['VWAP_24']                         = calculate_vwap(df, period=vwap_period)
 
     return df
 
@@ -1060,50 +1103,41 @@ def fetch_ohlcv_df(symbol='BTC/USDT', timeframe='1h', limit=500):
 # MAIN ANALYSIS PIPELINE
 # ============================================================================
 
-def analyze_btc_signal(symbol='BTC/USDT', timeframe='1h', include_news=True):
-    """
-    Full pipeline:
-    1. Fetch 1H OHLCV + compute all indicators
-    2. Detect support/resistance levels
-    3. Fetch HTF trend, market structure, and (if include_news) F&G in parallel
-    4. Generate weighted signal score
-    5. Integrate news/macro overlay
-    6. Display structured report
-    Returns the final signal dict, or None on fatal error.
-    """
-    logger.info(f"Analyzing {symbol} ({timeframe})...")
-
+def analyze_futures_signal(symbol='BTC/USDT', include_news=True):
+    """Full 1H futures pipeline: 19 conditions including funding/L/S/OI/basis."""
+    logger.info(f"[FUTURES] Analyzing {symbol} (1H)...")
     try:
-        df = fetch_ohlcv_df(symbol, timeframe)
+        df = fetch_ohlcv_df(symbol, '1h', limit=500, vwap_period=24)
         sr = detect_support_resistance(df)
 
-        logger.info("Fetching market data in parallel...")
-        futures_map = {}
+        logger.info("Fetching futures market data in parallel...")
+        fmap = {}
         with ThreadPoolExecutor(max_workers=9) as pool:
-            futures_map['htf']         = pool.submit(get_htf_trend)
-            futures_map['funding']     = pool.submit(fetch_funding_rate)
-            futures_map['ls']          = pool.submit(fetch_long_short_ratio)
-            futures_map['dxy']         = pool.submit(fetch_dxy_trend)
-            futures_map['sp500']       = pool.submit(fetch_sp500_trend)
-            futures_map['stablecoin']  = pool.submit(fetch_stablecoin_supply)
-            futures_map['btc_dom']     = pool.submit(fetch_btc_dominance)
-            futures_map['oi']          = pool.submit(fetch_open_interest)
+            fmap['htf']        = pool.submit(get_htf_trend)
+            fmap['funding']    = pool.submit(fetch_funding_rate)
+            fmap['ls']         = pool.submit(fetch_long_short_ratio)
+            fmap['dxy']        = pool.submit(fetch_dxy_trend)
+            fmap['sp500']      = pool.submit(fetch_sp500_trend)
+            fmap['stablecoin'] = pool.submit(fetch_stablecoin_supply)
+            fmap['btc_dom']    = pool.submit(fetch_btc_dominance)
+            fmap['oi']         = pool.submit(fetch_open_interest)
             if include_news:
-                futures_map['fng']     = pool.submit(fetch_fear_and_greed)
+                fmap['fng']    = pool.submit(fetch_fear_and_greed)
 
-            htf = futures_map['htf'].result()
+            htf = fmap['htf'].result()
             market_structure = {
-                'funding':       futures_map['funding'].result(),
-                'long_short':    futures_map['ls'].result(),
-                'dxy':           futures_map['dxy'].result(),
-                'sp500':         futures_map['sp500'].result(),
-                'stablecoin':    futures_map['stablecoin'].result(),
-                'btc_dom':       futures_map['btc_dom'].result(),
-                'open_interest': futures_map['oi'].result(),
+                'funding':       fmap['funding'].result(),
+                'long_short':    fmap['ls'].result(),
+                'dxy':           fmap['dxy'].result(),
+                'sp500':         fmap['sp500'].result(),
+                'stablecoin':    fmap['stablecoin'].result(),
+                'btc_dom':       fmap['btc_dom'].result(),
+                'open_interest': fmap['oi'].result(),
             }
-            fng = futures_map['fng'].result() if include_news else None
+            fng = fmap['fng'].result() if include_news else None
 
-        signal = generate_signals(df, htf, market_structure, sr)
+        threshold = get_adaptive_threshold()
+        signal    = generate_signals(df, htf, market_structure, sr, mode='futures', threshold_override=threshold)
 
         news_data = None
         if include_news:
@@ -1111,36 +1145,110 @@ def analyze_btc_signal(symbol='BTC/USDT', timeframe='1h', include_news=True):
             news_data = get_combined_sentiment(fng=fng)
             signal    = integrate_news_with_signal(signal, news_data)
 
-        display_analysis(df, signal, news_data, htf, market_structure)
+        display_analysis(df, signal, news_data, htf, market_structure, timeframe='1H', mode='futures')
         signal['db_id'] = log_signal(signal, df, htf)
         update_threshold_state(signal['type'])
 
-        # Rich context for notifications (underscore keys are ignored by log_signal)
-        last = df.iloc[-1]
+        signal['mode']      = 'futures'
         signal['_htf']      = htf
         signal['_market']   = market_structure
         signal['_news_data']= news_data
+        last = df.iloc[-1]
         signal['_last'] = {
-            'close':      last['close'],
-            'ema200':     last.get('EMA_200', 0),
-            'rsi':        last.get('RSI_14', 0),
-            'macd':       last.get('MACD', 0),
-            'macd_sig':   last.get('MACD_Signal', 0),
-            'stoch_k':    last.get('StochRSI_K'),
-            'stoch_d':    last.get('StochRSI_D'),
-            'vwap':       last.get('VWAP_24'),
-            'bb_upper':   last.get('BB_Upper', 0),
-            'bb_lower':   last.get('BB_Lower', 0),
-            'atr':        last.get('ATR_14', 0),
-            'obv_slope':  df['OBV'].iloc[-1] - df['OBV'].iloc[-5],
-            'hi24':       df['high'].tail(24).max(),
-            'lo24':       df['low'].tail(24).min(),
+            'close':     last['close'],
+            'ema200':    last.get('EMA_200', 0),
+            'rsi':       last.get('RSI_14', 0),
+            'macd':      last.get('MACD', 0),
+            'macd_sig':  last.get('MACD_Signal', 0),
+            'stoch_k':   last.get('StochRSI_K'),
+            'stoch_d':   last.get('StochRSI_D'),
+            'vwap':      last.get('VWAP_24'),
+            'bb_upper':  last.get('BB_Upper', 0),
+            'bb_lower':  last.get('BB_Lower', 0),
+            'atr':       last.get('ATR_14', 0),
+            'obv_slope': df['OBV'].iloc[-1] - df['OBV'].iloc[-5],
+            'hi24':      df['high'].tail(24).max(),
+            'lo24':      df['low'].tail(24).min(),
         }
         return signal
 
     except Exception as e:
-        logger.error(f"{type(e).__name__}: {str(e)[:120]}")
+        logger.error(f"[FUTURES] {type(e).__name__}: {str(e)[:120]}")
         return None
+
+
+def analyze_spot_signal(symbol='BTC/USDT', include_news=True):
+    """Full 4H spot pipeline: 15 conditions (no funding/L/S/OI/basis)."""
+    logger.info(f"[SPOT] Analyzing {symbol} (4H)...")
+    try:
+        # 6 × 4H candles = 1 trading day (same wall-clock period as 24 × 1H)
+        df = fetch_ohlcv_df(symbol, '4h', limit=500, vwap_period=6)
+        sr = detect_support_resistance(df)
+
+        logger.info("Fetching spot market data in parallel...")
+        fmap = {}
+        with ThreadPoolExecutor(max_workers=7) as pool:
+            fmap['htf']        = pool.submit(get_spot_htf_trend)
+            fmap['dxy']        = pool.submit(fetch_dxy_trend)
+            fmap['sp500']      = pool.submit(fetch_sp500_trend)
+            fmap['stablecoin'] = pool.submit(fetch_stablecoin_supply)
+            fmap['btc_dom']    = pool.submit(fetch_btc_dominance)
+            if include_news:
+                fmap['fng']    = pool.submit(fetch_fear_and_greed)
+
+            htf = fmap['htf'].result()
+            market_structure = {
+                'dxy':        fmap['dxy'].result(),
+                'sp500':      fmap['sp500'].result(),
+                'stablecoin': fmap['stablecoin'].result(),
+                'btc_dom':    fmap['btc_dom'].result(),
+            }
+            fng = fmap['fng'].result() if include_news else None
+
+        threshold = get_spot_adaptive_threshold()
+        signal    = generate_signals(df, htf, market_structure, sr, mode='spot', threshold_override=threshold)
+
+        news_data = None
+        if include_news:
+            logger.info("Computing spot combined sentiment...")
+            news_data = get_combined_sentiment(fng=fng)
+            signal    = integrate_news_with_signal(signal, news_data)
+
+        display_analysis(df, signal, news_data, htf, market_structure, timeframe='4H', mode='spot')
+        signal['db_id'] = log_signal(signal, df, htf)
+        update_spot_threshold_state(signal['type'])
+
+        signal['mode']      = 'spot'
+        signal['_htf']      = htf
+        signal['_market']   = market_structure
+        signal['_news_data']= news_data
+        last = df.iloc[-1]
+        signal['_last'] = {
+            'close':     last['close'],
+            'ema200':    last.get('EMA_200', 0),
+            'rsi':       last.get('RSI_14', 0),
+            'macd':      last.get('MACD', 0),
+            'macd_sig':  last.get('MACD_Signal', 0),
+            'stoch_k':   last.get('StochRSI_K'),
+            'stoch_d':   last.get('StochRSI_D'),
+            'vwap':      last.get('VWAP_24'),
+            'bb_upper':  last.get('BB_Upper', 0),
+            'bb_lower':  last.get('BB_Lower', 0),
+            'atr':       last.get('ATR_14', 0),
+            'obv_slope': df['OBV'].iloc[-1] - df['OBV'].iloc[-5],
+            'hi24':      df['high'].tail(6).max(),   # 6×4H = 24H
+            'lo24':      df['low'].tail(6).min(),
+        }
+        return signal
+
+    except Exception as e:
+        logger.error(f"[SPOT] {type(e).__name__}: {str(e)[:120]}")
+        return None
+
+
+def analyze_btc_signal(symbol='BTC/USDT', timeframe='1h', include_news=True):
+    """Backward-compatible shim — delegates to analyze_futures_signal()."""
+    return analyze_futures_signal(symbol=symbol, include_news=include_news)
 
 
 # ============================================================================
@@ -1191,8 +1299,10 @@ def _colour_for(value, green_above=0, red_below=0):
     if value < red_below:   return "red"
     return ""
 
-def _signal_box(signal, effective_threshold):
+def _signal_box(signal, effective_threshold, max_score=None):
     """Draw the prominent signal‑verdict box."""
+    if max_score is None:
+        max_score = SPOT_MAX_SCORE if signal.get('mode') == 'spot' else SIGNAL_MAX_SCORE
     stype = signal["type"]
     colors = {"BUY": "grn", "SELL": "red", "HOLD": "yel"}
     c = colors.get(stype, "yel")
@@ -1204,12 +1314,13 @@ def _signal_box(signal, effective_threshold):
     conf_c = conf_colors.get(conf, "dim") if conf else "dim"
 
     l1 = f"  {_C[c]}{_C['bld']}{icon} {stype}{_C['rst']}"
-    l1 += f"   Strength  {_C['bld']}{signal['strength']:.2f}{_C['rst']} / {SIGNAL_MAX_SCORE}"
+    l1 += f"   Strength  {_C['bld']}{signal['strength']:.2f}{_C['rst']} / {max_score}"
     if conf:
         l1 += f"   {_C[conf_c]}{_C['bld']}{conf}{_C['rst']}"
     l1 += f"   Threshold  {_C['dim']}{effective_threshold:.2f}{_C['rst']}"
 
-    if effective_threshold != SIGNAL_THRESHOLD:
+    base_threshold = SPOT_THRESHOLD if signal.get('mode') == 'spot' else SIGNAL_THRESHOLD
+    if effective_threshold != base_threshold:
         l1 += f"  {_C['yel']}(adaptive){_C['rst']}"
 
     print(f"\n╭{'─' * (_M - 2)}╮")
@@ -1232,14 +1343,17 @@ def _signal_box(signal, effective_threshold):
         print(f"  {_C['dim']}{l2}{_C['rst']}")
 
 
-def display_analysis(df, signal, news_data, htf=None, market_structure=None):
+def display_analysis(df, signal, news_data, htf=None, market_structure=None, timeframe='1H', mode='futures'):
     last = df.iloc[-1]
     sr = signal.get("support_resistance", {})
-    effective_threshold = get_adaptive_threshold()
+    effective_threshold = (
+        get_spot_adaptive_threshold() if mode == 'spot' else get_adaptive_threshold()
+    )
 
     # ── header ────────────────────────────────────────────────────
     print(f"\n{_C['dim']}╭{'─' * (_M - 2)}╮{_C['rst']}")
-    title = f"SpotSignal · BTC/USDT · 1H"
+    mode_label = 'SPOT' if mode == 'spot' else 'FUTURES'
+    title = f"SpotSignal · BTC/USDT · {timeframe} · {mode_label}"
     time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
     print(f"{_C['dim']}│{_C['rst']} {_C['bld']}{_C['wht']}{title:^{_M - 4}}{_C['dim']} │{_C['rst']}")
     print(f"{_C['dim']}│{_C['rst']} {_C['gry']}{time_str:^{_M - 4}}{_C['dim']} │{_C['rst']}")
@@ -1247,7 +1361,8 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None):
     print(f"{_C['dim']}╰{'─' * (_M - 2)}╯{_C['rst']}")
 
     # ── signal verdict ────────────────────────────────────────────
-    _signal_box(signal, effective_threshold)
+    max_score = SPOT_MAX_SCORE if mode == 'spot' else SIGNAL_MAX_SCORE
+    _signal_box(signal, effective_threshold, max_score=max_score)
 
     # ── PRICE & TREND ───────────────────────────────────────────────
     col_w = _M - 6
@@ -1273,23 +1388,26 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None):
         print(f"  {_C['bld']}MULTI-TIMEFRAME{_C['rst']}")
         print(sep)
         a = f"{_C['grn']}✓ ALIGNED{_C['rst']}" if htf["aligned"] else f"{_C['red']}✗ DIVERGING{_C['rst']}"
-        _kv("4H",          htf["4h"])
-        _kv("1D",          htf["1d"])
-        _kv("Alignment",   a)
+        for k in [k for k in htf if k != 'aligned']:
+            _kv(k.upper(), htf[k])
+        _kv("Alignment", a)
 
     # ── MARKET STRUCTURE ───────────────────────────────────────────
     if market_structure:
-        funding = market_structure.get("funding", {})
-        ls = market_structure.get("long_short", {})
         dxy = market_structure.get("dxy", {})
 
         print()
         print(f"  {_C['bld']}MARKET STRUCTURE{_C['rst']}")
         print(sep)
-        _kv("Funding",
-            f"{funding.get('rate_pct',0):+.5f}%  {_bias_icon(funding.get('bias',''))}")
-        _kv("L/S Ratio",
-            f"{ls.get('ratio',1):.2f}       {_bias_icon(ls.get('bias',''))}")
+
+        if mode == 'futures':
+            funding = market_structure.get("funding", {})
+            ls      = market_structure.get("long_short", {})
+            _kv("Funding",
+                f"{funding.get('rate_pct',0):+.5f}%  {_bias_icon(funding.get('bias',''))}")
+            _kv("L/S Ratio",
+                f"{ls.get('ratio',1):.2f}       {_bias_icon(ls.get('bias',''))}")
+
         _kv("DXY",
             f"{dxy.get('current',0):.3f}  ({dxy.get('change_pct',0):+.2f}%)")
         sp500 = market_structure.get("sp500", {})
@@ -1304,13 +1422,16 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None):
         if btc_dom.get("current"):
             _kv("BTC Dominance",
                 f"{btc_dom['current']:.1f}%  {_bias_icon(btc_dom.get('bias',''))}")
-        oi = market_structure.get("open_interest", {})
-        if oi.get("notional"):
-            _kv("Open Interest",
-                f"${oi['notional']/1e9:.2f}B  ({oi['change_pct']:+.3f}%)  {_bias_icon(oi.get('bias',''))}")
-        basis_pct = funding.get("basis_pct", 0)
-        _kv("Futures Basis",
-            f"{basis_pct:+.4f}%  {_bias_icon(funding.get('basis_bias','NEUTRAL'))}")
+
+        if mode == 'futures':
+            funding = market_structure.get("funding", {})
+            oi      = market_structure.get("open_interest", {})
+            if oi.get("notional"):
+                _kv("Open Interest",
+                    f"${oi['notional']/1e9:.2f}B  ({oi['change_pct']:+.3f}%)  {_bias_icon(oi.get('bias',''))}")
+            basis_pct = funding.get("basis_pct", 0)
+            _kv("Futures Basis",
+                f"{basis_pct:+.4f}%  {_bias_icon(funding.get('basis_bias','NEUTRAL'))}")
 
     # ── TECHNICALS ─────────────────────────────────────────────────
     print()

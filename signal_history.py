@@ -92,6 +92,7 @@ def _migrate_paper_positions():
         ("tp2",            "REAL"),
         ("partial_closed", "INTEGER DEFAULT 0"),
         ("partial_pnl",    "REAL"),
+        ("mode",           "TEXT DEFAULT 'futures'"),
     ]
     for col, coltype in new_cols:
         try:
@@ -234,7 +235,7 @@ def update_signal_outcome(signal_id, outcome, closed_at=None):
 # Paper position CRUD
 # ---------------------------------------------------------------------------
 
-def open_paper_position(signal):
+def open_paper_position(signal, mode='futures'):
     """Record a new open paper position from a BUY/SELL signal.
 
     Returns the position row id.
@@ -246,8 +247,8 @@ def open_paper_position(signal):
     cur = conn.execute(
         """INSERT INTO paper_positions
            (signal_id, type, entry_price, stop_loss, take_profit,
-            opened_at, atr, trailing_stop, tp1, tp2, partial_closed)
-           VALUES (?,?,?,?,?,?,?,?,?,?,0)""",
+            opened_at, atr, trailing_stop, tp1, tp2, partial_closed, mode)
+           VALUES (?,?,?,?,?,?,?,?,?,?,0,?)""",
         (
             signal.get("db_id"),
             signal["type"],
@@ -259,18 +260,24 @@ def open_paper_position(signal):
             signal["stop_loss"],   # trailing_stop starts at original SL
             tp1,
             tp2,
+            mode,
         ),
     )
     conn.commit()
     return cur.lastrowid
 
 
-def get_open_positions():
-    """Return list of dicts for all open paper positions."""
+def get_open_positions(mode=None):
+    """Return list of dicts for all open paper positions, optionally filtered by mode."""
     c = _conn()
-    rows = c.execute(
-        "SELECT * FROM paper_positions WHERE outcome IS NULL"
-    ).fetchall()
+    if mode is not None:
+        rows = c.execute(
+            "SELECT * FROM paper_positions WHERE outcome IS NULL AND mode = ?", (mode,)
+        ).fetchall()
+    else:
+        rows = c.execute(
+            "SELECT * FROM paper_positions WHERE outcome IS NULL"
+        ).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -364,12 +371,17 @@ def get_profit_factor():
     return wins / losses
 
 
-def get_closed_pnl():
+def get_closed_pnl(mode=None):
     """Return (total_pnl_pct, total_trades, avg_pnl_pct) for paper positions."""
     c = _conn()
-    rows = c.execute(
-        "SELECT pnl_pct FROM paper_positions WHERE pnl_pct IS NOT NULL"
-    ).fetchall()
+    if mode is not None:
+        rows = c.execute(
+            "SELECT pnl_pct FROM paper_positions WHERE pnl_pct IS NOT NULL AND mode = ?", (mode,)
+        ).fetchall()
+    else:
+        rows = c.execute(
+            "SELECT pnl_pct FROM paper_positions WHERE pnl_pct IS NOT NULL"
+        ).fetchall()
     if not rows:
         return 0, 0, 0
     pnls = [r["pnl_pct"] for r in rows]

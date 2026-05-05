@@ -4,6 +4,30 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-06 — Separate Spot & Futures Signal Pipelines
+
+### Added
+
+- **`analyze_spot_signal()`** (`core_analysis.py`) — 4H OHLCV pipeline. Fetches 1D + 1W HTF trend (`get_spot_htf_trend()`), skips futures-only conditions (Funding Rate, L/S Ratio, Open Interest, Futures Basis), uses `VWAP_24` over 6 × 4H candles (= 24H). Adaptive threshold starts at 4.3 (`SPOT_THRESHOLD`), max score 14.25 (`SPOT_MAX_SCORE`).
+- **`analyze_futures_signal()`** — renamed from `analyze_btc_signal()` (kept as backward-compat shim). 1H pipeline unchanged: 19 conditions, threshold 5.2, max score 18.0.
+- **`get_spot_htf_trend()`** — fetches 1D + 1W EMA200 bias (spot trades on 4H so HTF = daily + weekly).
+- **Adaptive threshold per mode** — `get_spot_adaptive_threshold()` / `update_spot_threshold_state()` backed by `spot_threshold_state.json`. Futures uses existing `threshold_state.json`. Both share `_get_adaptive_threshold()` / `_update_threshold_state()` helpers to eliminate duplication.
+- **`mode` column in `paper_positions`** — auto-migrated. `open_paper_position(signal, mode='futures')` stores `'spot'` or `'futures'`.
+- **Mode-filtered DB queries** — `get_open_positions(mode=None)`, `get_closed_pnl(mode=None)` accept optional mode so spot/futures performance is tracked separately.
+- **Combined notifications** — `send_signal_alert(spot_signal, futures_signal)` sends one Telegram/Discord message with both sections. HOLD section shows score only; non-HOLD shows full trade setup. Paper performance footer broken out per mode.
+- **Config additions** — `SPOT_THRESHOLD=4.3`, `SPOT_MAX_SCORE=14.25`, `SPOT_THRESHOLD_MIN/MAX`, `SPOT_THRESHOLD_STATE_FILE`, `FUTURES_CONFIG["max_positions"]=2`, `RISK_CONFIG["max_positions"]` reduced 3→2.
+
+### Changed
+
+- **`generate_signals()`** — new params `mode='futures'` and `threshold_override=None`; futures-only conditions wrapped with `if mode == 'futures':`; HTF condition now key-agnostic (works with `{4h,1d}` or `{1d,1w}`).
+- **`fetch_ohlcv_df()`** — added `vwap_period=24` param; spot passes `vwap_period=6` for equivalent 24H VWAP on 4H candles.
+- **`display_analysis()`** — accepts `timeframe` and `mode`; header shows mode label; MARKET STRUCTURE hides funding/L/S/OI/basis for spot mode; HTF rows rendered dynamically from dict keys.
+- **`_signal_box()`** — selects `SPOT_MAX_SCORE` or `SIGNAL_MAX_SCORE` based on `signal['mode']`.
+- **`run_bot.py`** — Phase 2 runs spot then futures. Phase 3 manages positions per mode against separate `max_positions` limits. Phase 4 calls combined `send_signal_alert(spot_signal, futures_signal)`.
+- **`paper_trader.py`** — `check_and_close_positions`, `print_open_status`, `print_paper_summary` accept `mode=None` and filter accordingly.
+
+---
+
 ## 2026-05-06 — Full-Detail Telegram & Discord Notifications
 
 ### Changed

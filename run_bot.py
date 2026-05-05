@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """SpotSignal — BTC/USDT trading signal bot.
 
-Two-phase pipeline: scrape news → analyze → paper trade → notify.
+Four-phase pipeline: scrape news → analyze (spot + futures) → paper trade → notify.
 """
 
 import argparse
@@ -11,11 +11,11 @@ import sys
 import time
 from datetime import UTC, datetime
 
-from core_analysis import analyze_btc_signal
+from core_analysis import analyze_spot_signal, analyze_futures_signal
 from news_scraper import scrape_and_export
 from notifier import send_signal_alert
 from paper_trader import check_and_close_positions, print_open_status, print_paper_summary
-from config import RISK_CONFIG
+from config import RISK_CONFIG, FUTURES_CONFIG
 from signal_history import close as close_db, get_open_positions, open_paper_position
 
 logging.basicConfig(
@@ -28,7 +28,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Clean shutdown
 atexit.register(close_db)
 
 
@@ -46,46 +45,69 @@ def run_cycle():
     except Exception as e:
         logger.error("Phase 1 failed — proceeding with stale data: %s", e)
 
-    # Phase 2 — analyze
-    logger.info("[PHASE 2] Running core analysis ...")
-    signal = None
+    # Phase 2 — analyze (spot then futures sequentially to avoid exchange rate limits)
+    logger.info("[PHASE 2] Running spot analysis (4H) ...")
+    spot_signal = None
     try:
-        signal = analyze_btc_signal(
-            symbol="BTC/USDT", timeframe="1h", include_news=True,
-        )
+        spot_signal = analyze_spot_signal(symbol="BTC/USDT", include_news=True)
     except Exception as e:
-        logger.error("Phase 2 failed: %s", e)
+        logger.error("Spot analysis failed: %s", e)
+
+    logger.info("[PHASE 2] Running futures analysis (1H) ...")
+    futures_signal = None
+    try:
+        futures_signal = analyze_futures_signal(symbol="BTC/USDT", include_news=True)
+    except Exception as e:
+        logger.error("Futures analysis failed: %s", e)
 
     # Phase 3 — paper trading
     logger.info("[PHASE 3] Updating paper positions ...")
     try:
-        if signal and signal["type"] != "HOLD":
-            open_count = len(get_open_positions())
-            if open_count < RISK_CONFIG["max_positions"]:
-                open_paper_position(signal)
+        # Spot positions
+        if spot_signal and spot_signal["type"] != "HOLD":
+            spot_open = len(get_open_positions("spot"))
+            if spot_open < RISK_CONFIG["max_positions"]:
+                open_paper_position(spot_signal, mode="spot")
             else:
                 logger.info(
-                    "Max positions (%d) reached — skipping new %s position",
-                    RISK_CONFIG["max_positions"], signal["type"],
+                    "Max spot positions (%d) reached — skipping %s",
+                    RISK_CONFIG["max_positions"], spot_signal["type"],
                 )
 
-        if signal:
-            entry = signal.get("entry_price", 0)
+        # Futures positions
+        if futures_signal and futures_signal["type"] != "HOLD":
+            fut_open = len(get_open_positions("futures"))
+            if fut_open < FUTURES_CONFIG["max_positions"]:
+                open_paper_position(futures_signal, mode="futures")
+            else:
+                logger.info(
+                    "Max futures positions (%d) reached — skipping %s",
+                    FUTURES_CONFIG["max_positions"], futures_signal["type"],
+                )
+
+        # Determine current price for position checks
+        if futures_signal and futures_signal.get("entry_price"):
+            current_price = futures_signal["entry_price"]
+        elif spot_signal and spot_signal.get("entry_price"):
+            current_price = spot_signal["entry_price"]
         else:
-            # Fallback: fetch current price if signal is None
             from core_analysis import exchange
             ticker = exchange.fetch_ticker("BTC/USDT")
-            entry = ticker["last"]
+            current_price = ticker["last"]
 
-        check_and_close_positions(entry)
-        print_open_status()
-        print_paper_summary()
+        check_and_close_positions(current_price, mode="spot")
+        check_and_close_positions(current_price, mode="futures")
+
+        print_open_status("spot")
+        print_open_status("futures")
+        print_paper_summary("spot")
+        print_paper_summary("futures")
+
     except Exception as e:
         logger.error("Paper trading update failed: %s", e)
 
     # Phase 4 — notify
-    if signal:
-        send_signal_alert(signal)
+    send_signal_alert(spot_signal=spot_signal, futures_signal=futures_signal)
 
 
 # ---------------------------------------------------------------------------

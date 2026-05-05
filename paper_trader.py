@@ -20,9 +20,9 @@ _TRAIL = RISK_CONFIG["trailing_atr_factor"]
 # Position management
 # ---------------------------------------------------------------------------
 
-def check_and_close_positions(current_price):
-    """Check all open paper positions against *current_price*."""
-    open_positions = sh.get_open_positions()
+def check_and_close_positions(current_price, mode=None):
+    """Check open paper positions against *current_price*, optionally filtered by mode."""
+    open_positions = sh.get_open_positions(mode)
     if not open_positions:
         return
 
@@ -123,9 +123,9 @@ def check_and_close_positions(current_price):
 # Display
 # ---------------------------------------------------------------------------
 
-def print_open_status():
+def print_open_status(mode=None):
     """Print a summary of currently open paper positions."""
-    positions = sh.get_open_positions()
+    positions = sh.get_open_positions(mode)
     if not positions:
         return
 
@@ -145,7 +145,7 @@ def print_open_status():
             f"| Opened: {pos['opened_at'][:16]}"
         )
 
-    total, count, avg = sh.get_closed_pnl()
+    total, count, avg = sh.get_closed_pnl(mode)
     if count > 0:
         print(
             f"   Closed: {count} trades | "
@@ -153,9 +153,9 @@ def print_open_status():
         )
 
 
-def print_paper_summary():
+def print_paper_summary(mode=None):
     """Print paper trading performance summary."""
-    total, count, avg = sh.get_closed_pnl()
+    total, count, avg = sh.get_closed_pnl(mode)
     if count == 0:
         return
 
