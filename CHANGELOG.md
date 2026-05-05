@@ -4,6 +4,20 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-06 — Compact Telegram Notifications (Split per Mode)
+
+### Changed
+
+- **Redesigned Telegram format** (`notifier.py`) — single long combined message (~3200 chars) replaced by 2-3 compact separate messages:
+  - **Signal card** (~600 chars) per mode (SPOT / FUTURES): verdict, trade setup in code block, technicals one-liner, HTF, market structure, sentiment, top 7 reasons
+  - **Position + Performance** (~400 chars): open positions with entry/trail/TP1, closed P&L, outcome breakdown (W/L/MC)
+  - **Macro warning** sent as standalone banner when active
+- **HOLD signals are silent** — no Telegram message sent when signal is HOLD
+- **`_send_telegram_message()`** helper extracted for reusable single-message delivery with label logging
+- **`_threshold`** added to signal dict in `core_analysis.py` for compact card display
+
+---
+
 ## 2026-05-06 — Terminal Display & Output Improvements
 
 ### Changed
