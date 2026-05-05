@@ -4,6 +4,15 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-06 — Full-Detail Combined Telegram & Discord Notifications
+
+### Changed
+
+- **`_format_section_telegram()` / `_format_section_discord()`** — Redesigned from compact one-liner to full-detail sections matching terminal output. Both HOLD and non-HOLD signals now show: Price & Trend (price, EMA200, 24h range, S/R), HTF alignment, Technicals (RSI, StochRSI, MACD, VWAP, ATR, OBV, divergence), Market Structure (mode-appropriate fields), Sentiment (F&G, news, top 3 headlines), and Signal Reasons (up to 10). Trade Setup (Entry/SL/TP/RR) only shown for BUY/SELL.
+- **Combined message char count** — ~2850 chars for two full sections (SPOT + FUTURES), well under the 4096-char Telegram limit.
+
+---
+
 ## 2026-05-06 — Separate Spot & Futures Signal Pipelines
 
 ### Added

@@ -1394,15 +1394,15 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
 
     # ── MARKET STRUCTURE ───────────────────────────────────────────
     if market_structure:
-        dxy = market_structure.get("dxy", {})
+        funding = market_structure.get("funding", {})  # {} for spot (no funding key)
+        dxy     = market_structure.get("dxy", {})
 
         print()
         print(f"  {_C['bld']}MARKET STRUCTURE{_C['rst']}")
         print(sep)
 
         if mode == 'futures':
-            funding = market_structure.get("funding", {})
-            ls      = market_structure.get("long_short", {})
+            ls = market_structure.get("long_short", {})
             _kv("Funding",
                 f"{funding.get('rate_pct',0):+.5f}%  {_bias_icon(funding.get('bias',''))}")
             _kv("L/S Ratio",
@@ -1424,8 +1424,7 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
                 f"{btc_dom['current']:.1f}%  {_bias_icon(btc_dom.get('bias',''))}")
 
         if mode == 'futures':
-            funding = market_structure.get("funding", {})
-            oi      = market_structure.get("open_interest", {})
+            oi = market_structure.get("open_interest", {})
             if oi.get("notional"):
                 _kv("Open Interest",
                     f"${oi['notional']/1e9:.2f}B  ({oi['change_pct']:+.3f}%)  {_bias_icon(oi.get('bias',''))}")

@@ -41,99 +41,188 @@ def _mode_label(signal):
 
 
 # ---------------------------------------------------------------------------
-# Compact section formatter (used in combined messages)
+# Full-detail section formatter — matches terminal output content
 # ---------------------------------------------------------------------------
 
 def _format_section_telegram(signal, symbol="BTC/USDT"):
-    """One compact section for SPOT or FUTURES in the combined message."""
+    """Full-detail section for one mode, mirrors the terminal analysis output."""
     stype  = signal["type"]
     label  = _mode_label(signal)
     score  = signal.get("strength", 0)
     mscore = _max_score(signal)
+    conf   = signal.get("confidence", "")
+    mode   = signal.get("mode", "futures")
 
+    # ── Header ──────────────────────────────────────────────────────
     if stype == "HOLD":
-        return f"⏸ <b>HOLD · {_esc(label)}</b> — Score: {score:.1f}/{mscore}"
-
-    icon  = "🟢" if stype == "BUY" else "🔴"
-    conf  = signal.get("confidence", "")
-    entry = signal["entry_price"]
-    sl    = signal["stop_loss"]
-    tp1   = signal["take_profit"]
-    tp2   = signal.get("tp2")
-
-    sl_pct  = abs(entry - sl)  / entry * 100
-    tp1_pct = abs(tp1 - entry) / entry * 100
-    rr      = tp1_pct / sl_pct if sl_pct > 0 else 0
-
-    header = f"{icon} <b>{stype} · {_esc(label)}</b>"
-    if conf:
-        header += f" — <b>{conf}</b>"
+        icon = "⏸"
+        header = f"{icon} <b>HOLD · {_esc(label)}</b>  Score {score:.2f}/{mscore}"
+    elif stype == "BUY":
+        header = f"🟢 <b>BUY · {_esc(label)}</b>"
+        if conf:
+            header += f" — <b>{conf}</b>"
+        header += f"  Score {score:.2f}/{mscore}"
+    else:
+        header = f"🔴 <b>SELL · {_esc(label)}</b>"
+        if conf:
+            header += f" — <b>{conf}</b>"
+        header += f"  Score {score:.2f}/{mscore}"
 
     lines = [header, ""]
 
-    lines.append("<b>📊 Trade Setup</b>")
-    lines.append(f"Entry    <code>${entry:,.0f}</code>")
-    lines.append(f"Trail SL <code>${sl:,.0f}</code>  (-{sl_pct:.2f}%)")
-    lines.append(f"TP1 50%  <code>${tp1:,.0f}</code>  (+{tp1_pct:.2f}%)")
-    if tp2:
-        tp2_pct = abs(tp2 - entry) / entry * 100
-        lines.append(f"TP2 50%  <code>${tp2:,.0f}</code>  (+{tp2_pct:.2f}%)")
-    lines.append(f"R/R 1:{rr:.2f}  ·  Score {score:.2f}/{mscore}")
-    lines.append("")
+    # ── Trade Setup (non-HOLD only) ──────────────────────────────────
+    if stype != "HOLD" and signal.get("stop_loss"):
+        entry   = signal["entry_price"]
+        sl      = signal["stop_loss"]
+        tp1     = signal["take_profit"]
+        tp2     = signal.get("tp2")
+        sl_pct  = abs(entry - sl)  / entry * 100
+        tp1_pct = abs(tp1 - entry) / entry * 100
+        rr      = tp1_pct / sl_pct if sl_pct > 0 else 0
 
-    htf  = signal.get("_htf", {})
-    last = signal.get("_last", {})
-    mkt  = signal.get("_market", {})
+        lines.append("<b>📊 Trade Setup</b>")
+        lines.append(f"Entry    <code>${entry:,.0f}</code>")
+        lines.append(f"Trail SL <code>${sl:,.0f}</code>  (-{sl_pct:.2f}%)")
+        lines.append(f"TP1 50%  <code>${tp1:,.0f}</code>  (+{tp1_pct:.2f}%)")
+        if tp2:
+            tp2_pct = abs(tp2 - entry) / entry * 100
+            lines.append(f"TP2 50%  <code>${tp2:,.0f}</code>  (+{tp2_pct:.2f}%)")
+        lines.append(f"R/R 1:{rr:.2f}")
+        lines.append("")
 
+    # ── Price & Trend ────────────────────────────────────────────────
+    last  = signal.get("_last", {})
+    price = signal.get("entry_price", last.get("close", 0))
+    if last:
+        ema200 = last.get("ema200", 0)
+        hi24   = last.get("hi24", 0)
+        lo24   = last.get("lo24", 0)
+        trend  = _UP if price > ema200 else _DOWN
+        lines.append("<b>📈 Price &amp; Trend</b>")
+        lines.append(f"<code>${price:,.0f}</code>  EMA200 <code>${ema200:,.0f}</code> {trend}")
+        lines.append(f"Range <code>${lo24:,.0f}</code> – <code>${hi24:,.0f}</code>")
+        sr = signal.get("support_resistance", {})
+        sr_parts = []
+        if sr.get("resistance"):
+            sr_parts.append(f"R <code>${sr['resistance']:,.0f}</code>")
+        if sr.get("support"):
+            sr_parts.append(f"S <code>${sr['support']:,.0f}</code>")
+        if sr_parts:
+            lines.append("  ·  ".join(sr_parts))
+        lines.append("")
+
+    # ── Multi-Timeframe ──────────────────────────────────────────────
+    htf = signal.get("_htf", {})
     if htf:
         htf_keys  = [k for k in htf if k != "aligned"]
         htf_parts = "  ·  ".join(f"{k.upper()}: {htf[k]}" for k in htf_keys)
-        aligned   = "✓" if htf.get("aligned") else "✗"
-        lines.append(f"<b>⏱ HTF</b> {_esc(htf_parts)}  {aligned}")
+        aligned   = "✓ Aligned" if htf.get("aligned") else "✗ Diverging"
+        lines.append(f"<b>⏱ HTF</b>  {_esc(htf_parts)}  {aligned}")
+        lines.append("")
 
+    # ── Technicals ───────────────────────────────────────────────────
     if last:
         rsi_v = last.get("rsi", 0)
         sk    = last.get("stoch_k")
+        sd    = last.get("stoch_d")
         macd  = last.get("macd", 0)
         msig  = last.get("macd_sig", 0)
-        sk_str = f"  StochRSI <code>{sk:.0f}</code>" if sk is not None else ""
+        vwap  = last.get("vwap")
+        obv   = last.get("obv_slope", 0)
+        atr_v = last.get("atr", 0)
+        div   = signal.get("rsi_divergence", "NONE")
+
+        rsi_tag  = " OB" if rsi_v > 70 else (" OS" if rsi_v < 30 else "")
         macd_str = _UP if macd > msig else _DOWN
-        rsi_tag  = "  OB" if rsi_v > 70 else ("  OS" if rsi_v < 30 else "")
-        lines.append(f"RSI <code>{rsi_v:.1f}</code>{rsi_tag}{sk_str}  ·  MACD {macd_str}")
+        obv_str  = _UP if obv > 0 else _DOWN
+        sk_str   = f"  StochRSI <code>{sk:.0f}/{sd:.0f}</code>" if sk is not None else ""
 
-    if mkt and signal.get("mode") == "futures":
-        funding  = mkt.get("funding", {})
-        ls       = mkt.get("long_short", {})
-        oi       = mkt.get("open_interest", {})
-        fund_pct = funding.get("rate_pct", 0)
-        oi_val   = oi.get("notional", 0)
-        oi_dir   = _dir(oi.get("change_pct", 0))
-        lines.append(
-            f"Funding <code>{fund_pct:+.4f}%</code>"
-            + (f"  ·  OI <code>${oi_val/1e9:.1f}B</code> {oi_dir}" if oi_val else "")
-            + f"  ·  L/S <code>{ls.get('ratio',1):.2f}</code>"
-        )
+        lines.append("<b>🔬 Technicals</b>")
+        lines.append(f"RSI <code>{rsi_v:.1f}</code>{rsi_tag}{sk_str}  MACD {macd_str}  OBV {obv_str}")
+        if vwap:
+            vwap_str = _UP if price > vwap else _DOWN
+            lines.append(f"VWAP <code>${vwap:,.0f}</code> {vwap_str}  ATR <code>${atr_v:,.0f}</code>")
+        else:
+            lines.append(f"ATR <code>${atr_v:,.0f}</code>")
+        if div != "NONE":
+            lines.append(f"RSI Divergence: {_esc(div)}")
+        lines.append("")
 
+    # ── Market Structure ─────────────────────────────────────────────
+    mkt = signal.get("_market", {})
     if mkt:
-        btcdom   = mkt.get("btc_dom", {})
-        stable   = mkt.get("stablecoin", {})
+        lines.append("<b>🏦 Market Structure</b>")
+
+        if mode == "futures":
+            funding  = mkt.get("funding", {})
+            ls       = mkt.get("long_short", {})
+            oi       = mkt.get("open_interest", {})
+            fund_pct = funding.get("rate_pct", 0)
+            ls_ratio = ls.get("ratio", 1)
+            oi_val   = oi.get("notional", 0)
+            oi_dir   = _dir(oi.get("change_pct", 0))
+            fund_dir = _UP if fund_pct < 0 else _DOWN
+            ls_dir   = _UP if ls_ratio < 1 else _DOWN
+            oi_part  = f"  OI <code>${oi_val/1e9:.2f}B</code> {oi_dir}" if oi_val else ""
+            lines.append(
+                f"Funding <code>{fund_pct:+.5f}%</code> {fund_dir}"
+                f"  L/S <code>{ls_ratio:.2f}</code> {ls_dir}{oi_part}"
+            )
+            basis_pct = funding.get("basis_pct", 0)
+            if basis_pct:
+                lines.append(f"Futures Basis <code>{basis_pct:+.4f}%</code>")
+
+        dxy    = mkt.get("dxy", {})
+        sp500  = mkt.get("sp500", {})
+        btcdom = mkt.get("btc_dom", {})
+        stable = mkt.get("stablecoin", {})
+
+        dxy_c = dxy.get("current", 0)
+        dxy_d = dxy.get("change_pct", 0)
+        sp_c  = sp500.get("current", 0)
+        sp_d  = sp500.get("change_pct", 0)
+        sp_dir = _UP if sp_d > 0 else _DOWN
+        if sp_c:
+            lines.append(
+                f"DXY <code>{dxy_c:.3f}</code> ({dxy_d:+.2f}%)"
+                f"  S&amp;P <code>{sp_c:,.0f}</code> ({sp_d:+.2f}%) {sp_dir}"
+            )
+
         btcd     = btcdom.get("current", 0)
         btcd_dir = _dir(btcdom.get("change_pct", 0))
         stab     = stable.get("total_b", 0)
         stab_dir = _dir(stable.get("change_pct", 0))
-        parts = []
+        mkt_parts = []
         if btcd:
-            parts.append(f"BTC.D <code>{btcd:.1f}%</code> {btcd_dir}")
+            mkt_parts.append(f"BTC.D <code>{btcd:.1f}%</code> {btcd_dir}")
         if stab:
-            parts.append(f"Stbl <code>${stab:.0f}B</code> {stab_dir}")
-        if parts:
-            lines.append("  ·  ".join(parts))
+            mkt_parts.append(f"Stablecoin <code>${stab:.0f}B</code> {stab_dir}")
+        if mkt_parts:
+            lines.append("  ·  ".join(mkt_parts))
+        lines.append("")
 
+    # ── Sentiment ────────────────────────────────────────────────────
+    fng_val   = signal.get("fear_greed_value", 50)
+    fng_label = signal.get("fear_greed_label", "Neutral")
+    news_sent = signal.get("news_sentiment", "NEUTRAL")
+    news_conf = signal.get("news_confidence", 0)
+    lines.append("<b>📰 Sentiment</b>")
+    lines.append(
+        f"F&amp;G <code>{fng_val}/100</code> {_esc(fng_label)}"
+        f"  News: {news_sent} ({news_conf:.0f}%)"
+    )
+    news_data = signal.get("_news_data") or {}
+    for h in news_data.get("headlines", [])[:3]:
+        arr = _UP if h["sentiment"] > 0 else (_DOWN if h["sentiment"] < 0 else _FLAT)
+        cat = "G" if h.get("category") == "geopolitical" else "C"
+        lines.append(f"  {arr}[{cat}] {_esc(h['title'][:60])}")
     lines.append("")
+
+    # ── Signal Reasons ───────────────────────────────────────────────
     reasons = signal.get("reasons", [])
     if reasons:
-        lines.append(f"<b>✅ Signals ({len(reasons)})</b>")
-        for r in reasons[:5]:
+        lines.append(f"<b>✅ Signal Reasons ({len(reasons)})</b>")
+        for r in reasons[:10]:
             sym  = "✓" if r.startswith("✓") else ("✗" if r.startswith("✗") else "•")
             body = r[2:].strip() if r[:1] in "✓✗⚠" else r.strip()
             lines.append(f"  {sym} {_esc(body[:65])}")
@@ -142,76 +231,141 @@ def _format_section_telegram(signal, symbol="BTC/USDT"):
 
 
 def _format_section_discord(signal, symbol="BTC/USDT"):
-    """Compact Discord section for one mode."""
+    """Full-detail Discord section for one mode."""
     stype  = signal["type"]
     label  = _mode_label(signal)
     score  = signal.get("strength", 0)
     mscore = _max_score(signal)
+    conf   = signal.get("confidence", "")
+    mode   = signal.get("mode", "futures")
 
+    # Header
     if stype == "HOLD":
-        return f"⏸ **HOLD · {label}** — Score: {score:.1f}/{mscore}"
+        header = f"⏸ **HOLD · {label}**  Score {score:.2f}/{mscore}"
+    elif stype == "BUY":
+        header = f"🟢 **BUY · {label}**" + (f" — **{conf}**" if conf else "") + f"  Score {score:.2f}/{mscore}"
+    else:
+        header = f"🔴 **SELL · {label}**" + (f" — **{conf}**" if conf else "") + f"  Score {score:.2f}/{mscore}"
 
-    icon  = "🟢" if stype == "BUY" else "🔴"
-    conf  = signal.get("confidence", "")
-    entry = signal["entry_price"]
-    sl    = signal["stop_loss"]
-    tp1   = signal["take_profit"]
-    tp2   = signal.get("tp2")
-    sl_pct  = abs(entry - sl)  / entry * 100
-    tp1_pct = abs(tp1 - entry) / entry * 100
-    rr      = tp1_pct / sl_pct if sl_pct > 0 else 0
+    parts = [header]
 
-    header = f"{icon} **{stype} · {label}**"
-    if conf:
-        header += f" — **{conf}**"
+    # Trade setup (non-HOLD only)
+    if stype != "HOLD" and signal.get("stop_loss"):
+        entry   = signal["entry_price"]
+        sl      = signal["stop_loss"]
+        tp1     = signal["take_profit"]
+        tp2     = signal.get("tp2")
+        sl_pct  = abs(entry - sl)  / entry * 100
+        tp1_pct = abs(tp1 - entry) / entry * 100
+        rr      = tp1_pct / sl_pct if sl_pct > 0 else 0
 
-    trade = (
-        f"```\n"
-        f"Entry    ${entry:>10,.0f}\n"
-        f"Trail SL ${sl:>10,.0f}  (-{sl_pct:.2f}%)\n"
-        f"TP1 50%  ${tp1:>10,.0f}  (+{tp1_pct:.2f}%)\n"
-    )
-    if tp2:
-        tp2_pct = abs(tp2 - entry) / entry * 100
-        trade += f"TP2 50%  ${tp2:>10,.0f}  (+{tp2_pct:.2f}%)\n"
-    trade += f"R/R  1:{rr:.2f}  ·  Score {score:.2f}/{mscore}\n```"
+        trade = (
+            f"```\n"
+            f"Entry    ${entry:>10,.0f}\n"
+            f"Trail SL ${sl:>10,.0f}  (-{sl_pct:.2f}%)\n"
+            f"TP1 50%  ${tp1:>10,.0f}  (+{tp1_pct:.2f}%)\n"
+        )
+        if tp2:
+            tp2_pct = abs(tp2 - entry) / entry * 100
+            trade += f"TP2 50%  ${tp2:>10,.0f}  (+{tp2_pct:.2f}%)\n"
+        trade += f"R/R  1:{rr:.2f}\n```"
+        parts.append(trade)
 
-    htf  = signal.get("_htf", {})
-    last = signal.get("_last", {})
-    mkt  = signal.get("_market", {})
+    last  = signal.get("_last", {})
+    price = signal.get("entry_price", last.get("close", 0))
 
-    parts = [header, trade]
+    # Price & Trend
+    if last:
+        ema200 = last.get("ema200", 0)
+        hi24   = last.get("hi24", 0)
+        lo24   = last.get("lo24", 0)
+        trend  = _UP if price > ema200 else _DOWN
+        parts.append(
+            f"**Price** ${price:,.0f}  EMA200 ${ema200:,.0f} {trend}"
+            f"  Range ${lo24:,.0f}–${hi24:,.0f}"
+        )
 
+    # HTF
+    htf = signal.get("_htf", {})
     if htf:
         htf_keys = [k for k in htf if k != "aligned"]
         htf_str  = "  ·  ".join(f"{k.upper()}: {htf[k]}" for k in htf_keys)
-        aligned  = "✓" if htf.get("aligned") else "✗"
-        parts.append(f"**HTF** {htf_str} {aligned}")
+        aligned  = "✓ Aligned" if htf.get("aligned") else "✗ Diverging"
+        parts.append(f"**HTF** {htf_str}  {aligned}")
 
+    # Technicals
     if last:
         rsi_v  = last.get("rsi", 0)
         sk     = last.get("stoch_k")
+        sd     = last.get("stoch_d")
         macd   = last.get("macd", 0)
         msig_v = last.get("macd_sig", 0)
-        sk_str = f" · StochRSI {sk:.0f}" if sk is not None else ""
-        parts.append(
-            f"**Technicals** · RSI {rsi_v:.1f}{sk_str}"
-            f" · MACD {'▲' if macd > msig_v else '▼'}"
-        )
+        vwap   = last.get("vwap")
+        obv    = last.get("obv_slope", 0)
+        atr_v  = last.get("atr", 0)
+        rsi_tag = " OB" if rsi_v > 70 else (" OS" if rsi_v < 30 else "")
+        sk_str  = f"  StochRSI {sk:.0f}/{sd:.0f}" if sk is not None else ""
+        tech = f"**Technicals** RSI {rsi_v:.1f}{rsi_tag}{sk_str}  MACD {'▲' if macd > msig_v else '▼'}  OBV {'▲' if obv > 0 else '▼'}"
+        if vwap:
+            tech += f"  VWAP ${vwap:,.0f}  ATR ${atr_v:,.0f}"
+        parts.append(tech)
 
-    if mkt and signal.get("mode") == "futures":
-        funding  = mkt.get("funding", {})
-        ls       = mkt.get("long_short", {})
-        fund_pct = funding.get("rate_pct", 0)
-        parts.append(f"**Market** · Funding {fund_pct:+.4f}% · L/S {ls.get('ratio',1):.2f}")
+    # Market
+    mkt = signal.get("_market", {})
+    if mkt:
+        mkt_lines = ["**Market**"]
+        if mode == "futures":
+            funding  = mkt.get("funding", {})
+            ls       = mkt.get("long_short", {})
+            oi       = mkt.get("open_interest", {})
+            fund_pct = funding.get("rate_pct", 0)
+            oi_val   = oi.get("notional", 0)
+            oi_dir   = _dir(oi.get("change_pct", 0))
+            mkt_lines.append(
+                f"Funding {fund_pct:+.5f}%  L/S {ls.get('ratio',1):.2f}"
+                + (f"  OI ${oi_val/1e9:.2f}B {oi_dir}" if oi_val else "")
+            )
+        dxy    = mkt.get("dxy", {})
+        sp500  = mkt.get("sp500", {})
+        btcdom = mkt.get("btc_dom", {})
+        stable = mkt.get("stablecoin", {})
+        sp_c   = sp500.get("current", 0)
+        if sp_c:
+            mkt_lines.append(
+                f"DXY {dxy.get('current',0):.3f} ({dxy.get('change_pct',0):+.2f}%)"
+                f"  S&P {sp_c:,.0f} ({sp500.get('change_pct',0):+.2f}%)"
+            )
+        mkt_row = []
+        btcd = btcdom.get("current", 0)
+        stab = stable.get("total_b", 0)
+        if btcd:
+            mkt_row.append(f"BTC.D {btcd:.1f}% {_dir(btcdom.get('change_pct',0))}")
+        if stab:
+            mkt_row.append(f"Stablecoin ${stab:.0f}B {_dir(stable.get('change_pct',0))}")
+        if mkt_row:
+            mkt_lines.append("  ·  ".join(mkt_row))
+        parts.append("\n".join(mkt_lines))
 
+    # Sentiment
+    fng_val = signal.get("fear_greed_value", 50)
+    fng_lbl = signal.get("fear_greed_label", "Neutral")
+    news    = signal.get("news_sentiment", "NEUTRAL")
+    parts.append(f"**Sentiment** F&G {fng_val}/100 {fng_lbl}  News: {news}")
+
+    news_data = signal.get("_news_data") or {}
+    for h in news_data.get("headlines", [])[:3]:
+        arr = _UP if h["sentiment"] > 0 else (_DOWN if h["sentiment"] < 0 else _FLAT)
+        cat = "G" if h.get("category") == "geopolitical" else "C"
+        parts.append(f"  {arr}[{cat}] {h['title'][:60]}")
+
+    # Reasons
     reasons = signal.get("reasons", [])
     if reasons:
         top = "\n".join(
-            f"{'✓' if r.startswith('✓') else '✗'} {r[2:].strip()[:60]}"
-            for r in reasons[:5]
+            f"{'✓' if r.startswith('✓') else ('✗' if r.startswith('✗') else '•')} {r[2:].strip()[:65]}"
+            for r in reasons[:10]
         )
-        parts.append(f"**Signals ({len(reasons)})**\n```\n{top}\n```")
+        parts.append(f"**Reasons ({len(reasons)})**\n```\n{top}\n```")
 
     return "\n".join(parts)
 
