@@ -352,19 +352,17 @@ def get_win_rate():
 
 
 def get_profit_factor():
-    """Profit factor (total TP wins / total SL losses).
+    """Profit factor = gross winning P&L / gross losing P&L from paper_positions.
 
     Returns float('inf') when there are wins but no losses.
     Returns None when there is no resolved data at all.
     """
     c = _conn()
     wins = c.execute(
-        """SELECT COALESCE(SUM(ABS(take_profit - entry_price)), 0)
-           FROM signals WHERE outcome='WIN'"""
+        "SELECT COALESCE(SUM(pnl_pct), 0) FROM paper_positions WHERE outcome='WIN'"
     ).fetchone()[0]
     losses = c.execute(
-        """SELECT COALESCE(SUM(ABS(entry_price - stop_loss)), 0)
-           FROM signals WHERE outcome='LOSS'"""
+        "SELECT COALESCE(SUM(ABS(pnl_pct)), 0) FROM paper_positions WHERE outcome='LOSS'"
     ).fetchone()[0]
     if losses == 0:
         return float("inf") if wins > 0 else None

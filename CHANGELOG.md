@@ -4,6 +4,26 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-06 — Signal Quality & Performance Metrics Fixes
+
+### Changed
+
+- **RSI Divergence — pivot-based detection** (`core_analysis.py`) — replaced 5-candle lookback with swing pivot detection (50-candle window, 3-candle pivot neighbourhood). The two most recent swing lows/highs are compared; requires >0.2% price difference to filter noise. This is the highest-weight condition (2.0) and was previously prone to false signals from minor price wiggles.
+- **Volume climax / Effort-vs-Result** (`core_analysis.py`) — new condition #4b: when volume >2× average AND candle range <50% of ATR, the candle close position determines direction. Close in lower third = accumulation (+0.75 buy), upper third = distribution (+0.75 sell). Classic Wyckoff concept now captured.
+- **Macro force HOLD → strength penalty** (`core_analysis.py`) — HIGH impact event within 2h now applies -2.0 strength reduction instead of completely zeroing the signal. Very strong technical setups can still fire with a warning; weak signals that drop to ≤0 are still forced to HOLD.
+
+### Fixed
+
+- **Profit factor now uses actual P&L** (`signal_history.py`) — `get_profit_factor()` was querying theoretical TP/SL distances from the `signals` table instead of realised P&L from `paper_positions`. The displayed profit factor was misleading — a signal with wide TP and tight SL would show high PF even if never reached. Now uses `SUM(pnl_pct)` from actual closed paper positions.
+- **Per-mode P&L tracking** (`core_analysis.py`) — `display_analysis()` was splitting total P&L 60/40 (spot/futures) arbitrarily. Now queries `get_closed_pnl(mode='spot')` and `get_closed_pnl(mode='futures')` separately, showing actual per-mode balance changes.
+- **Gap to fire shows correct base threshold** (`core_analysis.py`) — NOTE section always referenced `SIGNAL_THRESHOLD` (5.2) even for spot mode (base 4.3). Now uses `SPOT_THRESHOLD` for spot and `SIGNAL_THRESHOLD` for futures.
+
+### Config
+
+- **Max scores updated** — `SIGNAL_MAX_SCORE`: 18.0 → 18.75, `SPOT_MAX_SCORE`: 14.25 → 15.0 (new volume climax condition adds 0.75).
+
+---
+
 ## 2026-05-06 — Full-Detail Combined Telegram & Discord Notifications
 
 ### Changed

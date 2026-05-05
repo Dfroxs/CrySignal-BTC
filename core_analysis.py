@@ -107,21 +107,57 @@ def calculate_stoch_rsi(data, rsi_period=14, stoch_period=14, smooth_k=3, smooth
     return k, d
 
 
-def detect_rsi_divergence(df, lookback=5):
-    """Returns 'BULLISH', 'BEARISH', or 'NONE'."""
-    # Exclude current candle so we compare it against prior history
-    tail          = df.iloc[-lookback - 1:-1]
-    current_close = df['close'].iloc[-1]
-    current_rsi   = df['RSI_14'].iloc[-1]
+def detect_rsi_divergence(df, pivot_window=3, lookback=50):
+    """Detect RSI divergence using swing pivot points over *lookback* candles.
 
-    # Use iloc-based argmin/argmax to avoid index-label mismatch on datetime-indexed DFs
-    rsi_at_price_min = tail['RSI_14'].iloc[tail['close'].values.argmin()]
-    rsi_at_price_max = tail['RSI_14'].iloc[tail['close'].values.argmax()]
+    Bullish: price prints a lower swing-low vs the prior swing-low,
+             but RSI prints a higher low — selling momentum is weakening
+             even as price drops further (smart money accumulating).
 
-    if current_close <= tail['close'].min() and current_rsi > rsi_at_price_min:
-        return 'BULLISH'
-    if current_close >= tail['close'].max() and current_rsi < rsi_at_price_max:
-        return 'BEARISH'
+    Bearish: price prints a higher swing-high vs the prior swing-high,
+             but RSI prints a lower high — buying momentum is weakening
+             even as price rises further (smart money distributing).
+
+    *pivot_window* candles on each side define a swing point (5 with default 2).
+    The two most recent pivots of the same type are compared.
+    """
+    window = df.tail(lookback).reset_index(drop=True)
+    if len(window) < 15:
+        return 'NONE'
+
+    closes = window['close'].values
+    rsis   = window['RSI_14'].values
+    highs  = window['high'].values
+    lows   = window['low'].values
+    n      = len(window)
+
+    # ── find swing lows ────────────────────────────────────────────
+    swing_lows = []  # (index, close, rsi)
+    for i in range(pivot_window, n - pivot_window):
+        if lows[i] == min(lows[i - pivot_window:i + pivot_window + 1]):
+            swing_lows.append((i, closes[i], rsis[i]))
+
+    # ── find swing highs ───────────────────────────────────────────
+    swing_highs = []  # (index, close, rsi)
+    for i in range(pivot_window, n - pivot_window):
+        if highs[i] == max(highs[i - pivot_window:i + pivot_window + 1]):
+            swing_highs.append((i, closes[i], rsis[i]))
+
+    # ── bullish divergence: lower price low + higher RSI low ────────
+    if len(swing_lows) >= 2:
+        prev = swing_lows[-2]
+        curr = swing_lows[-1]
+        # Require meaningful price difference (>0.2%) to filter noise
+        if curr[1] < prev[1] * 0.998 and curr[2] > prev[2]:
+            return 'BULLISH'
+
+    # ── bearish divergence: higher price high + lower RSI high ──────
+    if len(swing_highs) >= 2:
+        prev = swing_highs[-2]
+        curr = swing_highs[-1]
+        if curr[1] > prev[1] * 1.002 and curr[2] < prev[2]:
+            return 'BEARISH'
+
     return 'NONE'
 
 
@@ -731,6 +767,21 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     elif vol_ratio < 0.7:
         signal['reasons'].append(f"⚠️  Low volume ({vol_ratio:.1f}x avg) — weak conviction")
 
+    # 4b — Volume climax / Effort vs Result (Wyckoff)
+    # High volume + small candle range = effort without result → potential reversal
+    candle_range = current['high'] - current['low']
+    range_vs_atr = candle_range / current['ATR_14'] if current['ATR_14'] > 0 else 1
+    if vol_ratio >= 2.0 and range_vs_atr < 0.5:
+        close_pos = (current['close'] - current['low']) / candle_range if candle_range > 0 else 0.5
+        if close_pos < 0.35:
+            # High effort, price closed near low — buyers absorbed = accumulation
+            buy_conditions += 0.75
+            signal['reasons'].append(f"✓ Volume climax ({vol_ratio:.1f}x) + narrow range — potential accumulation")
+        elif close_pos > 0.65:
+            # High effort, price closed near high — sellers absorbed = distribution
+            sell_conditions += 0.75
+            signal['reasons'].append(f"✗ Volume climax ({vol_ratio:.1f}x) + narrow range — potential distribution")
+
     # 5 — Bollinger Bands
     if current['close'] <= current['BB_Lower']:
         buy_conditions += 1
@@ -972,9 +1023,10 @@ def integrate_news_with_signal(signal, news_data):
 
     has_macro, event_name = check_upcoming_macro_events()
     if has_macro:
-        enhanced['type']     = 'HOLD'
-        enhanced['strength'] = 0
-        enhanced['reasons'].append(f"⚠️  FORCED HOLD: HIGH impact event in <2h ({event_name})")
+        enhanced['strength'] = max(0, enhanced['strength'] - 2.0)
+        enhanced['reasons'].append(f"⚠️  MACRO CAUTION: HIGH impact event in <2h ({event_name}) — strength -2.0")
+        if enhanced['strength'] <= 0:
+            enhanced['type'] = 'HOLD'
 
     fng     = news_data.get('fear_greed', {})
     fng_val = fng.get('value', 50)
@@ -1362,6 +1414,7 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
 
     # ── signal verdict ────────────────────────────────────────────
     max_score = SPOT_MAX_SCORE if mode == 'spot' else SIGNAL_MAX_SCORE
+    base_threshold = SPOT_THRESHOLD if mode == 'spot' else SIGNAL_THRESHOLD
     _signal_box(signal, effective_threshold, max_score=max_score)
 
     # ── PRICE & TREND ───────────────────────────────────────────────
@@ -1554,17 +1607,18 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
     entry_px = signal.get("entry_price", last["close"])
     atr = last.get("ATR_14", 0)
 
-    # Simulation balances
+    # Simulation balances — tracked per-mode from actual paper positions
     spot_start     = RISK_CONFIG["account_balance"]
     futures_start  = FUTURES_CONFIG["futures_balance"]
     try:
-        total_pnl_pct, closed_count, avg_pnl = _sh.get_closed_pnl()
+        spot_pnl_pct, spot_closed, _ = _sh.get_closed_pnl(mode='spot')
+        futures_pnl_pct, futures_closed, _ = _sh.get_closed_pnl(mode='futures')
+        closed_count = spot_closed + futures_closed
+        avg_pnl = ((spot_pnl_pct + futures_pnl_pct) / closed_count) if closed_count > 0 else 0
     except Exception:
-        total_pnl_pct, closed_count, avg_pnl = 0, 0, 0
-    spot_pnl_pct    = total_pnl_pct * 0.6
-    futures_pnl_pct = total_pnl_pct * 0.4
-    spot_now        = spot_start    * (1 + spot_pnl_pct    / 100)
-    futures_now     = futures_start * (1 + futures_pnl_pct / 100)
+        spot_pnl_pct, futures_pnl_pct, closed_count, avg_pnl = 0, 0, 0, 0
+    spot_now    = spot_start    * (1 + spot_pnl_pct    / 100)
+    futures_now = futures_start * (1 + futures_pnl_pct / 100)
 
     print()
     print(f"  {_C['bld']}POSITION SIZING{_C['rst']}")
@@ -1573,7 +1627,7 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
 
     # -- SPOT --------------------------------------------------------
     print(f"  {_C['bld']}SPOT{_C['rst']}  ──  {_C['dim']}Balance  ${spot_start:,.0f}{_C['rst']}", end="")
-    if closed_count > 0:
+    if spot_closed > 0:
         pnl_col = "grn" if spot_pnl_pct >= 0 else "red"
         print(f"  {_C['dim']}→  now {_C[pnl_col]}${spot_now:,.0f}{_C['rst']}  {_C[('dim' if abs(spot_pnl_pct) < 1 else pnl_col)]}({spot_pnl_pct:+.1f}%){_C['rst']}")
     else:
@@ -1611,7 +1665,7 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
 
     # -- FUTURES -----------------------------------------------------
     print(f"  {_C['bld']}FUTURES{_C['rst']}  ──  {_C['dim']}Balance  ${futures_start:,.0f}{_C['rst']}", end="")
-    if closed_count > 0:
+    if futures_closed > 0:
         pnl_col = "grn" if futures_pnl_pct >= 0 else "red"
         print(f"  {_C['dim']}→  now {_C[pnl_col]}${futures_now:,.0f}{_C['rst']}  {_C[('dim' if abs(futures_pnl_pct) < 1 else pnl_col)]}({futures_pnl_pct:+.1f}%){_C['rst']}")
     else:
@@ -1683,11 +1737,11 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
             print(f"  {'Gap to fire:':<14} {_C['yel']}{gap:.2f}{_C['rst']}  (needs ~{max(1, int(gap / 0.5 + 0.5))} more conditions)")
         else:
             print(f"  {'Gap to fire:':<14} {_C['grn']}READY{_C['rst']} but sell side {_C['red']}overrides{_C['rst']}")
-        if effective_threshold != SIGNAL_THRESHOLD:
-            print(f"  {'':<14} {_C['yel']}adaptive threshold active (base={SIGNAL_THRESHOLD}){_C['rst']}")
+        if effective_threshold != base_threshold:
+            print(f"  {'':<14} {_C['yel']}adaptive threshold active (base={base_threshold}){_C['rst']}")
     else:
         _kv("Direction", f"{_C['grn'] if signal['type'] == 'BUY' else _C['red']}{signal['type']}{_C['rst']}")
-        _kv("Strength", f"{signal['strength']:.2f} / {SIGNAL_MAX_SCORE}")
+        _kv("Strength", f"{signal['strength']:.2f} / {max_score}")
 
     # Paper P&L note
     try:
