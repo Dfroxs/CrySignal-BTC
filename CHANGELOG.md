@@ -4,6 +4,21 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-05 — Bug Fixes & Signal Integrity
+
+### Fixed
+
+- **Adaptive threshold non-functional** — `generate_signals()` was comparing against the hardcoded `SIGNAL_THRESHOLD` constant instead of calling `get_adaptive_threshold()`. The adaptive mechanism now actually controls signal firing.
+- **Duplicate `log_signal()` definition** — `core_analysis.py` had its own CSV-only `log_signal()` that shadowed the SQLite+CSV version in `signal_history.py`. The local definition was removed; `core_analysis` now imports from `signal_history`, ensuring every signal is written to both SQLite and CSV exactly once.
+- **Macro event datetime crash** — `check_upcoming_macro_events()` compared a naive `datetime.strptime()` result against `datetime.now(UTC)` (aware), raising `TypeError`. Fixed by appending `.replace(tzinfo=UTC)` to the parsed timestamp.
+- **Paper positions not linked to signals** — `paper_positions.signal_id` was never populated (FK defined but unused). `log_signal()` now returns the SQLite `lastrowid`; `analyze_btc_signal()` stores it as `signal['db_id']`; `open_paper_position()` inserts it into the `signal_id` column. Paper trades can now be correlated to their triggering signal.
+- **Win rate diluted by BREAKEVEN** — `get_win_rate()` included BREAKEVEN trades in the denominator, making a 10W/10L/20BE record appear as 25% instead of 50%. Denominator is now `WIN + LOSS` only.
+- **Profit factor silent on perfect records** — `get_profit_factor()` returned `None` when there were zero losses, making a flawless record indistinguishable from no data. Now returns `float('inf')`; display shows `∞`.
+- **OBV denominator unstable near zero** — OBV slope was normalised against `abs(OBV[-5])`, which becomes erratic when OBV crosses zero. Replaced with `volume[-5:].sum()` — a stable, always-positive reference proportional to recent trading activity.
+- **Sentiment double-counting** — `analyze_sentiment()` could award two points for the same signal when a short word token (e.g. `bull`) appeared standalone in text that also contained a longer substring match (`bullish`). Word tokens that are prefixes of an already-matched substring are now excluded from the word-match count.
+
+---
+
 ## 2026-05-03 — Major Overhaul
 
 ### Added
