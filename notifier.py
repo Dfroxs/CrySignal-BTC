@@ -403,7 +403,12 @@ def _format_compact_signal_telegram(signal):
         sell_s = signal.get("sell_score", 0)
         threshold = signal.get("_threshold", 0)
         gap = threshold - max(buy_s, sell_s)
-        dir_str = "BUY" if buy_s > sell_s else ("SELL" if sell_s > buy_s else "—")
+        if buy_s > sell_s:
+            dir_str = "BUY"
+        elif sell_s > buy_s:
+            dir_str = "BEARISH" if mode == "spot" else "SELL"
+        else:
+            dir_str = "—"
         lines.append(f"Score {score:.2f}/{mscore}  ·  Gap to {dir_str} <code>{gap:.2f}</code>")
 
     # ── Trade Setup ─────────────────────────────────────────

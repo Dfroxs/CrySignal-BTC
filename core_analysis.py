@@ -1859,12 +1859,20 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
     print(f"  {'Threshold:':<14} {_C['dim']}{effective_threshold:.2f}{_C['rst']}  (needed to fire)")
 
     if signal["type"] == "HOLD":
-        dir_col = "grn" if direction == "BUY" else ("red" if direction == "SELL" else "dim")
-        print(f"  {'Direction:':<14} {_C[dir_col]}{direction.upper()}{_C['rst']} leads by {abs(buy_s - sell_s):.2f}")
+        if mode == 'spot' and direction == 'SELL':
+            dir_show = "BEARISH"
+            dir_col = "red"
+        else:
+            dir_show = direction.upper()
+            dir_col = "grn" if direction == "BUY" else ("red" if direction == "SELL" else "dim")
+        print(f"  {'Direction:':<14} {_C[dir_col]}{dir_show}{_C['rst']} leads by {abs(buy_s - sell_s):.2f}")
         if gap > 0:
             print(f"  {'Gap to fire:':<14} {_C['yel']}{gap:.2f}{_C['rst']}  (needs ~{max(1, int(gap / 0.5 + 0.5))} more conditions)")
         else:
-            print(f"  {'Gap to fire:':<14} {_C['grn']}READY{_C['rst']} but sell side {_C['red']}overrides{_C['rst']}")
+            if mode == 'spot':
+                print(f"  {'Gap to fire:':<14} {_C['grn']}READY{_C['rst']} but {_C['red']}SPOT is BUY-only{_C['rst']}")
+            else:
+                print(f"  {'Gap to fire:':<14} {_C['grn']}READY{_C['rst']} but sell side {_C['red']}overrides{_C['rst']}")
         if effective_threshold != base_threshold:
             print(f"  {'':<14} {_C['yel']}adaptive threshold active (base={base_threshold}){_C['rst']}")
     else:
@@ -1895,12 +1903,18 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
         if direction == "BUY":
             print(f"  {_C['yel']}■ WAIT{_C['rst']} — bullish signals are building, but not enough to buy yet.")
         elif direction == "SELL":
-            print(f"  {_C['yel']}■ WAIT{_C['rst']} — bearish signals are building, but not enough to sell yet.")
+            if mode == 'spot':
+                print(f"  {_C['yel']}■ WAIT{_C['rst']} — bearish indicators are building, but SPOT is BUY-only. No action.")
+            else:
+                print(f"  {_C['yel']}■ WAIT{_C['rst']} — bearish signals are building, but not enough to sell yet.")
         else:
             print(f"  {_C['yel']}■ WAIT{_C['rst']} — market is neutral.  No clear direction.")
         print(f"  {_C['dim']}  The bot waits for strong agreement before risking capital.{_C['rst']}")
         if gap > 0:
-            print(f"  {_C['dim']}  Need {_C['yel']}~{gap:.1f}{_C['dim']} more points to fire a {direction.upper()} signal.{_C['rst']}")
+            if mode == 'spot' and direction == 'SELL':
+                print(f"  {_C['dim']}  Bearish leads by {abs(buy_s - sell_s):.2f}, but {_C['yel']}SPOT is BUY-only{_C['rst']}{_C['dim']} — no trade.{_C['rst']}")
+            else:
+                print(f"  {_C['dim']}  Need {_C['yel']}~{gap:.1f}{_C['dim']} more points to fire a {direction.upper()} signal.{_C['rst']}")
 
     # ── INDICATOR GUIDE (compact) ──────────────────────────────────
     print()
