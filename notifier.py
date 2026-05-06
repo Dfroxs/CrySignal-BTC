@@ -47,7 +47,7 @@ def _mode_label(signal):
 # ---------------------------------------------------------------------------
 
 def _format_section_telegram(signal, symbol="BTC/USDT"):
-    """Full-detail section for one mode, mirrors the terminal analysis output."""
+    """Clean vertical-format Telegram card — one indicator per line."""
     stype  = signal["type"]
     label  = _mode_label(signal)
     score  = signal.get("strength", 0)
@@ -55,22 +55,39 @@ def _format_section_telegram(signal, symbol="BTC/USDT"):
     conf   = signal.get("confidence", "")
     mode   = signal.get("mode", "futures")
 
-    # ── Header ──────────────────────────────────────────────────────
-    if stype == "HOLD":
-        icon = "⏸"
-        header = f"{icon} <b>HOLD · {_esc(label)}</b>  Score {score:.2f}/{mscore}"
-    elif stype == "BUY":
-        header = f"🟢 <b>BUY · {_esc(label)}</b>"
-        if conf:
-            header += f" — <b>{conf}</b>"
-        header += f"  Score {score:.2f}/{mscore}"
-    else:
-        header = f"🔴 <b>SELL · {_esc(label)}</b>"
-        if conf:
-            header += f" — <b>{conf}</b>"
-        header += f"  Score {score:.2f}/{mscore}"
+    lines = []
 
-    lines = [header, ""]
+    # ── Header ──────────────────────────────────────────────────────
+    buy_s  = signal.get("buy_score", 0)
+    sell_s = signal.get("sell_score", 0)
+    threshold = signal.get("_threshold", 0)
+
+    if stype == "BUY":
+        hdr = f"🟢 <b>BUY</b> · {label}"
+        if conf:
+            hdr += f"  ·  <b>{conf}</b>"
+    elif stype == "SELL":
+        hdr = f"🔴 <b>SELL</b> · {label}"
+        if conf:
+            hdr += f"  ·  <b>{conf}</b>"
+    else:
+        hdr = f"⏸ <b>HOLD</b> · {label}"
+
+    lines.append(hdr)
+
+    # Score + gap line
+    score_parts = [f"Score <b>{score:.2f}</b>/{mscore}"]
+    if stype == "HOLD":
+        gap = threshold - max(buy_s, sell_s)
+        if buy_s > sell_s:
+            dir_str = "BUY"
+        elif sell_s > buy_s:
+            dir_str = "BEARISH" if mode == "spot" else "SELL"
+        else:
+            dir_str = "—"
+        score_parts.append(f"Gap <b>{gap:.2f}</b> to {dir_str}")
+    lines.append("  ·  ".join(score_parts))
+    lines.append("")
 
     # ── Trade Setup (non-HOLD only) ──────────────────────────────────
     if stype != "HOLD" and signal.get("stop_loss"):
@@ -83,13 +100,13 @@ def _format_section_telegram(signal, symbol="BTC/USDT"):
         rr      = tp1_pct / sl_pct if sl_pct > 0 else 0
 
         lines.append("<b>📊 Trade Setup</b>")
-        lines.append(f"Entry    <code>${entry:,.0f}</code>")
-        lines.append(f"Trail SL <code>${sl:,.0f}</code>  (-{sl_pct:.2f}%)")
-        lines.append(f"TP1 50%  <code>${tp1:,.0f}</code>  (+{tp1_pct:.2f}%)")
+        lines.append(f"Entry     <code>${entry:,.0f}</code>")
+        lines.append(f"Stop SL   <code>${sl:,.0f}</code>  <code>{sl_pct:+.2f}%</code>")
+        lines.append(f"TP1 50%   <code>${tp1:,.0f}</code>  <code>{tp1_pct:+.2f}%</code>")
         if tp2:
             tp2_pct = abs(tp2 - entry) / entry * 100
-            lines.append(f"TP2 50%  <code>${tp2:,.0f}</code>  (+{tp2_pct:.2f}%)")
-        lines.append(f"R/R 1:{rr:.2f}")
+            lines.append(f"TP2 50%   <code>${tp2:,.0f}</code>  <code>{tp2_pct:+.2f}%</code>")
+        lines.append(f"R/R       <b>1:{rr:.2f}</b>")
         lines.append("")
 
     # ── Price & Trend ────────────────────────────────────────────────
@@ -100,26 +117,44 @@ def _format_section_telegram(signal, symbol="BTC/USDT"):
         hi24   = last.get("hi24", 0)
         lo24   = last.get("lo24", 0)
         trend  = _UP if price > ema200 else _DOWN
+        trend_label = "BULLISH" if price > ema200 else "BEARISH"
+
         lines.append("<b>📈 Price &amp; Trend</b>")
-        lines.append(f"<code>${price:,.0f}</code>  EMA200 <code>${ema200:,.0f}</code> {trend}")
-        lines.append(f"Range <code>${lo24:,.0f}</code> – <code>${hi24:,.0f}</code>")
+        lines.append(f"Price     <code>${price:,.0f}</code>")
+        lines.append(f"EMA200    <code>${ema200:,.0f}</code>  {trend} {trend_label}")
+        lines.append(f"24h Hi    <code>${hi24:,.0f}</code>")
+        lines.append(f"24h Lo    <code>${lo24:,.0f}</code>")
         sr = signal.get("support_resistance", {})
-        sr_parts = []
         if sr.get("resistance"):
-            sr_parts.append(f"R <code>${sr['resistance']:,.0f}</code>")
+            lines.append(f"Resist    <code>${sr['resistance']:,.0f}</code>")
         if sr.get("support"):
-            sr_parts.append(f"S <code>${sr['support']:,.0f}</code>")
-        if sr_parts:
-            lines.append("  ·  ".join(sr_parts))
+            lines.append(f"Support   <code>${sr['support']:,.0f}</code>")
         lines.append("")
 
-    # ── Multi-Timeframe ──────────────────────────────────────────────
+    # ── HTF ──────────────────────────────────────────────────────────
     htf = signal.get("_htf", {})
     if htf:
-        htf_keys  = [k for k in htf if k != "aligned"]
-        htf_parts = "  ·  ".join(f"{k.upper()}: {htf[k]}" for k in htf_keys)
-        aligned   = "✓ Aligned" if htf.get("aligned") else "✗ Diverging"
-        lines.append(f"<b>⏱ HTF</b>  {_esc(htf_parts)}  {aligned}")
+        lines.append("<b>⏱ HTF</b>")
+        # FUTURES: 4H → 1D, SPOT: 1D → 1W
+        tf_order = ["1d", "1w"] if mode == "spot" else ["4h", "1d"]
+        for key in tf_order:
+            if key not in htf:
+                continue
+            ind = htf.get(f"{key}_indicators", {})
+            rsi = ind.get("rsi")
+            macd_dir = _UP if ind.get("macd") == "BULLISH" else (_DOWN if ind.get("macd") == "BEARISH" else _FLAT)
+            vol_trend = ind.get("vol_trend", "FLAT")
+            vt = {"RISING": _UP, "FALLING": _DOWN, "FLAT": _FLAT}.get(vol_trend, _FLAT)
+            extra = []
+            if rsi is not None:
+                extra.append(f"RSI {rsi:.0f}")
+            if ind.get("macd"):
+                extra.append(f"MACD {macd_dir}")
+            extra.append(f"Vol {vt}")
+            trend_str = htf[key]
+            lines.append(f"{key.upper():<7}  <b>{trend_str}</b>  " + "  ".join(extra))
+        aligned = "✓ ALIGNED" if htf.get("aligned") else "✗ DIVERGING"
+        lines.append(f"         {aligned}")
         lines.append("")
 
     # ── Technicals ───────────────────────────────────────────────────
@@ -137,23 +172,26 @@ def _format_section_telegram(signal, symbol="BTC/USDT"):
         rsi_tag  = " OB" if rsi_v > 70 else (" OS" if rsi_v < 30 else "")
         macd_str = _UP if macd > msig else _DOWN
         obv_str  = _UP if obv > 0 else _DOWN
-        sk_str   = f"  StochRSI <code>{sk:.0f}/{sd:.0f}</code>" if sk is not None else ""
 
         lines.append("<b>🔬 Technicals</b>")
-        lines.append(f"RSI <code>{rsi_v:.1f}</code>{rsi_tag}{sk_str}  MACD {macd_str}  OBV {obv_str}")
+        lines.append(f"RSI       <code>{rsi_v:.1f}</code>{rsi_tag}")
+        lines.append(f"MACD      <code>{macd:.0f}</code>  {macd_str}")
+        if sk is not None and sd is not None:
+            sk_tag = " OS" if sk < 20 else (" OB" if sk > 80 else "")
+            lines.append(f"StochRSI  <code>{sk:.1f} / {sd:.1f}</code>{sk_tag}")
         if vwap:
             vwap_str = _UP if price > vwap else _DOWN
-            lines.append(f"VWAP <code>${vwap:,.0f}</code> {vwap_str}  ATR <code>${atr_v:,.0f}</code>")
-        else:
-            lines.append(f"ATR <code>${atr_v:,.0f}</code>")
-        if div != "NONE":
-            lines.append(f"RSI Divergence: {_esc(div)}")
+            lines.append(f"VWAP      <code>${vwap:,.0f}</code>  {vwap_str}")
+        lines.append(f"ATR       <code>${atr_v:,.0f}</code>")
+        lines.append(f"OBV       <code>{obv:,.0f}</code>  {obv_str}")
+        if div and div != "NONE" and str(div).strip() not in ("", "─"):
+            lines.append(f"RSI Div   {_esc(str(div))}")
         lines.append("")
 
     # ── Market Structure ─────────────────────────────────────────────
     mkt = signal.get("_market", {})
     if mkt:
-        lines.append("<b>🏦 Market Structure</b>")
+        lines.append("<b>🏦 Market</b>")
 
         if mode == "futures":
             funding  = mkt.get("funding", {})
@@ -165,14 +203,14 @@ def _format_section_telegram(signal, symbol="BTC/USDT"):
             oi_dir   = _dir(oi.get("change_pct", 0))
             fund_dir = _UP if fund_pct < 0 else _DOWN
             ls_dir   = _UP if ls_ratio < 1 else _DOWN
-            oi_part  = f"  OI <code>${oi_val/1e9:.2f}B</code> {oi_dir}" if oi_val else ""
-            lines.append(
-                f"Funding <code>{fund_pct:+.5f}%</code> {fund_dir}"
-                f"  L/S <code>{ls_ratio:.2f}</code> {ls_dir}{oi_part}"
-            )
             basis_pct = funding.get("basis_pct", 0)
+
+            lines.append(f"Funding   <code>{fund_pct:+.5f}%</code>  {fund_dir}")
+            lines.append(f"L/S       <code>{ls_ratio:.2f}</code>  {ls_dir}")
+            if oi_val:
+                lines.append(f"OI        <code>${oi_val/1e9:.2f}B</code>  {oi_dir}")
             if basis_pct:
-                lines.append(f"Futures Basis <code>{basis_pct:+.4f}%</code>")
+                lines.append(f"Basis     <code>{basis_pct:+.4f}%</code>")
 
         dxy    = mkt.get("dxy", {})
         sp500  = mkt.get("sp500", {})
@@ -184,23 +222,19 @@ def _format_section_telegram(signal, symbol="BTC/USDT"):
         sp_c  = sp500.get("current", 0)
         sp_d  = sp500.get("change_pct", 0)
         sp_dir = _UP if sp_d > 0 else _DOWN
-        if sp_c:
-            lines.append(
-                f"DXY <code>{dxy_c:.3f}</code> ({dxy_d:+.2f}%)"
-                f"  S&amp;P <code>{sp_c:,.0f}</code> ({sp_d:+.2f}%) {sp_dir}"
-            )
-
         btcd     = btcdom.get("current", 0)
         btcd_dir = _dir(btcdom.get("change_pct", 0))
         stab     = stable.get("total_b", 0)
         stab_dir = _dir(stable.get("change_pct", 0))
-        mkt_parts = []
+
+        if dxy_c:
+            lines.append(f"DXY       <code>{dxy_c:.3f}</code>  <code>{dxy_d:+.2f}%</code>")
+        if sp_c:
+            lines.append(f"S&amp;P      <code>{sp_c:,.0f}</code>  <code>{sp_d:+.2f}%</code>  {sp_dir}")
         if btcd:
-            mkt_parts.append(f"BTC.D <code>{btcd:.1f}%</code> {btcd_dir}")
+            lines.append(f"BTC.D     <code>{btcd:.1f}%</code>  {btcd_dir}")
         if stab:
-            mkt_parts.append(f"Stablecoin <code>${stab:.0f}B</code> {stab_dir}")
-        if mkt_parts:
-            lines.append("  ·  ".join(mkt_parts))
+            lines.append(f"Stable    <code>${stab:.0f}B</code>  {stab_dir}")
         lines.append("")
 
     # ── Sentiment ────────────────────────────────────────────────────
@@ -209,25 +243,31 @@ def _format_section_telegram(signal, symbol="BTC/USDT"):
     news_sent = signal.get("news_sentiment", "NEUTRAL")
     news_conf = signal.get("news_confidence", 0)
     lines.append("<b>📰 Sentiment</b>")
-    lines.append(
-        f"F&amp;G <code>{fng_val}/100</code> {_esc(fng_label)}"
-        f"  News: {news_sent} ({news_conf:.0f}%)"
-    )
-    news_data = signal.get("_news_data") or {}
-    for h in news_data.get("headlines", [])[:3]:
-        arr = _UP if h["sentiment"] > 0 else (_DOWN if h["sentiment"] < 0 else _FLAT)
-        cat = "G" if h.get("category") == "geopolitical" else "C"
-        lines.append(f"  {arr}[{cat}] {_esc(h['title'][:60])}")
+    lines.append(f"F&amp;G       <code>{fng_val}/100</code>  {_esc(fng_label)}")
+    lines.append(f"News      {_esc(news_sent)}  <code>{news_conf:.0f}%</code>")
     lines.append("")
 
-    # ── Signal Reasons ───────────────────────────────────────────────
+    # ── Reasons ──────────────────────────────────────────────────────
     reasons = signal.get("reasons", [])
     if reasons:
-        lines.append(f"<b>✅ Signal Reasons ({len(reasons)})</b>")
+        lines.append(f"<b>✅ Reasons ({len(reasons)})</b>")
         for r in reasons[:10]:
-            sym  = "✓" if r.startswith("✓") else ("✗" if r.startswith("✗") else "•")
-            body = r[2:].strip() if r[:1] in "✓✗⚠" else r.strip()
-            lines.append(f"  {sym} {_esc(body[:65])}")
+            if r.startswith("✓"):
+                sym = "✓"
+                body = r[2:].strip()
+            elif r.startswith("✗"):
+                sym = "✗"
+                body = r[2:].strip()
+            elif r.startswith("⚠"):
+                sym = "⚠"
+                body = r[2:].strip()
+            elif r.startswith("•"):
+                sym = "•"
+                body = r[2:].strip()
+            else:
+                sym = "•"
+                body = r.strip()
+            lines.append(f"{sym} {_esc(body[:70])}")
 
     return "\n".join(lines)
 
