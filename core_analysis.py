@@ -1526,7 +1526,7 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
     print(f"\n{_C['dim']}╭{'─' * (_M - 2)}╮{_C['rst']}")
     mode_label = 'SPOT' if mode == 'spot' else 'FUTURES'
     title = f"SpotSignal · BTC/USDT · {timeframe} · {mode_label}"
-    time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
+    time_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
     print(f"{_C['dim']}│{_C['rst']} {_C['bld']}{_C['wht']}{title:^{_M - 4}}{_C['dim']} │{_C['rst']}")
     print(f"{_C['dim']}│{_C['rst']} {_C['gry']}{time_str:^{_M - 4}}{_C['dim']} │{_C['rst']}")
     print(f"{_C['dim']}│{_C['rst']} {_C['gry']}{'hobby · study · experiment — not financial advice · have fun':^{_M - 4}}{_C['dim']} │{_C['rst']}")
