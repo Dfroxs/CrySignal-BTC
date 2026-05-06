@@ -1724,7 +1724,7 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
     except Exception:
         pass
 
-    # ── POSITION SIZING (always shown) ─────────────────────────────
+    # ── POSITION SIZING (current mode only) ────────────────────────
     buy_s  = signal.get("buy_score", 0)
     sell_s = signal.get("sell_score", 0)
     direction = "BUY" if buy_s > sell_s else ("SELL" if sell_s > buy_s else "neutral")
@@ -1735,9 +1735,9 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
     entry_px = signal.get("entry_price", last["close"])
     atr = last.get("ATR_14", 0)
 
-    # Simulation balances — tracked per-mode from actual paper positions
-    spot_start     = RISK_CONFIG["account_balance"]
-    futures_start  = FUTURES_CONFIG["futures_balance"]
+    # Simulation balances
+    spot_start    = RISK_CONFIG["account_balance"]
+    futures_start = FUTURES_CONFIG["futures_balance"]
     try:
         spot_pnl_pct, spot_closed, _ = _sh.get_closed_pnl(mode='spot')
         futures_pnl_pct, futures_closed, _ = _sh.get_closed_pnl(mode='futures')
@@ -1745,103 +1745,105 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
         avg_pnl = ((spot_pnl_pct + futures_pnl_pct) / closed_count) if closed_count > 0 else 0
     except Exception:
         spot_pnl_pct, futures_pnl_pct, closed_count, avg_pnl = 0, 0, 0, 0
-    spot_now    = spot_start    * (1 + spot_pnl_pct    / 100)
-    futures_now = futures_start * (1 + futures_pnl_pct / 100)
 
     print()
     print(f"  {_C['bld']}POSITION SIZING{_C['rst']}")
     print(sep)
     _kv("Entry Price", f"${entry_px:,.0f}" if is_active else f"${last['close']:,.0f}")
 
-    # -- SPOT --------------------------------------------------------
-    print(f"  {_C['bld']}SPOT{_C['rst']}  ──  {_C['dim']}Balance  ${spot_start:,.0f}{_C['rst']}", end="")
-    if spot_closed > 0:
-        pnl_col = "grn" if spot_pnl_pct >= 0 else "red"
-        print(f"  {_C['dim']}→  now {_C[pnl_col]}${spot_now:,.0f}{_C['rst']}  {_C[('dim' if abs(spot_pnl_pct) < 1 else pnl_col)]}({spot_pnl_pct:+.1f}%){_C['rst']}")
-    else:
-        print()
-    if is_active:
-        sl = signal["stop_loss"]
-        tp = signal["take_profit"]
-        sl_pct = abs(entry_px - sl) / entry_px * 100
-        tp_pct = abs(tp - entry_px) / entry_px * 100
-        rr = tp_pct / sl_pct if sl_pct > 0 else 0
-        _kv("  Stop Loss",   f"${sl:,.0f}  (-{sl_pct:.2f}%)")
-        _kv("  Take Profit", f"${tp:,.0f}  (+{tp_pct:.2f}%)")
-        _kv("  Risk/Reward", f"1:{rr:.2f}")
-        _kv("  Position",    f"${pos['usdt_amount']:,.0f}  ({pos['position_ratio']:.1f}% of balance)")
-        _kv("  Max Risk",    f"${pos['risk_amount']:,.0f}  ({RISK_CONFIG['risk_per_trade']*100:.0f}% per trade)")
-    else:
-        if atr > 0 and direction != "neutral":
-            sl_dist = atr * RISK_CONFIG["atr_multiplier"]
-            tp_dist = sl_dist * RISK_CONFIG["take_profit_rr"]
-            if direction == "BUY":
-                hypo_sl = last["close"] - sl_dist
-                hypo_tp = last["close"] + tp_dist
-            else:
-                hypo_sl = last["close"] + sl_dist
-                hypo_tp = last["close"] - tp_dist
-            _kv("  Stop Loss",   f"{_C['gry']}~${hypo_sl:,.0f} (if fired){_C['rst']}")
-            _kv("  Take Profit", f"{_C['gry']}~${hypo_tp:,.0f} (if fired){_C['rst']}")
-            _kv("  Risk/Reward", f"{_C['gry']}1:{RISK_CONFIG['take_profit_rr']:.1f}{_C['rst']}")
+    if mode == 'spot':
+        # -- SPOT --------------------------------------------------------
+        spot_now = spot_start * (1 + spot_pnl_pct / 100)
+        print(f"  {_C['bld']}SPOT{_C['rst']}  ──  {_C['dim']}Balance  ${spot_start:,.0f}{_C['rst']}", end="")
+        if spot_closed > 0:
+            pnl_col = "grn" if spot_pnl_pct >= 0 else "red"
+            print(f"  {_C['dim']}→  now {_C[pnl_col]}${spot_now:,.0f}{_C['rst']}  {_C[('dim' if abs(spot_pnl_pct) < 1 else pnl_col)]}({spot_pnl_pct:+.1f}%){_C['rst']}")
         else:
-            _kv("  Stop Loss",   "-")
-            _kv("  Take Profit", "-")
-            _kv("  Risk/Reward", "-")
-        _kv("  Position",   f"{_C['gry']}—  (no trade){_C['rst']}")
-        _kv("  Max Risk",   f"${spot_start * RISK_CONFIG['risk_per_trade']:,.0f}  ({RISK_CONFIG['risk_per_trade']*100:.0f}% per trade)")
+            print()
+        if is_active:
+            sl = signal["stop_loss"]
+            tp = signal["take_profit"]
+            sl_pct = abs(entry_px - sl) / entry_px * 100
+            tp_pct = abs(tp - entry_px) / entry_px * 100
+            rr = tp_pct / sl_pct if sl_pct > 0 else 0
+            _kv("  Stop Loss",   f"${sl:,.0f}  (-{sl_pct:.2f}%)")
+            _kv("  Take Profit", f"${tp:,.0f}  (+{tp_pct:.2f}%)")
+            _kv("  Risk/Reward", f"1:{rr:.2f}")
+            _kv("  Position",    f"${pos['usdt_amount']:,.0f}  ({pos['position_ratio']:.1f}% of balance)")
+            _kv("  Max Risk",    f"${pos['risk_amount']:,.0f}  ({RISK_CONFIG['risk_per_trade']*100:.0f}% per trade)")
+        else:
+            if atr > 0 and direction != "neutral":
+                sl_dist = atr * RISK_CONFIG["atr_multiplier"]
+                tp_dist = sl_dist * RISK_CONFIG["take_profit_rr"]
+                if direction == "BUY":
+                    hypo_sl = last["close"] - sl_dist
+                    hypo_tp = last["close"] + tp_dist
+                else:
+                    hypo_sl = last["close"] + sl_dist
+                    hypo_tp = last["close"] - tp_dist
+                _kv("  Stop Loss",   f"{_C['gry']}~${hypo_sl:,.0f} (if fired){_C['rst']}")
+                _kv("  Take Profit", f"{_C['gry']}~${hypo_tp:,.0f} (if fired){_C['rst']}")
+                _kv("  Risk/Reward", f"{_C['gry']}1:{RISK_CONFIG['take_profit_rr']:.1f}{_C['rst']}")
+            else:
+                _kv("  Stop Loss",   "-")
+                _kv("  Take Profit", "-")
+                _kv("  Risk/Reward", "-")
+            _kv("  Position",   f"{_C['gry']}—  (no trade){_C['rst']}")
+            _kv("  Max Risk",   f"${spot_start * RISK_CONFIG['risk_per_trade']:,.0f}  ({RISK_CONFIG['risk_per_trade']*100:.0f}% per trade)")
 
-    # -- FUTURES -----------------------------------------------------
-    print(f"  {_C['bld']}FUTURES{_C['rst']}  ──  {_C['dim']}Balance  ${futures_start:,.0f}{_C['rst']}", end="")
-    if futures_closed > 0:
-        pnl_col = "grn" if futures_pnl_pct >= 0 else "red"
-        print(f"  {_C['dim']}→  now {_C[pnl_col]}${futures_now:,.0f}{_C['rst']}  {_C[('dim' if abs(futures_pnl_pct) < 1 else pnl_col)]}({futures_pnl_pct:+.1f}%){_C['rst']}")
-    else:
-        print()
-    if is_active:
-        sl = signal["stop_loss"]
-        tp = signal["take_profit"]
-        sl_pct = abs(entry_px - sl) / entry_px * 100
-        tp_pct = abs(tp - entry_px) / entry_px * 100
-        rr = tp_pct / sl_pct if sl_pct > 0 else 0
-        _kv("  Stop Loss",   f"${sl:,.0f}  (-{sl_pct:.2f}%)")
-        _kv("  Take Profit", f"${tp:,.0f}  (+{tp_pct:.2f}%)")
-        _kv("  Risk/Reward", f"1:{rr:.2f}")
-        if futures:
-            _kv("  Direction",  f"{futures['direction']}")
-            _kv("  Leverage",   f"{futures['leverage']}x  [{futures['tier']}]")
-            _kv("  Margin",     f"${futures['margin']:,.0f}  ({futures['margin_pct']:.1f}% of balance)")
-            _kv("  Pos. Value", f"${futures['position_value']:,.0f}")
-            _kv("  Liquidation",f"${futures['liquidation_price']:,.0f}")
-            _kv("  Max Risk",   f"${futures['risk_amount']:,.0f}  ({FUTURES_CONFIG['risk_per_trade']*100:.0f}% per trade)")
+    if mode == 'futures':
+        # -- FUTURES -----------------------------------------------------
+        futures_now = futures_start * (1 + futures_pnl_pct / 100)
+        print(f"  {_C['bld']}FUTURES{_C['rst']}  ──  {_C['dim']}Balance  ${futures_start:,.0f}{_C['rst']}", end="")
+        if futures_closed > 0:
+            pnl_col = "grn" if futures_pnl_pct >= 0 else "red"
+            print(f"  {_C['dim']}→  now {_C[pnl_col]}${futures_now:,.0f}{_C['rst']}  {_C[('dim' if abs(futures_pnl_pct) < 1 else pnl_col)]}({futures_pnl_pct:+.1f}%){_C['rst']}")
         else:
-            _kv("  Direction",  "-")
-            _kv("  Leverage",   "-")
-            _kv("  Margin",     "-")
-            _kv("  Liquidation","-")
-            _kv("  Max Risk",   "-")
-    else:
-        if atr > 0 and direction != "neutral":
-            sl_dist = atr * RISK_CONFIG["atr_multiplier"]
-            tp_dist = sl_dist * RISK_CONFIG["take_profit_rr"]
-            if direction == "BUY":
-                hypo_sl = last["close"] - sl_dist
-                hypo_tp = last["close"] + tp_dist
+            print()
+        if is_active:
+            sl = signal["stop_loss"]
+            tp = signal["take_profit"]
+            sl_pct = abs(entry_px - sl) / entry_px * 100
+            tp_pct = abs(tp - entry_px) / entry_px * 100
+            rr = tp_pct / sl_pct if sl_pct > 0 else 0
+            _kv("  Stop Loss",   f"${sl:,.0f}  (-{sl_pct:.2f}%)")
+            _kv("  Take Profit", f"${tp:,.0f}  (+{tp_pct:.2f}%)")
+            _kv("  Risk/Reward", f"1:{rr:.2f}")
+            if futures:
+                _kv("  Direction",  f"{futures['direction']}")
+                _kv("  Leverage",   f"{futures['leverage']}x  [{futures['tier']}]")
+                _kv("  Margin",     f"${futures['margin']:,.0f}  ({futures['margin_pct']:.1f}% of balance)")
+                _kv("  Pos. Value", f"${futures['position_value']:,.0f}")
+                _kv("  Liquidation",f"${futures['liquidation_price']:,.0f}")
+                _kv("  Max Risk",   f"${futures['risk_amount']:,.0f}  ({FUTURES_CONFIG['risk_per_trade']*100:.0f}% per trade)")
             else:
-                hypo_sl = last["close"] + sl_dist
-                hypo_tp = last["close"] - tp_dist
-            _kv("  Stop Loss",   f"{_C['gry']}~${hypo_sl:,.0f} (if fired){_C['rst']}")
-            _kv("  Take Profit", f"{_C['gry']}~${hypo_tp:,.0f} (if fired){_C['rst']}")
-            _kv("  Risk/Reward", f"{_C['gry']}1:{RISK_CONFIG['take_profit_rr']:.1f}{_C['rst']}")
+                _kv("  Direction",  "-")
+                _kv("  Leverage",   "-")
+                _kv("  Margin",     "-")
+                _kv("  Liquidation","-")
+                _kv("  Max Risk",   "-")
         else:
-            _kv("  Stop Loss",   "-")
-            _kv("  Take Profit", "-")
-            _kv("  Risk/Reward", "-")
-        _kv("  Direction",   "-")
-        _kv("  Leverage",    "-")
-        _kv("  Margin",      "-")
-        _kv("  Liquidation", "-")
-        _kv("  Max Risk",    f"${futures_start * FUTURES_CONFIG['risk_per_trade']:,.0f}  ({FUTURES_CONFIG['risk_per_trade']*100:.0f}% per trade)")
+            if atr > 0 and direction != "neutral":
+                sl_dist = atr * RISK_CONFIG["atr_multiplier"]
+                tp_dist = sl_dist * RISK_CONFIG["take_profit_rr"]
+                if direction == "BUY":
+                    hypo_sl = last["close"] - sl_dist
+                    hypo_tp = last["close"] + tp_dist
+                else:
+                    hypo_sl = last["close"] + sl_dist
+                    hypo_tp = last["close"] - tp_dist
+                _kv("  Stop Loss",   f"{_C['gry']}~${hypo_sl:,.0f} (if fired){_C['rst']}")
+                _kv("  Take Profit", f"{_C['gry']}~${hypo_tp:,.0f} (if fired){_C['rst']}")
+                _kv("  Risk/Reward", f"{_C['gry']}1:{RISK_CONFIG['take_profit_rr']:.1f}{_C['rst']}")
+            else:
+                _kv("  Stop Loss",   "-")
+                _kv("  Take Profit", "-")
+                _kv("  Risk/Reward", "-")
+            _kv("  Direction",   "-")
+            _kv("  Leverage",    "-")
+            _kv("  Margin",      "-")
+            _kv("  Liquidation", "-")
+            _kv("  Max Risk",    f"${futures_start * FUTURES_CONFIG['risk_per_trade']:,.0f}  ({FUTURES_CONFIG['risk_per_trade']*100:.0f}% per trade)")
 
     # ── NOTE ───────────────────────────────────────────────────────
     gap = effective_threshold - max(buy_s, sell_s)
