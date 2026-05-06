@@ -162,18 +162,19 @@ Entry ─┬─ TP1 (50%) → partial exit + trail moves to breakeven
 
 ## Notifications (Telegram)
 
-3-4 compact messages per cycle (instead of 1 long message):
+3-5 messages per cycle, clean vertical format:
 
 | # | Message | Content |
 |---|---|---|
-| 1 | SPOT signal card | Verdict, trade setup, technicals, HTF, market, sentiment, top 7 reasons |
-| 2 | FUTURES signal card | Same format — includes funding, L/S, OI, basis |
-| 3 | Position + P&L | Open positions with entry→TP1 progress, closed P&L, outcome breakdown (W/L/MC) |
-| 4 | Macro risk banner | Only when HIGH impact event <2h (sent first if active) |
+| 1 | Macro risk banner | Only when HIGH impact event <2h (sent first if active) |
+| 2 | SPOT signal card | Verdict, Price & Trend, HTF, Technicals, Market, Sentiment, Reasons |
+| 3 | FUTURES signal card | Same + funding, L/S, OI, basis |
+| 4 | Open + P&L | Open positions entry→TP1 trail, closed P&L per mode, outcome (W/L/MC) |
+| 5 | Position closed | Only when positions exit — entry→exit, P&L%, outcome label |
 
-- **HOLD signals are now sent** (previously silent) — shows gap to fire and why
-- **Position close alerts** sent when positions exit (TP1/TP2/Trail/SL/MACRO)
-- Each signal card ~700 chars, position card ~300 chars
+- **All signals sent** — BUY, SELL, and HOLD (HOLD shows gap-to-fire + leading direction)
+- **Vertical layout** — one indicator per line (`Label    Value`), scannable on mobile
+- SPOT HOLD bearish = "BEARISH" direction + "SPOT is BUY-only" note
 
 ---
 
