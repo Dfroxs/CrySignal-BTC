@@ -1089,7 +1089,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
                         f"⚠️  TP capped at resistance ${sr['resistance']:,.0f}")
                     raw_tp = capped_tp
         signal['take_profit'] = raw_tp
-    elif sell_conditions >= threshold and sell_conditions > buy_conditions:
+    elif mode != 'spot' and sell_conditions >= threshold and sell_conditions > buy_conditions:
         signal['type']      = 'SELL'
         signal['strength']  = sell_conditions
         signal['stop_loss'] = current['close'] + atr_stop
@@ -1106,6 +1106,8 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     else:
         signal['type']     = 'HOLD'
         signal['strength'] = max(buy_conditions, sell_conditions)
+        if mode == 'spot' and sell_conditions > buy_conditions:
+            signal['reasons'].append("ℹ️  SPOT is BUY-only — bearish bias, no SELL opened")
 
     signal['buy_score']  = round(buy_conditions, 2)
     signal['sell_score'] = round(sell_conditions, 2)
@@ -1524,7 +1526,7 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
     print(f"\n{_C['dim']}╭{'─' * (_M - 2)}╮{_C['rst']}")
     mode_label = 'SPOT' if mode == 'spot' else 'FUTURES'
     title = f"SpotSignal · BTC/USDT · {timeframe} · {mode_label}"
-    time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
+    time_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
     print(f"{_C['dim']}│{_C['rst']} {_C['bld']}{_C['wht']}{title:^{_M - 4}}{_C['dim']} │{_C['rst']}")
     print(f"{_C['dim']}│{_C['rst']} {_C['gry']}{time_str:^{_M - 4}}{_C['dim']} │{_C['rst']}")
     print(f"{_C['dim']}│{_C['rst']} {_C['gry']}{'hobby · study · experiment — not financial advice · have fun':^{_M - 4}}{_C['dim']} │{_C['rst']}")
@@ -1857,12 +1859,20 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
     print(f"  {'Threshold:':<14} {_C['dim']}{effective_threshold:.2f}{_C['rst']}  (needed to fire)")
 
     if signal["type"] == "HOLD":
-        dir_col = "grn" if direction == "BUY" else ("red" if direction == "SELL" else "dim")
-        print(f"  {'Direction:':<14} {_C[dir_col]}{direction.upper()}{_C['rst']} leads by {abs(buy_s - sell_s):.2f}")
+        if mode == 'spot' and direction == 'SELL':
+            dir_show = "BEARISH"
+            dir_col = "red"
+        else:
+            dir_show = direction.upper()
+            dir_col = "grn" if direction == "BUY" else ("red" if direction == "SELL" else "dim")
+        print(f"  {'Direction:':<14} {_C[dir_col]}{dir_show}{_C['rst']} leads by {abs(buy_s - sell_s):.2f}")
         if gap > 0:
             print(f"  {'Gap to fire:':<14} {_C['yel']}{gap:.2f}{_C['rst']}  (needs ~{max(1, int(gap / 0.5 + 0.5))} more conditions)")
         else:
-            print(f"  {'Gap to fire:':<14} {_C['grn']}READY{_C['rst']} but sell side {_C['red']}overrides{_C['rst']}")
+            if mode == 'spot':
+                print(f"  {'Gap to fire:':<14} {_C['grn']}READY{_C['rst']} but {_C['red']}SPOT is BUY-only{_C['rst']}")
+            else:
+                print(f"  {'Gap to fire:':<14} {_C['grn']}READY{_C['rst']} but sell side {_C['red']}overrides{_C['rst']}")
         if effective_threshold != base_threshold:
             print(f"  {'':<14} {_C['yel']}adaptive threshold active (base={base_threshold}){_C['rst']}")
     else:
@@ -1893,12 +1903,18 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
         if direction == "BUY":
             print(f"  {_C['yel']}■ WAIT{_C['rst']} — bullish signals are building, but not enough to buy yet.")
         elif direction == "SELL":
-            print(f"  {_C['yel']}■ WAIT{_C['rst']} — bearish signals are building, but not enough to sell yet.")
+            if mode == 'spot':
+                print(f"  {_C['yel']}■ WAIT{_C['rst']} — bearish indicators are building, but SPOT is BUY-only. No action.")
+            else:
+                print(f"  {_C['yel']}■ WAIT{_C['rst']} — bearish signals are building, but not enough to sell yet.")
         else:
             print(f"  {_C['yel']}■ WAIT{_C['rst']} — market is neutral.  No clear direction.")
         print(f"  {_C['dim']}  The bot waits for strong agreement before risking capital.{_C['rst']}")
         if gap > 0:
-            print(f"  {_C['dim']}  Need {_C['yel']}~{gap:.1f}{_C['dim']} more points to fire a {direction.upper()} signal.{_C['rst']}")
+            if mode == 'spot' and direction == 'SELL':
+                print(f"  {_C['dim']}  Bearish leads by {abs(buy_s - sell_s):.2f}, but {_C['yel']}SPOT is BUY-only{_C['rst']}{_C['dim']} — no trade.{_C['rst']}")
+            else:
+                print(f"  {_C['dim']}  Need {_C['yel']}~{gap:.1f}{_C['dim']} more points to fire a {direction.upper()} signal.{_C['rst']}")
 
     # ── INDICATOR GUIDE (compact) ──────────────────────────────────
     print()
