@@ -4,12 +4,21 @@ All notable changes to the SpotSignal project.
 
 ---
 
-## 2026-05-07 — SPOT BUY-Only
+## 2026-05-07 — SPOT BUY-Only + Clean Vertical Telegram Format
 
 ### Changed
 
 - **SPOT pipeline now BUY-only** (`core_analysis.py`) — `generate_signals()` prevents SELL signals when `mode='spot'`. Spot trading cannot short-sell; SELL conditions still show in analysis for informational purposes but are forced to HOLD. A note "SPOT is BUY-only — bearish bias, no SELL opened" appears in signal reasons when bearish conditions dominate.
+- **Terminal NOTE section updated** (`core_analysis.py`) — SPOT HOLD with bearish bias now shows "BEARISH" instead of "SELL" as direction, "SPOT is BUY-only" instead of "sell side overrides". WHAT THIS MEANS section clarifies no action is taken on bearish spot signals.
+- **Telegram format redesigned — clean vertical layout** (`notifier.py`) — `_format_compact_signal_telegram()` rewritten: every indicator on its own line (`Label    Value`), separate sections for Price & Trend, Technicals, HTF, Market, Sentiment, and Reasons. HTF reads raw indicator dicts for accurate RSI/MACD/Volume per timeframe. Previously all crammed horizontally with `·` separators — now scannable on mobile.
+- **Telegram HOLD cards** (`notifier.py`) — spot HOLD shows "BEARISH" as direction (not "SELL"). Futures HOLD unchanged.
 - **`run_bot.py`** — comment updated from "max 1 BUY + 1 SELL" to "BUY-only (no short selling on spot)".
+- **README** — SPOT BUY-only documented in architecture diagram, position management, and position sizing sections.
+- **Local timezone** (`core_analysis.py`) — analysis header now uses system local time (e.g. WIB) instead of hardcoded UTC. `datetime.now().astimezone().strftime(...)`.
+
+### Fixed
+
+- **Telegram not updating** — `send_signal_alert()` was calling `_format_compact_signal_telegram()` (the actual sending function), but the initial rewrite only touched `_format_section_telegram()` which was unused. Second pass rewrote the correct function.
 
 ---
 
