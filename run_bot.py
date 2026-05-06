@@ -64,7 +64,7 @@ def run_cycle():
     logger.info("[PHASE 3] Updating paper positions ...")
     phase3_actions = []  # track what happened for summary
     try:
-        # Spot positions — max 1 BUY + 1 SELL (one per direction)
+        # Spot positions — BUY-only (no short selling on spot)
         if spot_signal and spot_signal["type"] != "HOLD":
             spot_open = len(get_open_positions("spot"))
             if spot_open >= RISK_CONFIG["max_positions"]:

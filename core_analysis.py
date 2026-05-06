@@ -1089,7 +1089,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
                         f"⚠️  TP capped at resistance ${sr['resistance']:,.0f}")
                     raw_tp = capped_tp
         signal['take_profit'] = raw_tp
-    elif sell_conditions >= threshold and sell_conditions > buy_conditions:
+    elif mode != 'spot' and sell_conditions >= threshold and sell_conditions > buy_conditions:
         signal['type']      = 'SELL'
         signal['strength']  = sell_conditions
         signal['stop_loss'] = current['close'] + atr_stop
@@ -1106,6 +1106,8 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     else:
         signal['type']     = 'HOLD'
         signal['strength'] = max(buy_conditions, sell_conditions)
+        if mode == 'spot' and sell_conditions > buy_conditions:
+            signal['reasons'].append("ℹ️  SPOT is BUY-only — bearish bias, no SELL opened")
 
     signal['buy_score']  = round(buy_conditions, 2)
     signal['sell_score'] = round(sell_conditions, 2)

@@ -50,7 +50,7 @@ Paper trading is simulated. Past results do not guarantee future performance.
 ┌─────────────────────────────────────────────────────────┐
 │ PHASE 3 — paper_trader.py + run_bot.py                  │
 │ • Macro gate → force-close all if HIGH impact event <2h │
-│ • Position dedup → max 1 BUY + 1 SELL per mode          │
+│ • Position dedup → SPOT BUY-only, FUTURES max 1+1       │
 │ • Trailing stop update → advance trail each cycle        │
 │ • TP1 (50%) → move trail to breakeven                   │
 │ • TP2 (50%) or trail hit → full close                   │
@@ -139,7 +139,8 @@ Scoring is nuanced:
 ## Position Management
 
 ### Opening
-- Max **1 BUY + 1 SELL** per mode (dedup check prevents stacking)
+- **SPOT: BUY-only** (no short selling on spot market)
+- **FUTURES: max 1 LONG + 1 SHORT** (dedup check prevents stacking)
 - New signal in same direction as existing position → skipped with log message
 
 ### Trailing Stop + Partial TP
@@ -276,5 +277,5 @@ ORDER BY id DESC LIMIT 50;
 | Trailing stop | 1.0× ATR | same |
 | Max leverage | — | 10× |
 | Max position | 10% of balance | 20% margin |
-| Max positions | 2 (1 BUY + 1 SELL) | 2 (1 LONG + 1 SHORT) |
+| Max positions | 1 (BUY only) | 2 (1 LONG + 1 SHORT) |
 | TP cap | Clamped to nearest S/R (min 1.0 R:R) | same |

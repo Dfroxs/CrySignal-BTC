@@ -4,6 +4,15 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-07 — SPOT BUY-Only
+
+### Changed
+
+- **SPOT pipeline now BUY-only** (`core_analysis.py`) — `generate_signals()` prevents SELL signals when `mode='spot'`. Spot trading cannot short-sell; SELL conditions still show in analysis for informational purposes but are forced to HOLD. A note "SPOT is BUY-only — bearish bias, no SELL opened" appears in signal reasons when bearish conditions dominate.
+- **`run_bot.py`** — comment updated from "max 1 BUY + 1 SELL" to "BUY-only (no short selling on spot)".
+
+---
+
 ## 2026-05-06 — HTF Analysis Strengthened + Cycle Logging + SPOT HOLD Notifications
 
 ### Added
