@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime
 
-import signal_history as _sh
+from trading import history as _sh
 from config import FUTURES_CONFIG, RISK_CONFIG, SIGNAL_MAX_SCORE, SPOT_MAX_SCORE
 from core_analysis import calculate_futures_position, calculate_position_size
 from notifier.common import _dir, _esc, _max_score, _mode_label, _macro_banner, _send_telegram_message

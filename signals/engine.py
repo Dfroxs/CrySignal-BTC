@@ -5,9 +5,9 @@ integrate_news_with_signal() for macro/sentiment overlay.
 import pandas as pd
 
 from config import RISK_CONFIG
-from indicators import detect_rsi_divergence
-from market_data import get_signal_confidence
-from sentiment import check_upcoming_macro_events
+from signals.indicators import detect_rsi_divergence
+from signals.market_data import get_signal_confidence
+from signals.sentiment import check_upcoming_macro_events
 
 
 def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures', threshold_override=None):

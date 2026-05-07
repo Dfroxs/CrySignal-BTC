@@ -2,7 +2,7 @@
 
 import logging
 
-import signal_history as _sh
+from trading import history as _sh
 from config import DISCORD_WEBHOOK_URL, HTTP_SESSION
 from notifier.common import _dir, _max_score, _mode_label, _macro_banner
 

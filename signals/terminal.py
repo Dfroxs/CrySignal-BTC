@@ -10,8 +10,8 @@ from config import (
     SPOT_MAX_SCORE,
     SPOT_THRESHOLD,
 )
-from market_data import get_adaptive_threshold, get_spot_adaptive_threshold
-from sizing import calculate_futures_position, calculate_position_size
+from signals.market_data import get_adaptive_threshold, get_spot_adaptive_threshold
+from signals.sizing import calculate_futures_position, calculate_position_size
 
 # ANSI colour codes
 _C = {
@@ -277,7 +277,7 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
 
     # ── PERFORMANCE ──
     try:
-        import signal_history as _sh
+        import trading.history as _sh
         wr = _sh.get_win_rate()
         pf = _sh.get_profit_factor()
         total_pnl, count, avg = _sh.get_closed_pnl()

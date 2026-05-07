@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime
 
-import signal_history as _sh
+from trading import history as _sh
 from config import (
     DISCORD_WEBHOOK_URL,
     HTTP_SESSION,

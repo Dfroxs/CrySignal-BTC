@@ -11,12 +11,13 @@ import sys
 import time
 from datetime import UTC, datetime
 
-from core_analysis import analyze_spot_signal, analyze_futures_signal
+from signals.spot import analyze_spot_signal
+from signals.futures import analyze_futures_signal
 from news_scraper import scrape_and_export
 from notifier import _format_close_notification, _send_telegram_message, send_signal_alert
-from paper_trader import check_and_close_positions, print_open_status, print_paper_summary
+from trading.paper import check_and_close_positions, print_open_status, print_paper_summary
 from config import RISK_CONFIG, FUTURES_CONFIG
-from signal_history import close as close_db, get_open_positions, has_open_position_same_direction, open_paper_position
+from trading.history import close as close_db, get_open_positions, has_open_position_same_direction, open_paper_position
 
 logging.basicConfig(
     level=logging.INFO,
@@ -104,7 +105,7 @@ def run_cycle():
         elif spot_signal and spot_signal.get("entry_price"):
             current_price = spot_signal["entry_price"]
         else:
-            from core_analysis import exchange
+            from signals.market_data import exchange
             ticker = exchange.fetch_ticker("BTC/USDT")
             current_price = ticker["last"]
 

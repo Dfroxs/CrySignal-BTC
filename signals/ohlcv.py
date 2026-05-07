@@ -4,7 +4,7 @@ import logging
 
 import pandas as pd
 
-from indicators import (
+from signals.indicators import (
     calculate_atr,
     calculate_bollinger_bands,
     calculate_ema,
@@ -14,7 +14,7 @@ from indicators import (
     calculate_stoch_rsi,
     calculate_vwap,
 )
-from market_data import exchange
+from signals.market_data import exchange
 
 logger = logging.getLogger(__name__)
 

@@ -18,7 +18,12 @@ from datetime import UTC, datetime, timedelta
 import pandas as pd
 
 from config import FUTURES_CONFIG, RISK_CONFIG
-from core_analysis import (
+from signals.indicators import calculate_atr, calculate_bollinger_bands, calculate_ema, calculate_macd, calculate_obv, calculate_rsi, calculate_stoch_rsi, calculate_vwap, detect_rsi_divergence, detect_support_resistance
+from signals.engine import generate_signals
+from signals.ohlcv import fetch_ohlcv_df
+from signals.htf import _htf_indicators
+from signals.market_data import exchange  # was core_analysis import (
+# 
     fetch_ohlcv_df,
     detect_support_resistance,
     generate_signals,

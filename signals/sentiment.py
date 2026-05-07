@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pandas as pd
 
 from config import MACRO_CSV, NEWS_CSV
-from market_data import fetch_fear_and_greed
+from signals.market_data import fetch_fear_and_greed
 
 logger = logging.getLogger(__name__)
 

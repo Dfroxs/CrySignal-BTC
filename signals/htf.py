@@ -6,8 +6,8 @@ import logging
 
 import pandas as pd
 
-from indicators import calculate_ema, calculate_macd, calculate_rsi
-from market_data import exchange
+from signals.indicators import calculate_ema, calculate_macd, calculate_rsi
+from signals.market_data import exchange
 
 logger = logging.getLogger(__name__)
 
