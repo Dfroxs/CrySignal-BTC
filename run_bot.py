@@ -17,7 +17,7 @@ from news_scraper import scrape_and_export
 from notifier import _format_close_notification, _send_telegram_message, send_signal_alert
 from trading.paper import check_and_close_positions, print_open_status, print_paper_summary
 from config import RISK_CONFIG, FUTURES_CONFIG
-from trading.history import close as close_db, get_open_positions, has_open_position_same_direction, open_paper_position
+from trading.history import close as close_db, close_paper_position, get_open_positions, has_open_position_same_direction, open_paper_position
 
 logging.basicConfig(
     level=logging.INFO,
@@ -82,13 +82,28 @@ def run_cycle():
                 logger.info(msg)
                 phase3_actions.append(f"✅ {msg}")
 
-        # Futures positions — max 1 LONG + 1 SHORT (one per direction)
+        # Futures positions — close-and-flip on opposite signal
         if futures_signal and futures_signal["type"] != "HOLD":
-            fut_open = len(get_open_positions("futures"))
-            if fut_open >= FUTURES_CONFIG["max_positions"]:
-                msg = f"Futures max {FUTURES_CONFIG['max_positions']} positions — skipping {futures_signal['type']}"
+            opp_dir = "SELL" if futures_signal["type"] == "BUY" else "BUY"
+            opp_positions = [p for p in get_open_positions("futures") if p["type"] == opp_dir]
+            flipped = False
+
+            for opp in opp_positions:
+                entry = opp["entry_price"]
+                flip_px = futures_signal["entry_price"]  # close at new signal price
+                pnl = ((flip_px - entry) / entry * 100) if opp_dir == "SELL" else ((entry - flip_px) / entry * 100)
+                close_paper_position(opp["id"], "FLIP", round(pnl, 2), closed_at=flip_px)
+                msg = f"FUT {opp['type']} flipped → {futures_signal['type']} (#{opp['id']} closed, P&L {pnl:+.2f}%)"
                 logger.info(msg)
-                phase3_actions.append(f"⏭ FUT: {msg}")
+                phase3_actions.append(f"🔄 {msg}")
+                flipped = True
+
+            if flipped:
+                # After flip, open the new position
+                pid = open_paper_position(futures_signal, mode="futures")
+                msg = f"FUT {futures_signal['type']} opened (#{pid}) @ ${futures_signal['entry_price']:,.0f}"
+                logger.info(msg)
+                phase3_actions.append(f"✅ {msg}")
             elif has_open_position_same_direction(futures_signal["type"], "futures"):
                 msg = f"Already have open {futures_signal['type']} futures — skipping"
                 logger.info(msg)

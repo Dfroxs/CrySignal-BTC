@@ -254,6 +254,7 @@ def _format_close_notification(closed):
             "Trail": "trailing stop",
             "SL": "stop loss",
             "MACRO_CLOSE": "macro force-close",
+            "FLIP": "signal reversed · flip",
         }.get(outcome, outcome)
 
         lines.append(
