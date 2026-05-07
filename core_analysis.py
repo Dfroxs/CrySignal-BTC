@@ -425,40 +425,54 @@ def fetch_btc_dominance():
 
 
 def fetch_open_interest():
-    """Open Interest via Binance Futures /openInterest (free, no key).
+    """Open Interest via ccxt (Binance Futures), with HTTP fallback.
     Rising OI confirms trend; contradicting OI warns of reversal.
     Compares to cached value from previous run for trend detection."""
     result = {'notional': 0.0, 'change_pct': 0.0, 'trend': 'NEUTRAL', 'bias': 'NEUTRAL'}
+    oi = None
     try:
-        resp = HTTP_SESSION.get('https://fapi.binance.com/fapi/v1/openInterest',
-                            params={'symbol': 'BTCUSDT'}, timeout=5)
-        resp.raise_for_status()
-        oi = float(resp.json().get('openInterest', 0))
-        result['notional'] = round(oi, 2)
+        raw = exchange.fetch_open_interest('BTC/USDT')
+        oi = float(raw.get('openInterestAmount', 0) or raw.get('info', {}).get('openInterest', 0))
+    except Exception as e1:
+        logger.debug("ccxt OI fetch failed (%s), trying direct HTTP", e1)
+        try:
+            resp = HTTP_SESSION.get(
+                'https://fapi.binance.com/fapi/v1/openInterest',
+                params={'symbol': 'BTCUSDT'},
+                headers={'User-Agent': 'curl/8.4'},
+                timeout=5,
+            )
+            resp.raise_for_status()
+            oi = float(resp.json().get('openInterest', 0))
+        except Exception as e2:
+            logger.warning("Open Interest fetch failed: %s", e2)
+            return result
 
-        prev_oi = None
-        if os.path.exists(OI_CACHE_FILE):
-            with open(OI_CACHE_FILE) as f:
-                cached = json.load(f)
-            if _cache_fresh(cached):
-                prev_oi = cached.get('oi')
-            else:
-                logger.warning("Open Interest cache stale — skipping comparison")
+    if oi is None:
+        return result
+    result['notional'] = round(oi, 2)
 
-        with open(OI_CACHE_FILE, 'w') as f:
-            json.dump({'oi': oi, 'ts': datetime.now(UTC).isoformat()}, f)
+    prev_oi = None
+    if os.path.exists(OI_CACHE_FILE):
+        with open(OI_CACHE_FILE) as f:
+            cached = json.load(f)
+        if _cache_fresh(cached):
+            prev_oi = cached.get('oi')
+        else:
+            logger.warning("Open Interest cache stale — skipping comparison")
 
-        if prev_oi and prev_oi > 0:
-            change_pct = ((oi - prev_oi) / prev_oi) * 100
-            result['change_pct'] = round(change_pct, 3)
-            if change_pct > 1.0:
-                result['trend'] = 'RISING'
-                result['bias']  = 'BULLISH'
-            elif change_pct < -1.0:
-                result['trend'] = 'FALLING'
-                result['bias']  = 'BEARISH'
-    except Exception as e:
-        logger.warning("Open Interest fetch failed: %s", e)
+    with open(OI_CACHE_FILE, 'w') as f:
+        json.dump({'oi': oi, 'ts': datetime.now(UTC).isoformat()}, f)
+
+    if prev_oi and prev_oi > 0:
+        change_pct = ((oi - prev_oi) / prev_oi) * 100
+        result['change_pct'] = round(change_pct, 3)
+        if change_pct > 1.0:
+            result['trend'] = 'RISING'
+            result['bias']  = 'BULLISH'
+        elif change_pct < -1.0:
+            result['trend'] = 'FALLING'
+            result['bias']  = 'BEARISH'
     return result
 
 
@@ -1525,7 +1539,7 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
     # ── header ────────────────────────────────────────────────────
     print(f"\n{_C['dim']}╭{'─' * (_M - 2)}╮{_C['rst']}")
     mode_label = 'SPOT' if mode == 'spot' else 'FUTURES'
-    title = f"SpotSignal · BTC/USDT · {timeframe} · {mode_label}"
+    title = f"CrySignal · BTC/USDT · {timeframe} · {mode_label}"
     time_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
     print(f"{_C['dim']}│{_C['rst']} {_C['bld']}{_C['wht']}{title:^{_M - 4}}{_C['dim']} │{_C['rst']}")
     print(f"{_C['dim']}│{_C['rst']} {_C['gry']}{time_str:^{_M - 4}}{_C['dim']} │{_C['rst']}")
