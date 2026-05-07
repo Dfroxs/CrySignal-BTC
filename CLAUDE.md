@@ -42,7 +42,22 @@ Four-phase single-pass pipeline per cycle:
 **Phase 1 — `news_scraper.py`**
 Fetches FinancialJuice RSS, CoinGecko API, and ForexFactory XML macro calendar. Deduplicates, scores keyword sentiment, writes `data/crypto_news_sentiment.csv` and `data/macro_events.csv`. Non-fatal — analysis continues on stale data if scrape fails.
 
-**Phase 2 — `core_analysis.py`** (two independent analyses)
+**Phase 2 — 10 modules** (was monolithic `core_analysis.py`, now split by concern)
+
+| Module | Purpose |
+|---|---|
+| `indicators.py` | EMA, RSI, MACD, Bollinger, ATR, OBV, VWAP, StochRSI, divergence, S/R |
+| `market_data.py` | Funding, L/S, DXY, S&P, stablecoin, BTC.D, OI, F&G, cache, adaptive threshold |
+| `htf.py` | Multi-timeframe trend + indicators (4H/1D for futures, 1D/1W for spot) |
+| `sentiment.py` | News CSV + Fear & Greed combined, macro event check |
+| `signal_engine.py` | `generate_signals()` — 18 conditions + `integrate_news_with_signal()` |
+| `sizing.py` | `calculate_position_size()`, `calculate_futures_position()` |
+| `ohlcv.py` | Fetch candles + compute all indicators |
+| `spot_analysis.py` | `analyze_spot_signal()` pipeline orchestrator |
+| `futures_analysis.py` | `analyze_futures_signal()` pipeline orchestrator |
+| `terminal.py` | `display_analysis()` + helpers |
+
+`core_analysis.py` remains as a thin re-export shim for backward compatibility.
 
 *Spot (4H):* `analyze_spot_signal()` fetches 4H OHLCV (VWAP over 6 candles = 24H), then runs 15 conditions via `generate_signals(..., mode='spot')`. HTF trend uses 1D + 1W EMA200 (`get_spot_htf_trend()`). Futures-only conditions are skipped. Threshold: `SPOT_THRESHOLD` (4.3), max score: `SPOT_MAX_SCORE` (14.25).
 
