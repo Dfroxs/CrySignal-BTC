@@ -152,6 +152,33 @@ def run_cycle():
 
 
 # ---------------------------------------------------------------------------
+# Mid-cycle position check (no analysis, just trailing stop + close)
+# ---------------------------------------------------------------------------
+
+def run_position_check():
+    """Light check at half-interval — fetch price, update stops, close if hit."""
+    logger.info("[CHECK] Mid-cycle position update ...")
+    try:
+        from signals.market_data import exchange
+        ticker = exchange.fetch_ticker("BTC/USDT")
+        price = ticker["last"]
+
+        closed_spot = check_and_close_positions(price, mode="spot")
+        closed_fut = check_and_close_positions(price, mode="futures")
+        all_closed = (closed_spot or []) + (closed_fut or [])
+
+        print_open_status("spot")
+        print_open_status("futures")
+
+        if all_closed:
+            close_msg = _format_close_notification(all_closed)
+            if close_msg:
+                _send_telegram_message(close_msg, "position-close")
+    except Exception as e:
+        logger.error("Position check failed: %s", e)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -165,13 +192,18 @@ def main():
 
     if args.loop > 0:
         logger.info(
-            "Loop mode: running every %d minutes. Press Ctrl+C to stop.",
-            args.loop,
+            "Loop mode: full analysis every %d min, position check at half (%d min). "
+            "Press Ctrl+C to stop.",
+            args.loop, args.loop // 2,
         )
+        half = (args.loop * 60) // 2
         while True:
             run_cycle()
-            logger.info("Sleeping %d minutes until next cycle ...", args.loop)
-            time.sleep(args.loop * 60)
+            logger.info("Sleeping %d min until position check ...", args.loop // 2)
+            time.sleep(half)
+            run_position_check()
+            logger.info("Sleeping %d min until next full cycle ...", args.loop // 2)
+            time.sleep(half)
     else:
         run_cycle()
 
