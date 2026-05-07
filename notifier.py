@@ -743,8 +743,10 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
             elif sell_s > buy_s:
                 dir_str = "BEARISH" if mode == "spot" else "SELL"
             else:
-                dir_str = "—"
-            if gap <= 0 and mode == "spot" and dir_str == "BEARISH":
+                dir_str = "NEUTRAL"
+            if dir_str == "NEUTRAL":
+                line = f"⏸ <b>HOLD · {label}</b>  Score <b>{score:.2f}</b>/{mscore}  NEUTRAL · gap {gap:.2f}"
+            elif gap <= 0 and mode == "spot" and dir_str == "BEARISH":
                 line = f"⏸ <b>HOLD · {label}</b>  Score <b>{score:.2f}</b>/{mscore}  {dir_str} · BUY‑only → HOLD"
             elif gap <= 0:
                 line = f"⏸ <b>HOLD · {label}</b>  Score <b>{score:.2f}</b>/{mscore}  {dir_str} leads · gap 0.00 READY"
@@ -794,7 +796,7 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
 
             lines.append(f"Funding   <code>{fund_pct:+.5f}%</code>  {fund_dir}")
             lines.append(f"L/S       <code>{ls_ratio:.2f}</code>  {ls_dir}")
-            if oi_val:
+            if oi_val and oi_val > 1e6:
                 lines.append(f"OI        <code>${oi_val/1e9:.2f}B</code>  {oi_dir}")
             if basis_pct:
                 lines.append(f"Basis     <code>{basis_pct:+.4f}%</code>")
@@ -1014,10 +1016,12 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
                 dir_str = "BEARISH" if mode == "spot" else "SELL"
                 lead = sell_s
             else:
-                dir_str, lead = "—", 0
+                dir_str, lead = "NEUTRAL", max(buy_s, sell_s)
             gap = threshold - lead
 
-            if mode == "spot" and dir_str == "BEARISH":
+            if dir_str == "NEUTRAL":
+                lines.append(f"{label}    NEUTRAL (both {buy_s:.2f}) — gap {gap:.2f} to fire")
+            elif mode == "spot" and dir_str == "BEARISH":
                 lines.append(f"{label}    BEARISH leads ({buy_s:.2f} buy vs {sell_s:.2f} sell) — BUY‑only → HOLD")
             elif gap <= 0:
                 lines.append(f"{label}    {dir_str} by {abs(buy_s - sell_s):.2f} — gap 0.00 READY but overrides")
