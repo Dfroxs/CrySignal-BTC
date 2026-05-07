@@ -8,6 +8,9 @@ All notable changes to the SpotSignal project.
 
 ### Changed
 
+- **Consolidated Telegram notifications into single message** (`notifier.py`) — new `_format_consolidated_telegram()` builds one comprehensive message per cycle (was 3-5 separate messages). Sections: Signal Verdicts (both SPOT + FUTURES), Price & Trend, Market Structure, Top Headlines, Performance (all-time paper, per-mode P&L + WR), Position Sizing (SPOT & FUTURES with active trade details or hypothetical SL/TP), NOTE (per-mode verdict summary). Only macro risk banner and position close alerts remain as separate messages.
+- **Removed `_format_position_telegram()`** — position/performance summary merged into consolidated message.
+- **`_send_combined_telegram()` simplified** — now sends 1 main message + optional macro banner instead of 3-5 separate messages.
 - **SPOT pipeline now BUY-only** (`core_analysis.py`) — `generate_signals()` prevents SELL signals when `mode='spot'`. Spot trading cannot short-sell; SELL conditions still show in analysis for informational purposes but are forced to HOLD. A note "SPOT is BUY-only — bearish bias, no SELL opened" appears in signal reasons when bearish conditions dominate.
 - **Terminal NOTE section updated** (`core_analysis.py`) — SPOT HOLD with bearish bias now shows "BEARISH" instead of "SELL" as direction, "SPOT is BUY-only" instead of "sell side overrides". WHAT THIS MEANS section clarifies no action is taken on bearish spot signals.
 - **Telegram format redesigned — clean vertical layout** (`notifier.py`) — `_format_compact_signal_telegram()` rewritten: every indicator on its own line (`Label    Value`), separate sections for Price & Trend, Technicals, HTF, Market, Sentiment, and Reasons. HTF reads raw indicator dicts for accurate RSI/MACD/Volume per timeframe. Previously all crammed horizontally with `·` separators — now scannable on mobile.

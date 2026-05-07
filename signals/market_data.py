@@ -1,0 +1,423 @@
+"""Market structure data fetchers — funding, L/S, DXY, S&P, stablecoins,
+BTC dominance, open interest, Fear & Greed, cache helpers, adaptive threshold.
+
+All functions that make external API calls live here.
+"""
+
+import json
+import logging
+import os
+from datetime import UTC, datetime, timedelta
+
+import ccxt
+
+from config import (
+    ADAPTIVE_MAX_SIGNALS,
+    ADAPTIVE_WINDOW_HOURS,
+    BTC_DOM_CACHE_FILE,
+    HTTP_SESSION,
+    OI_CACHE_FILE,
+    SIGNAL_THRESHOLD,
+    SPOT_THRESHOLD,
+    SPOT_THRESHOLD_MAX,
+    SPOT_THRESHOLD_MIN,
+    SPOT_THRESHOLD_STATE_FILE,
+    STABLECOIN_CACHE_FILE,
+    THRESHOLD_MAX,
+    THRESHOLD_MIN,
+    THRESHOLD_STATE_FILE,
+    load_cache,
+    save_cache,
+)
+
+logger = logging.getLogger(__name__)
+
+# Shared ccxt exchange instance — rate-limited
+exchange = ccxt.binance()
+exchange.enableRateLimit = True
+
+_CACHE_MAX_AGE_HOURS = 6
+
+
+# ---------------------------------------------------------------------------
+# Cache helper
+# ---------------------------------------------------------------------------
+
+def _cache_fresh(cache_dict, max_age_hours=_CACHE_MAX_AGE_HOURS):
+    """Return True if *cache_dict* has a 'ts' key within *max_age_hours*."""
+    ts_str = cache_dict.get("ts")
+    if not ts_str:
+        return False
+    try:
+        ts = datetime.fromisoformat(ts_str)
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        return datetime.now(UTC) - ts < timedelta(hours=max_age_hours)
+    except ValueError:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Binance Futures data
+# ---------------------------------------------------------------------------
+
+def fetch_funding_rate():
+    """Fetch funding rate + futures basis (mark vs index price spread)."""
+    result = {
+        'rate': 0.0, 'label': 'NEUTRAL', 'bias': 'NEUTRAL', 'rate_pct': 0.0,
+        'basis_pct': 0.0, 'basis_bias': 'NEUTRAL',
+    }
+    try:
+        resp = HTTP_SESSION.get(
+            'https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT',
+            timeout=5,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        rate = float(data.get('lastFundingRate', 0))
+        result['rate'] = rate
+        result['rate_pct'] = rate * 100
+
+        if rate > 0.05 / 100:
+            result['label'] = 'VERY HIGH'
+            result['bias'] = 'BEARISH'
+        elif rate > 0.01 / 100:
+            result['label'] = 'HIGH'
+            result['bias'] = 'SLIGHTLY_BEARISH'
+        elif rate < -0.05 / 100:
+            result['label'] = 'VERY NEGATIVE'
+            result['bias'] = 'BULLISH'
+        elif rate < -0.01 / 100:
+            result['label'] = 'NEGATIVE'
+            result['bias'] = 'BULLISH'
+
+        mark = float(data.get('markPrice', 0))
+        index = float(data.get('indexPrice', 1))
+        if index > 0:
+            basis = ((mark - index) / index) * 100
+            result['basis_pct'] = round(basis, 4)
+            if basis > 0.10:
+                result['basis_bias'] = 'BULLISH'
+            elif basis < -0.10:
+                result['basis_bias'] = 'BEARISH'
+
+    except Exception as e:
+        logger.warning("Funding Rate fetch failed: %s", e)
+    return result
+
+
+def fetch_long_short_ratio():
+    result = {'ratio': 1.0, 'long_pct': 50.0, 'short_pct': 50.0, 'bias': 'NEUTRAL'}
+    try:
+        resp = HTTP_SESSION.get(
+            'https://fapi.binance.com/futures/data/globalLongShortAccountRatio',
+            params={'symbol': 'BTCUSDT', 'period': '1h', 'limit': 1},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        data = resp.json()[0]
+        ratio = float(data.get('longShortRatio', 1.0))
+        result.update({
+            'ratio': ratio,
+            'long_pct': float(data.get('longAccount', 0.5)) * 100,
+            'short_pct': float(data.get('shortAccount', 0.5)) * 100,
+        })
+        if ratio < 0.8:
+            result['bias'] = 'BULLISH'
+        elif ratio > 2.0:
+            result['bias'] = 'BEARISH'
+    except Exception as e:
+        logger.warning("Long/Short Ratio fetch failed: %s", e)
+    return result
+
+
+def fetch_open_interest():
+    """Open Interest via ccxt, with HTTP fallback."""
+    result = {'notional': 0.0, 'change_pct': 0.0, 'trend': 'NEUTRAL', 'bias': 'NEUTRAL'}
+    oi = None
+    try:
+        raw = exchange.fetch_open_interest('BTC/USDT')
+        oi = float(raw.get('openInterestAmount', 0) or raw.get('info', {}).get('openInterest', 0))
+    except Exception as e1:
+        logger.debug("ccxt OI fetch failed (%s), trying direct HTTP", e1)
+        try:
+            resp = HTTP_SESSION.get(
+                'https://fapi.binance.com/fapi/v1/openInterest',
+                params={'symbol': 'BTCUSDT'},
+                headers={'User-Agent': 'curl/8.4'},
+                timeout=5,
+            )
+            resp.raise_for_status()
+            oi = float(resp.json().get('openInterest', 0))
+        except Exception as e2:
+            logger.warning("Open Interest fetch failed: %s", e2)
+            return result
+
+    if oi is None:
+        return result
+    result['notional'] = round(oi, 2)
+
+    prev_oi = None
+    if os.path.exists(OI_CACHE_FILE):
+        with open(OI_CACHE_FILE) as f:
+            cached = json.load(f)
+        if _cache_fresh(cached):
+            prev_oi = cached.get('oi')
+        else:
+            logger.warning("Open Interest cache stale — skipping comparison")
+
+    with open(OI_CACHE_FILE, 'w') as f:
+        json.dump({'oi': oi, 'ts': datetime.now(UTC).isoformat()}, f)
+
+    if prev_oi and prev_oi > 0:
+        change_pct = ((oi - prev_oi) / prev_oi) * 100
+        result['change_pct'] = round(change_pct, 3)
+        if change_pct > 1.0:
+            result['trend'] = 'RISING'
+            result['bias'] = 'BULLISH'
+        elif change_pct < -1.0:
+            result['trend'] = 'FALLING'
+            result['bias'] = 'BEARISH'
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Macro market data (Yahoo Finance)
+# ---------------------------------------------------------------------------
+
+def fetch_dxy_trend():
+    result = {'current': 0.0, 'change_pct': 0.0, 'trend': 'NEUTRAL', 'bias': 'NEUTRAL'}
+    try:
+        resp = HTTP_SESSION.get(
+            'https://query2.finance.yahoo.com/v8/finance/chart/DX-Y.NYB',
+            params={'interval': '1d', 'range': '5d'},
+            headers={'User-Agent': 'Mozilla/5.0'},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        closes = resp.json()['chart']['result'][0]['indicators']['quote'][0]['close']
+        closes = [c for c in closes if c is not None]
+        if len(closes) >= 2:
+            current, prev = closes[-1], closes[-2]
+            change_pct = ((current - prev) / prev) * 100
+            result.update({'current': round(current, 3), 'change_pct': round(change_pct, 3)})
+            if change_pct > 0.3:
+                result['trend'] = 'RISING'
+                result['bias'] = 'BEARISH'
+            elif change_pct < -0.3:
+                result['trend'] = 'FALLING'
+                result['bias'] = 'BULLISH'
+            else:
+                result['trend'] = 'FLAT'
+    except Exception as e:
+        logger.warning("DXY fetch failed: %s", e)
+    return result
+
+
+def fetch_sp500_trend():
+    """S&P 500 daily trend via Yahoo Finance."""
+    result = {'current': 0.0, 'change_pct': 0.0, 'trend': 'NEUTRAL', 'bias': 'NEUTRAL'}
+    try:
+        resp = HTTP_SESSION.get(
+            'https://query2.finance.yahoo.com/v8/finance/chart/%5EGSPC',
+            params={'interval': '1d', 'range': '5d'},
+            headers={'User-Agent': 'Mozilla/5.0'},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        closes = resp.json()['chart']['result'][0]['indicators']['quote'][0]['close']
+        closes = [c for c in closes if c is not None]
+        if len(closes) >= 2:
+            current, prev = closes[-1], closes[-2]
+            change_pct = ((current - prev) / prev) * 100
+            result.update({'current': round(current, 2), 'change_pct': round(change_pct, 3)})
+            if change_pct > 0.5:
+                result['trend'] = 'RISING'
+                result['bias'] = 'BULLISH'
+            elif change_pct < -0.5:
+                result['trend'] = 'FALLING'
+                result['bias'] = 'BEARISH'
+            else:
+                result['trend'] = 'FLAT'
+    except Exception as e:
+        logger.warning("S&P500 fetch failed: %s", e)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# On-chain / CoinGecko data
+# ---------------------------------------------------------------------------
+
+def fetch_stablecoin_supply():
+    """USDT + USDC combined market cap trend via CoinGecko."""
+    result = {'total_b': 0.0, 'change_pct': 0.0, 'trend': 'NEUTRAL', 'bias': 'NEUTRAL'}
+    try:
+        resp = HTTP_SESSION.get(
+            'https://api.coingecko.com/api/v3/simple/price',
+            params={
+                'ids': 'tether,usd-coin',
+                'vs_currencies': 'usd',
+                'include_market_cap': 'true',
+            },
+            headers={'User-Agent': 'Mozilla/5.0'},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        usdt_cap = data.get('tether', {}).get('usd_market_cap', 0)
+        usdc_cap = data.get('usd-coin', {}).get('usd_market_cap', 0)
+        total_now = (usdt_cap + usdc_cap) / 1e9
+        result['total_b'] = round(total_now, 1)
+
+        prev_total = None
+        if os.path.exists(STABLECOIN_CACHE_FILE):
+            with open(STABLECOIN_CACHE_FILE) as f:
+                cached = json.load(f)
+            if _cache_fresh(cached):
+                prev_total = cached.get('total_b')
+            else:
+                logger.warning("Stablecoin cache stale — skipping comparison")
+
+        with open(STABLECOIN_CACHE_FILE, 'w') as f:
+            json.dump({'total_b': total_now, 'ts': datetime.now(UTC).isoformat()}, f)
+
+        if prev_total and prev_total > 0:
+            change_pct = ((total_now - prev_total) / prev_total) * 100
+            result['change_pct'] = round(change_pct, 3)
+            if change_pct > 0.5:
+                result['trend'] = 'RISING'
+                result['bias'] = 'BULLISH'
+            elif change_pct < -0.5:
+                result['trend'] = 'FALLING'
+                result['bias'] = 'BEARISH'
+    except Exception as e:
+        logger.warning("Stablecoin supply fetch failed: %s", e)
+    return result
+
+
+def fetch_btc_dominance():
+    """BTC dominance via CoinGecko /global."""
+    result = {'current': 0.0, 'change_pct': 0.0, 'trend': 'NEUTRAL', 'bias': 'NEUTRAL'}
+    try:
+        resp = HTTP_SESSION.get('https://api.coingecko.com/api/v3/global',
+                                headers={'User-Agent': 'Mozilla/5.0'}, timeout=8)
+        resp.raise_for_status()
+        data = resp.json()['data']
+        btc_dom = data.get('market_cap_percentage', {}).get('btc', 0)
+        result['current'] = round(btc_dom, 1)
+
+        prev_btc_dom = None
+        if os.path.exists(BTC_DOM_CACHE_FILE):
+            with open(BTC_DOM_CACHE_FILE) as f:
+                cached = json.load(f)
+            if _cache_fresh(cached):
+                prev_btc_dom = cached.get('btc_dom')
+            else:
+                logger.warning("BTC dominance cache stale — skipping comparison")
+
+        with open(BTC_DOM_CACHE_FILE, 'w') as f:
+            json.dump({'btc_dom': btc_dom, 'ts': datetime.now(UTC).isoformat()}, f)
+
+        if prev_btc_dom and prev_btc_dom > 0:
+            change_pct = btc_dom - prev_btc_dom
+            result['change_pct'] = round(change_pct, 2)
+            if change_pct > 0.5:
+                result['trend'] = 'RISING'
+                result['bias'] = 'BULLISH'
+            elif change_pct < -0.5:
+                result['trend'] = 'FALLING'
+                result['bias'] = 'BEARISH'
+    except Exception as e:
+        logger.warning("BTC dominance fetch failed: %s", e)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Fear & Greed
+# ---------------------------------------------------------------------------
+
+def fetch_fear_and_greed():
+    result = {'value': 50, 'label': 'NEUTRAL', 'sentiment': 'NEUTRAL'}
+    try:
+        resp = HTTP_SESSION.get('https://api.alternative.me/fng/?limit=1', timeout=5)
+        resp.raise_for_status()
+        data = resp.json()['data'][0]
+        val = int(data['value'])
+        result['value'] = val
+        result['label'] = data['value_classification']
+        if val >= 60:
+            result['sentiment'] = 'BULLISH'
+        elif val <= 40:
+            result['sentiment'] = 'BEARISH'
+    except Exception as e:
+        logger.warning("Fear & Greed fetch failed: %s", e)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Signal confidence
+# ---------------------------------------------------------------------------
+
+def get_signal_confidence(strength, threshold):
+    """Return 'STRONG', 'NORMAL', or 'WEAK' based on how far score exceeds threshold."""
+    if strength >= threshold * 1.5:
+        return "STRONG"
+    if strength >= threshold * 1.2:
+        return "NORMAL"
+    return "WEAK"
+
+
+# ---------------------------------------------------------------------------
+# Adaptive threshold
+# ---------------------------------------------------------------------------
+
+def _get_adaptive_threshold(base, t_min, t_max, state_file, env_var):
+    """Shared adaptive threshold logic."""
+    override = float(os.getenv(env_var, 0))
+    if override > 0:
+        return override
+
+    state = load_cache(state_file)
+    now = datetime.now(UTC)
+    cutoff = (now - timedelta(hours=ADAPTIVE_WINDOW_HOURS)).isoformat()
+    recent = [ts for ts in state.get("signals", []) if ts > cutoff]
+    all_ts = state.get("signals", [])
+
+    if len(recent) > ADAPTIVE_MAX_SIGNALS:
+        base = min(base + 0.5, t_max)
+    elif len(recent) == 0 and len(all_ts) > 0:
+        base = max(base - 0.25, t_min)
+    return base
+
+
+def _update_threshold_state(signal_type, state_file):
+    """Shared adaptive threshold state update."""
+    if signal_type == "HOLD":
+        return
+    state = load_cache(state_file)
+    signals = state.get("signals", [])
+    signals.append(datetime.now(UTC).isoformat())
+    cutoff = (datetime.now(UTC) - timedelta(hours=ADAPTIVE_WINDOW_HOURS * 2)).isoformat()
+    save_cache(state_file, {"signals": [ts for ts in signals if ts > cutoff]})
+
+
+def get_adaptive_threshold():
+    return _get_adaptive_threshold(
+        SIGNAL_THRESHOLD, THRESHOLD_MIN, THRESHOLD_MAX,
+        THRESHOLD_STATE_FILE, "SIGNAL_THRESHOLD",
+    )
+
+
+def get_spot_adaptive_threshold():
+    return _get_adaptive_threshold(
+        SPOT_THRESHOLD, SPOT_THRESHOLD_MIN, SPOT_THRESHOLD_MAX,
+        SPOT_THRESHOLD_STATE_FILE, "SPOT_THRESHOLD",
+    )
+
+
+def update_threshold_state(signal_type):
+    _update_threshold_state(signal_type, THRESHOLD_STATE_FILE)
+
+
+def update_spot_threshold_state(signal_type):
+    _update_threshold_state(signal_type, SPOT_THRESHOLD_STATE_FILE)

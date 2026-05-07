@@ -9,7 +9,7 @@ Each cycle:
 
 import logging
 
-import signal_history as sh
+import trading.history as sh
 from config import RISK_CONFIG
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ def check_and_close_positions(current_price, mode=None):
     Returns a list of close-event dicts: {type, entry, exit, pnl, outcome, mode}
     so the caller can send notifications.
     """
-    from core_analysis import check_upcoming_macro_events
+    from signals.sentiment import check_upcoming_macro_events
     closed = []
 
     # ── Macro gate — force-close ALL positions ──────────────────────
