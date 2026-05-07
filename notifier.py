@@ -708,7 +708,7 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
 
     # ── Header ─────────────────────────────────────────────────
     time_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
-    lines.append(f"🔔 <b>SpotSignal · BTC/USDT</b>")
+    lines.append(f"🔔 <b>CrySignal · BTC/USDT</b>")
     lines.append(f"<code>{_esc(time_str)}</code>")
     lines.append("")
 
