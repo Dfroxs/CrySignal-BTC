@@ -1937,6 +1937,8 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
     print(f"  {_C['bld']}INDICATOR GUIDE{_C['rst']} {_C['dim']}(what each number means){_C['rst']}")
     print(sep)
 
+    htfl = "1D and 1W" if mode == "spot" else "4H and 1D"
+
     guides = [
         ("Price > EMA200", "Long-term trend is up.  BTC in a bull market.",
          last["close"] > last["EMA_200"]),
@@ -1944,12 +1946,19 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
          last["RSI_14"] < 70 and last["RSI_14"] > 30),
         ("MACD", "Short-term momentum.  Bullish cross = trend starting up.  Bearish = losing steam.",
          last["MACD"] > last["MACD_Signal"]),
-        ("HTF Diverging", "4H and 1D charts disagree.  Market is uncertain — expect chop.",
+        (f"HTF Diverging", f"{htfl} charts disagree.  Market is uncertain — expect chop.",
          htf and not htf.get("aligned", True)),
-        ("L/S Ratio 0.60", "More shorts than longs.  If price goes up, shorts get squeezed = fast pump.",
-         True),
-        ("Funding flat", "No one is paying to hold positions.  No extreme leverage either way.",
-         abs(funding.get("rate_pct", 0)) < 0.01) if market_structure else ("", "", False),
+    ]
+
+    if mode == "futures":
+        guides += [
+            ("L/S Ratio 0.60", "More shorts than longs.  If price goes up, shorts get squeezed = fast pump.",
+             True),
+            ("Funding flat", "No one is paying to hold positions.  No extreme leverage either way.",
+             abs(funding.get("rate_pct", 0)) < 0.01) if market_structure else ("", "", False),
+        ]
+
+    guides += [
         ("S&P 500 flat", "Equities are sideways.  BTC usually follows equities sentiment.",
          abs(sp500.get("change_pct", 0)) < 0.5) if market_structure and sp500.get("current") else ("", "", False),
         ("Fear & Greed 47", "Neutral sentiment.  Extreme fear (<20) is often a buy signal.  Extreme greed (>80) is often a sell signal.",
