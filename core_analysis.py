@@ -44,6 +44,7 @@ from signal_history import log_cycle, log_signal
 logger = logging.getLogger(__name__)
 
 exchange = ccxt.binance()
+exchange.enableRateLimit = True
 
 # ============================================================================
 # TECHNICAL INDICATORS
