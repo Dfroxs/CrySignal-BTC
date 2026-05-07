@@ -42,20 +42,20 @@ Four-phase single-pass pipeline per cycle:
 **Phase 1 — `news_scraper.py`**
 Fetches FinancialJuice RSS, CoinGecko API, and ForexFactory XML macro calendar. Deduplicates, scores keyword sentiment, writes `data/crypto_news_sentiment.csv` and `data/macro_events.csv`. Non-fatal — analysis continues on stale data if scrape fails.
 
-**Phase 2 — 10 modules** (was monolithic `core_analysis.py`, now split by concern)
+**Phase 2 — `signals/` package** (10 modules; was monolithic `core_analysis.py`)
 
 | Module | Purpose |
 |---|---|
-| `indicators.py` | EMA, RSI, MACD, Bollinger, ATR, OBV, VWAP, StochRSI, divergence, S/R |
-| `market_data.py` | Funding, L/S, DXY, S&P, stablecoin, BTC.D, OI, F&G, cache, adaptive threshold |
-| `htf.py` | Multi-timeframe trend + indicators (4H/1D for futures, 1D/1W for spot) |
-| `sentiment.py` | News CSV + Fear & Greed combined, macro event check |
-| `signal_engine.py` | `generate_signals()` — 18 conditions + `integrate_news_with_signal()` |
-| `sizing.py` | `calculate_position_size()`, `calculate_futures_position()` |
-| `ohlcv.py` | Fetch candles + compute all indicators |
-| `spot_analysis.py` | `analyze_spot_signal()` pipeline orchestrator |
-| `futures_analysis.py` | `analyze_futures_signal()` pipeline orchestrator |
-| `terminal.py` | `display_analysis()` + helpers |
+| `signals/indicators.py` | EMA, RSI, MACD, Bollinger, ATR, OBV, VWAP, StochRSI, divergence, S/R |
+| `signals/market_data.py` | Funding, L/S, DXY, S&P, stablecoin, BTC.D, OI, F&G, cache, adaptive threshold |
+| `signals/htf.py` | Multi-timeframe trend + indicators (4H/1D for futures, 1D/1W for spot) |
+| `signals/sentiment.py` | News CSV + Fear & Greed combined, macro event check |
+| `signals/engine.py` | `generate_signals()` — 18 conditions + `integrate_news_with_signal()` |
+| `signals/sizing.py` | `calculate_position_size()`, `calculate_futures_position()` |
+| `signals/ohlcv.py` | Fetch candles + compute all indicators |
+| `signals/spot.py` | `analyze_spot_signal()` pipeline orchestrator |
+| `signals/futures.py` | `analyze_futures_signal()` pipeline orchestrator |
+| `signals/terminal.py` | `display_analysis()` + helpers |
 
 `core_analysis.py` remains as a thin re-export shim for backward compatibility.
 
@@ -91,20 +91,24 @@ Both use `ThreadPoolExecutor` to fetch market data in parallel. Spot skips fundi
 
 After scoring, `integrate_news_with_signal()` applies the macro hold gate (HIGH-impact USD event within 2h forces HOLD) and adjusts strength based on Fear & Greed.
 
-**Phase 3 — `paper_trader.py`**
-Opens and closes paper positions per mode (`'spot'` or `'futures'`). Implements trailing stop + partial TP:
-- **TP1** (50%) hit → trailing stop moves to breakeven
-- **TP2** (50%, 2× TP1 distance) hit or trailing stop triggered → full close
-- P&L blended: `partial_pnl * 0.5 + remaining_pnl * 0.5`
+**Phase 3 — `trading/` package**
+- `trading/paper.py` — opens and closes paper positions per mode (`'spot'` or `'futures'`). Implements trailing stop + partial TP:
+  - **TP1** (50%) hit → trailing stop moves to breakeven
+  - **TP2** (50%, 2× TP1 distance) hit or trailing stop triggered → full close
+  - P&L blended: `partial_pnl * 0.5 + remaining_pnl * 0.5`
+- Max positions: 2 spot (`RISK_CONFIG["max_positions"]`), 2 futures (`FUTURES_CONFIG["max_positions"]`).
 
-Max positions: 2 spot (`RISK_CONFIG["max_positions"]`), 2 futures (`FUTURES_CONFIG["max_positions"]`).
+**Phase 4 — `notifier/` package**
+- `notifier/common.py` — shared helpers + `send_signal_alert()` dispatcher
+- `notifier/telegram.py` — Telegram formatters (compact card, consolidated, close) + sender
+- `notifier/discord.py` — Discord formatters (single, combined, positions) + sender
+- `send_signal_alert(spot_signal, futures_signal)` sends one combined Telegram/Discord message. Each section shows full analysis: price & trend, market structure, top headlines, all-time performance, position sizing (SPOT + FUTURES), and NOTE verdict. Telegram uses HTML parse mode.
 
-**Phase 4 — `notifier.py`**
-`send_signal_alert(spot_signal, futures_signal)` sends one combined Telegram/Discord message if at least one signal is non-HOLD. Each section (SPOT and FUTURES) shows full analysis: price & trend, HTF alignment, technicals, market structure, sentiment + headlines, and signal reasons — matching terminal output. Telegram uses HTML parse mode.
+`notifier.py` remains as a thin re-export shim for backward compatibility.
 
 ## Persistence
 
-`signal_history.py` — SQLite `data/signal_history.db`:
+`trading/history.py` — SQLite `data/signal_history.db`:
 - `signals` table — one row per signal fired, with indicator snapshot and outcome
 - `paper_positions` table — open/closed trades with `mode` column (`'spot'`/`'futures'`), trailing stop, TP1/TP2, partial close state
 
@@ -126,10 +130,10 @@ Both pipelines use `_get_adaptive_threshold(base, t_min, t_max, state_file, env_
 
 ## Signal scoring — when adding new conditions
 
-- If adding to **futures only**: wrap in `if mode == 'futures':` inside `generate_signals()`, do not change `SPOT_MAX_SCORE`.
+- If adding to **futures only**: wrap in `if mode == 'futures':` inside `signals/engine.py:generate_signals()`, do not change `SPOT_MAX_SCORE`.
 - If adding to **both modes**: update both `SIGNAL_MAX_SCORE` and `SPOT_MAX_SCORE` in `config.py`, and verify that both thresholds still represent ~30% of their respective max scores.
-- `generate_signals(df, htf, market_structure, sr, mode='futures', threshold_override=None)` — `threshold_override` is how `analyze_spot_signal()` and `analyze_futures_signal()` inject their per-mode adaptive threshold.
+- `generate_signals(df, htf, market_structure, sr, mode='futures', threshold_override=None)` — `threshold_override` is how `signals/spot.py:analyze_spot_signal()` and `signals/futures.py:analyze_futures_signal()` inject their per-mode adaptive threshold.
 
 ## Backtest limitations
 
-`backtest.py` only tests technical conditions (EMA, RSI, MACD, volume, BB, HTF, divergence, OBV, StochRSI, S/R, VWAP). All market structure conditions score as NEUTRAL — no historical API exists for these. HTF trend is computed by resampling 1H data in-process. Calls `generate_signals()` without a mode arg, which defaults to `'futures'` (backward-compatible).
+`backtest.py` only tests technical conditions (EMA, RSI, MACD, volume, BB, HTF, divergence, OBV, StochRSI, S/R, VWAP). All market structure conditions score as NEUTRAL — no historical API exists for these. HTF trend is computed by resampling 1H data in-process. Imports from `signals/` modules directly; calls `generate_signals()` from `signals.engine`.
