@@ -191,19 +191,35 @@ def main():
     args = parser.parse_args()
 
     if args.loop > 0:
+        half = args.loop // 2
+        full_minute = 1   # full cycle fires at :01 past the hour
+        check_minute = (full_minute + half) % 60
+
         logger.info(
-            "Loop mode: full analysis every %d min, position check at half (%d min). "
+            "Scheduled mode: full cycle at :%02d, position check at :%02d. "
             "Press Ctrl+C to stop.",
-            args.loop, args.loop // 2,
+            full_minute, check_minute,
         )
-        half = (args.loop * 60) // 2
+        fired = set()
         while True:
-            run_cycle()
-            logger.info("Sleeping %d min until position check ...", args.loop // 2)
-            time.sleep(half)
-            run_position_check()
-            logger.info("Sleeping %d min until next full cycle ...", args.loop // 2)
-            time.sleep(half)
+            now = datetime.now().astimezone()
+            minute = now.minute
+            # Wait until the target minute rolls around
+            if minute not in (full_minute, check_minute):
+                time.sleep(1)
+                continue
+            if minute in fired:
+                time.sleep(1)
+                continue  # already fired this minute
+
+            if minute == full_minute:
+                run_cycle()
+            else:
+                run_position_check()
+            fired.add(minute)
+            # Reset fired set when minute rolls over
+            if minute != datetime.now().astimezone().minute:
+                fired.clear()
     else:
         run_cycle()
 
