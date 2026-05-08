@@ -63,24 +63,40 @@ def _colour_for(value, green_above=0, red_below=0):
 def _signal_box(signal, effective_threshold, max_score=None):
     if max_score is None:
         max_score = SPOT_MAX_SCORE if signal.get('mode') == 'spot' else SIGNAL_MAX_SCORE
-    stype = signal["type"]
-    colors = {"BUY": "grn", "SELL": "red", "HOLD": "yel"}
-    c = colors.get(stype, "yel")
-    icons = {"BUY": "▲", "SELL": "▼", "HOLD": "─"}
-    icon = icons.get(stype, "─")
+    stype  = signal["type"]
+    buy_s  = signal.get("buy_score", 0)
+    sell_s = signal.get("sell_score", 0)
+    conf   = signal.get("confidence", "")
 
-    conf = signal.get("confidence")
-    conf_colors = {"STRONG": "grn", "NORMAL": "yel", "WEAK": "dim"}
-    conf_c = conf_colors.get(conf, "dim") if conf else "dim"
+    if stype == "HOLD":
+        if buy_s > sell_s:
+            dir_str, lead = "BUY", buy_s
+        elif sell_s > buy_s:
+            dir_str = "BEARISH" if signal.get("mode") == "spot" else "SELL"
+            lead = sell_s
+        else:
+            dir_str, lead = "NEUTRAL", max(buy_s, sell_s)
+        gap = effective_threshold - lead
 
-    l1 = f"  {_C[c]}{_C['bld']}{icon} {stype}{_C['rst']}"
-    l1 += f"   Strength  {_C['bld']}{signal['strength']:.2f}{_C['rst']} / {max_score}"
-    if conf:
-        l1 += f"   {_C[conf_c]}{_C['bld']}{conf}{_C['rst']}"
-    l1 += f"   Threshold  {_C['dim']}{effective_threshold:.2f}{_C['rst']}"
+        icon = "❄️"
+        c1   = "yel"
+        l1   = f"  {icon} {_C[c1]}{_C['bld']}HOLD{_C['rst']}"
+        l1  += f"  ·  Score {_C['bld']}{signal['strength']:.2f}/{max_score}{_C['rst']}"
+        l1  += f"  ·  B:{_C['grn']}{buy_s:.2f}{_C['rst']} S:{_C['red']}{sell_s:.2f}{_C['rst']}"
+        if signal.get("mode") == "spot" and dir_str == "BEARISH":
+            l1 += f"  ·  {_C['red']}BEARISH · BUY-only → HOLD{_C['rst']}"
+        else:
+            l1 += f"  ·  gap {_C['yel']}{gap:.2f}{_C['rst']} to fire"
+    else:
+        icon = "🟢" if stype == "BUY" else "🔴"
+        c1   = "grn" if stype == "BUY" else "red"
+        l1   = f"  {icon} {_C[c1]}{_C['bld']}{stype} 🔥{_C['rst']}"
+        l1  += f"  ·  Score {_C['bld']}{signal['strength']:.2f}/{max_score}{_C['rst']}"
+        l1  += f"  ·  B:{_C['grn']}{buy_s:.2f}{_C['rst']} S:{_C['red']}{sell_s:.2f}{_C['rst']}"
+        l1  += f"  ·  ≥ thr {_C['dim']}{effective_threshold:.2f}{_C['rst']}"
 
     print(f"╭{'─' * (_M - 2)}╮")
-    print(f"│{l1:<{_M - 4}}         │")
+    print(f"│{l1:<{_M}}│")
     print(f"╰{'─' * (_M - 2)}╯")
 
 
@@ -413,46 +429,61 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
             _kv("  Liquidation", "-")
             _kv("  Max Risk",    f"${futures_start * FUTURES_CONFIG['risk_per_trade']:,.0f}  ({FUTURES_CONFIG['risk_per_trade']*100:.0f}% per trade)")
 
-    # ── NOTE ──
+    # ── VERDICT ──
     gap = effective_threshold - max(buy_s, sell_s)
+    reasons_n = len(signal.get("reasons", []))
 
     print()
-    print(f"  {_C['bld']}NOTE{_C['rst']}")
+    print(f"  {_C['bld']}VERDICT{_C['rst']}")
     print(sep)
 
-    b_bar = min(int(buy_s / max(buy_s + sell_s, 1) * 12), 12)
-    s_bar = 12 - b_bar
-    print(f"  Buy      {_C['grn']}{'█' * b_bar}{_C['gry']}{'░' * (12 - b_bar)}{_C['rst']}  {buy_s:.2f}")
-    print(f"  Sell     {_C['red']}{'█' * s_bar}{_C['gry']}{'░' * (12 - s_bar)}{_C['rst']}  {sell_s:.2f}")
-    print(f"  ─ {'─' * 20}")
-    print(f"  {'Threshold:':<14} {_C['dim']}{effective_threshold:.2f}{_C['rst']}  (needed to fire)")
-
     if signal["type"] == "HOLD":
-        if mode == 'spot' and direction == 'SELL':
-            dir_show = "BEARISH"
-            dir_col = "red"
+        if buy_s > sell_s:
+            dir_str, lead = "BUY", buy_s
+        elif sell_s > buy_s:
+            dir_str = "BEARISH" if mode == "spot" else "SELL"
+            lead = sell_s
         else:
-            dir_show = direction.upper()
-            dir_col = "grn" if direction == "BUY" else ("red" if direction == "SELL" else "dim")
-        print(f"  {'Direction:':<14} {_C[dir_col]}{dir_show}{_C['rst']} leads by {abs(buy_s - sell_s):.2f}")
-        if gap > 0:
-            print(f"  {'Gap to fire:':<14} {_C['yel']}{gap:.2f}{_C['rst']}  (needs ~{max(1, int(gap / 0.5 + 0.5))} more conditions)")
+            dir_str, lead = "NEUTRAL", max(buy_s, sell_s)
+
+        if mode == "spot" and dir_str == "BEARISH":
+            print(f"  ❄️ {_C['yel']}{_C['bld']}HOLD{_C['rst']}  ·  "
+                  f"Score {_C['bld']}{signal['strength']:.2f}/{max_score}{_C['rst']}  ·  "
+                  f"{_C['red']}BEARISH · BUY-only → HOLD{_C['rst']}")
+            print(f"       B:{_C['grn']}{buy_s:.2f}{_C['rst']}  ·  "
+                  f"S:{_C['red']}{sell_s:.2f}{_C['rst']}  ·  "
+                  f"BUY-only → HOLD")
         else:
-            if mode == 'spot':
-                print(f"  {'Gap to fire:':<14} {_C['grn']}READY{_C['rst']} but {_C['red']}SPOT is BUY-only{_C['rst']}")
+            print(f"  ❄️ {_C['yel']}{_C['bld']}HOLD{_C['rst']}  ·  "
+                  f"Score {_C['bld']}{signal['strength']:.2f}/{max_score}{_C['rst']}  ·  "
+                  f"gap {_C['yel']}{gap:.2f}{_C['rst']} to fire")
+            detail = f"B:{_C['grn']}{buy_s:.2f}{_C['rst']}  ·  S:{_C['red']}{sell_s:.2f}{_C['rst']}"
+            if dir_str == "NEUTRAL":
+                detail += "  ·  NEUTRAL"
+            elif gap <= 0:
+                detail += f"  ·  {_C['yel']}{dir_str} leads · gap 0.00 READY{_C['rst']}"
             else:
-                print(f"  {'Gap to fire:':<14} {_C['grn']}READY{_C['rst']} but sell side {_C['red']}overrides{_C['rst']}")
+                detail += f"  ·  {dir_str} leads"
+            print(f"       {detail}")
+
         if effective_threshold != base_threshold:
-            print(f"  {'':<14} {_C['yel']}adaptive threshold active (base={base_threshold}){_C['rst']}")
+            print(f"       {_C['yel']}adaptive threshold active (base={base_threshold}){_C['rst']}")
     else:
-        _kv("Direction", f"{_C['grn'] if signal['type'] == 'BUY' else _C['red']}{signal['type']}{_C['rst']}")
-        _kv("Strength", f"{signal['strength']:.2f} / {max_score}")
+        print(f"  🟢 {_C['grn' if signal['type'] == 'BUY' else 'red']}{_C['bld']}{signal['type']} 🔥{_C['rst']}  ·  "
+              f"Score {_C['bld']}{signal['strength']:.2f}/{max_score}{_C['rst']}  ·  "
+              f"≥ thr {_C['dim']}{effective_threshold:.2f}{_C['rst']}")
+        detail = f"B:{_C['grn']}{buy_s:.2f}{_C['rst']}  ·  S:{_C['red']}{sell_s:.2f}{_C['rst']}"
+        if reasons_n:
+            detail += f"  ·  {reasons_n} reasons"
+        if signal.get("confidence"):
+            detail += f"  ·  {signal['confidence']} conf"
+        print(f"       {detail}")
 
     try:
         _, count, avg_pnl = _sh.get_closed_pnl()
         if count > 0:
             pnl_col = "grn" if avg_pnl > 0 else "red"
-            print(f"  {'Paper P&L:':<14} {_C['dim']}{count} closed trades{_C['rst']}  avg {_C[pnl_col]}{avg_pnl:+.2f}%{_C['rst']}")
+            print(f"       {_C['dim']}{count} closed trades{_C['rst']}  avg {_C[pnl_col]}{avg_pnl:+.2f}%{_C['rst']}")
     except Exception:
         pass
 

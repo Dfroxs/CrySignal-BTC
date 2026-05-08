@@ -71,16 +71,16 @@ def run_cycle():
             if spot_open >= RISK_CONFIG["max_positions"]:
                 msg = f"Spot max {RISK_CONFIG['max_positions']} positions — skipping {spot_signal['type']}"
                 logger.info(msg)
-                phase3_actions.append(f"⏭ SPOT: {msg}")
+                phase3_actions.append(f"⏭ SPOT  {msg}")
             elif has_open_position_same_direction(spot_signal["type"], "spot"):
                 msg = f"Already have open {spot_signal['type']} spot — skipping"
                 logger.info(msg)
-                phase3_actions.append(f"⏭ SPOT: {msg}")
+                phase3_actions.append(f"⏭ SPOT  {msg}")
             else:
                 pid = open_paper_position(spot_signal, mode="spot")
                 msg = f"SPOT {spot_signal['type']} opened (#{pid}) @ ${spot_signal['entry_price']:,.0f}"
                 logger.info(msg)
-                phase3_actions.append(f"✅ {msg}")
+                phase3_actions.append(f"🚀 {msg}")
                 _send_telegram_message(_format_open_notification(spot_signal, pid, "spot"), "position-open")
 
         # Futures positions — close-and-flip on opposite signal
@@ -104,17 +104,17 @@ def run_cycle():
                 pid = open_paper_position(futures_signal, mode="futures")
                 msg = f"FUT {futures_signal['type']} opened (#{pid}) @ ${futures_signal['entry_price']:,.0f}"
                 logger.info(msg)
-                phase3_actions.append(f"✅ {msg}")
+                phase3_actions.append(f"🚀 {msg}")
                 _send_telegram_message(_format_open_notification(futures_signal, pid, "futures"), "position-open")
             elif has_open_position_same_direction(futures_signal["type"], "futures"):
                 msg = f"Already have open {futures_signal['type']} futures — skipping"
                 logger.info(msg)
-                phase3_actions.append(f"⏭ FUT: {msg}")
+                phase3_actions.append(f"⏭ FUT  {msg}")
             else:
                 pid = open_paper_position(futures_signal, mode="futures")
                 msg = f"FUT {futures_signal['type']} opened (#{pid}) @ ${futures_signal['entry_price']:,.0f}"
                 logger.info(msg)
-                phase3_actions.append(f"✅ {msg}")
+                phase3_actions.append(f"🚀 {msg}")
                 _send_telegram_message(_format_open_notification(futures_signal, pid, "futures"), "position-open")
 
         # Determine current price for position checks
@@ -137,9 +137,11 @@ def run_cycle():
         print_paper_summary("futures")
 
         if phase3_actions:
-            print(f"\n📋 Phase 3 summary:")
+            print(f"\n  {'─' * 40}")
+            print(f"  PHASE 3: POSITIONS")
+            print(f"  {'─' * 40}")
             for action in phase3_actions:
-                print(f"   {action}")
+                print(f"  {action}")
 
         # Send close notification if any positions closed this cycle
         if all_closed:
