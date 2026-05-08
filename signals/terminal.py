@@ -85,6 +85,8 @@ def _signal_box(signal, effective_threshold, max_score=None):
         l1  += f"  ·  B:{_C['grn']}{buy_s:.2f}{_C['rst']} S:{_C['red']}{sell_s:.2f}{_C['rst']}"
         if signal.get("mode") == "spot" and dir_str == "BEARISH":
             l1 += f"  ·  {_C['red']}BEARISH · BUY-only → HOLD{_C['rst']}"
+        elif gap < 0:
+            l1 += f"  ·  {_C['yel']}news downgrade → HOLD{_C['rst']}"
         else:
             l1 += f"  ·  gap {_C['yel']}{gap:.2f}{_C['rst']} to fire"
     else:
@@ -612,17 +614,28 @@ def _combined_box(spot_signal, futures_signal):
                     f"BUY-only → HOLD"
                 )
             else:
-                lines.append(
-                    f"  ❄️ {_C['yel']}{_C['bld']}{label}  HOLD{_C['rst']}  "
-                    f"{score:.2f}/{max_s:.2f}  "
-                    f"gap {_C['yel']}{gap:.2f}{_C['rst']} to fire"
-                )
-                det = f"       B:{_C['grn']}{buy_s:.2f}{_C['rst']}  S:{_C['red']}{sell_s:.2f}{_C['rst']}"
-                if gap <= 0:
-                    det += f"  ·  {_C['yel']}{d} leads · gap 0.00 READY{_C['rst']}"
-                elif d != "NEUTRAL":
-                    det += f"  ·  {d} leads"
-                lines.append(det)
+                if gap < 0:
+                    lines.append(
+                        f"  ❄️ {_C['yel']}{_C['bld']}{label}  HOLD{_C['rst']}  "
+                        f"{score:.2f}/{max_s:.2f}  "
+                        f"{_C['yel']}news downgrade → HOLD{_C['rst']}"
+                    )
+                    det = (f"       B:{_C['grn']}{buy_s:.2f}{_C['rst']}  "
+                           f"S:{_C['red']}{sell_s:.2f}{_C['rst']}  "
+                           f"{_C['yel']}{d} leads but news blocked{_C['rst']}")
+                    lines.append(det)
+                else:
+                    lines.append(
+                        f"  ❄️ {_C['yel']}{_C['bld']}{label}  HOLD{_C['rst']}  "
+                        f"{score:.2f}/{max_s:.2f}  "
+                        f"gap {_C['yel']}{gap:.2f}{_C['rst']} to fire"
+                    )
+                    det = f"       B:{_C['grn']}{buy_s:.2f}{_C['rst']}  S:{_C['red']}{sell_s:.2f}{_C['rst']}"
+                    if gap <= 0:
+                        det += f"  ·  {_C['yel']}{d} leads · gap 0.00 READY{_C['rst']}"
+                    elif d != "NEUTRAL":
+                        det += f"  ·  {d} leads"
+                    lines.append(det)
         else:
             icon = "🟢" if stype == "BUY" else "🔴"
             c1   = "grn" if stype == "BUY" else "red"
@@ -736,9 +749,14 @@ def display_combined(spot_signal, futures_signal):
         thr    = sig.get("_threshold", 0)
         if stype == "HOLD":
             gap = thr - max(buy_s, sell_s)
-            print(f"  ❄️ {_C['yel']}{_C['bld']}HOLD{_C['rst']}  "
-                  f"Score {sig['strength']:.2f}/{max_s:.2f}  "
-                  f"gap {_C['yel']}{gap:.2f}{_C['rst']} to fire")
+            if gap < 0:
+                print(f"  ❄️ {_C['yel']}{_C['bld']}HOLD{_C['rst']}  "
+                      f"Score {sig['strength']:.2f}/{max_s:.2f}  "
+                      f"{_C['yel']}news downgrade → HOLD{_C['rst']}")
+            else:
+                print(f"  ❄️ {_C['yel']}{_C['bld']}HOLD{_C['rst']}  "
+                      f"Score {sig['strength']:.2f}/{max_s:.2f}  "
+                      f"gap {_C['yel']}{gap:.2f}{_C['rst']} to fire")
         else:
             icon = "🟢" if stype == "BUY" else "🔴"
             c1   = "grn" if stype == "BUY" else "red"

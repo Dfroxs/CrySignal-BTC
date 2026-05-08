@@ -630,18 +630,29 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
                     "BUY-only → HOLD",
                 ]
             else:
-                lines.append(
-                    f"❄️ <b>{label}</b>  ·  HOLD  ·  "
-                    f"<code>{score:.2f}/{mscore:.2f}</code>  ·  "
-                    f"gap <b>{gap:.2f}</b> to fire"
-                )
-                detail = [f"Buy <b>{buy_s:.2f}</b>  ·  Sell <b>{sell_s:.2f}</b>"]
-                if dir_str == "NEUTRAL":
-                    detail.append("NEUTRAL")
-                elif gap <= 0:
-                    detail.append(f"{dir_str} leads  ·  gap 0.00 READY")
+                if gap < 0:
+                    lines.append(
+                        f"❄️ <b>{label}</b>  ·  HOLD  ·  "
+                        f"<code>{score:.2f}/{mscore:.2f}</code>  ·  "
+                        f"news downgrade → HOLD"
+                    )
+                    detail = [
+                        f"Buy <b>{buy_s:.2f}</b>  ·  Sell <b>{sell_s:.2f}</b>",
+                        f"{dir_str} leads but news blocked",
+                    ]
                 else:
-                    detail.append(f"{dir_str} leads")
+                    lines.append(
+                        f"❄️ <b>{label}</b>  ·  HOLD  ·  "
+                        f"<code>{score:.2f}/{mscore:.2f}</code>  ·  "
+                        f"gap <b>{gap:.2f}</b> to fire"
+                    )
+                    detail = [f"Buy <b>{buy_s:.2f}</b>  ·  Sell <b>{sell_s:.2f}</b>"]
+                    if dir_str == "NEUTRAL":
+                        detail.append("NEUTRAL")
+                    elif gap <= 0:
+                        detail.append(f"{dir_str} leads  ·  gap 0.00 READY")
+                    else:
+                        detail.append(f"{dir_str} leads")
             lines.append("         " + "  ·  ".join(detail))
         else:
             icon = "🟢" if stype == "BUY" else "🔴"

@@ -355,6 +355,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     signal['buy_score'] = round(buy_conditions, 2)
     signal['sell_score'] = round(sell_conditions, 2)
     signal['atr'] = current['ATR_14']
+    signal['_threshold'] = threshold
 
     # TP2 = 2× the TP1 distance
     if signal['type'] != 'HOLD' and signal['take_profit'] is not None:
@@ -408,4 +409,14 @@ def integrate_news_with_signal(signal, news_data):
     enhanced['news_confidence'] = news_data.get('confidence', 0)
     enhanced['fear_greed_value'] = fng_val
     enhanced['fear_greed_label'] = fng.get('label', 'Neutral')
+
+    # Re-validate: if post-news strength dropped below threshold, downgrade to HOLD
+    thr = enhanced.get('_threshold', 0)
+    if enhanced['type'] != 'HOLD' and enhanced['strength'] < thr:
+        enhanced['type'] = 'HOLD'
+        enhanced['confidence'] = None
+        enhanced['reasons'].append(
+            f"⚠️  Post-news strength ({enhanced['strength']:.2f}) below threshold ({thr:.2f}) — downgraded to HOLD"
+        )
+
     return enhanced
