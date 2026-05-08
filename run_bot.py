@@ -201,10 +201,16 @@ def main():
             full_minute, check_minute,
         )
         fired = set()
+        last_minute = None
         while True:
             now = datetime.now().astimezone()
             minute = now.minute
-            # Wait until the target minute rolls around
+
+            # Clear fired when the clock minute changes (new minute = new chance)
+            if minute != last_minute:
+                fired.clear()
+                last_minute = minute
+
             if minute not in (full_minute, check_minute):
                 time.sleep(1)
                 continue
@@ -213,13 +219,16 @@ def main():
                 continue  # already fired this minute
 
             if minute == full_minute:
+                logger.info("=== Full cycle starting ===")
                 run_cycle()
+                next_min = check_minute
+                wait_sec = ((next_min - datetime.now().astimezone().minute - 1) % 60) * 60 + (60 - datetime.now().astimezone().second)
             else:
                 run_position_check()
+                next_min = full_minute
+                wait_sec = ((next_min - datetime.now().astimezone().minute - 1) % 60) * 60 + (60 - datetime.now().astimezone().second)
             fired.add(minute)
-            # Reset fired set when minute rolls over
-            if minute != datetime.now().astimezone().minute:
-                fired.clear()
+            logger.info("Next run at :%02d (~%d min)", next_min, max(1, wait_sec // 60))
     else:
         run_cycle()
 
