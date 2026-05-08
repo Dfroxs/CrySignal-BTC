@@ -4,6 +4,15 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-08 — Cron-scheduling fix + heartbeat logs
+
+### Fixed
+
+- **Cron loop skipped cycles after first hour** (`run_bot.py`) — `fired` set was never cleared between hours. After `:01` and `:31` fired, the next hour's `:01` was incorrectly skipped (`1 in fired`). Fixed by clearing `fired` on every wall-clock minute change using a `last_minute` tracker.
+- **No heartbeat during wait** — added log messages: "=== Full cycle starting ===" before run_cycle, and "Next run at :XX (~Y min)" after each cycle/check so the log shows the bot is alive between scheduled runs.
+
+---
+
 ## 2026-05-07 — SPOT BUY-Only + Clean Vertical Telegram Format
 
 ### Changed
