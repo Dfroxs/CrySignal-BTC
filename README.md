@@ -1,15 +1,16 @@
 # SpotSignal
 
 BTC/USDT trading signal generator — dual pipeline (SPOT 4H + FUTURES 1H),
-18 weighted conditions, multi-timeframe analysis, macro event gating, paper
-trading with trailing stop + partial TP, and compact Telegram notifications.
+18 conditions, multi-timeframe analysis, macro event gating, paper trading
+with trailing stop + partial TP, conviction-based dynamic leverage, and
+Telegram notifications.
 
 ## Quick Start
 
 ```bash
 source venv/bin/activate              # Python 3.14
 pip install -r requirements.txt       # ccxt, numpy, pandas, requests
-cp .env.example .env                  # optional — add Telegram/Discord tokens
+cp .env.example .env                  # optional — add Telegram token
 python3 run_bot.py                    # one shot
 python3 run_bot.py --loop 60          # run every 60 min until Ctrl+C
 ```
@@ -37,10 +38,10 @@ Paper trading is simulated. Past results do not guarantee future performance.
 └──────────────────────┬──────────────────────────────────┘
                        ▼
 ┌─────────────────────────────────────────────────────────┐
-│ PHASE 2 — core_analysis.py  (2 independent pipelines)   │
+│ PHASE 2 — signals/ package  (2 independent pipelines)   │
 │                                                         │
 │  SPOT 4H                    │  FUTURES 1H               │
-│  15 conditions              │  18 conditions            │
+│  15 conditions              │  19 conditions            │
 │  HTF: 1D + 1W EMA200        │  HTF: 4H + 1D EMA200      │
 │  Threshold: 4.3 (adaptive)  │  Threshold: 5.2 (adaptive)│
 │  Max score: 15.5            │  Max score: 19.25         │
@@ -48,23 +49,24 @@ Paper trading is simulated. Past results do not guarantee future performance.
 └──────────────────────┬──────────────────────────────────┘
                        ▼
 ┌─────────────────────────────────────────────────────────┐
-│ PHASE 3 — paper_trader.py + run_bot.py                  │
+│ PHASE 3 — trading/ package + run_bot.py                 │
 │ • Macro gate → force-close all if HIGH impact event <2h │
 │ • Position dedup → SPOT BUY-only, FUTURES max 1+1       │
-│ • Trailing stop update → advance trail each cycle        │
+│ • Trailing stop update → advance trail each cycle       │
 │ • TP1 (50%) → move trail to breakeven                   │
 │ • TP2 (50%) or trail hit → full close                   │
 │ • Slippage warning → log if fill >1% past trigger       │
 │ • cycle_log → persist every cycle to SQLite             │
+│ • Conviction-based dynamic leverage (6-factor model)    │
 └──────────────────────┬──────────────────────────────────┘
                        ▼
 ┌─────────────────────────────────────────────────────────┐
-│ PHASE 4 — notifier.py                                   │
-│ • Compact signal cards per mode (even HOLD)              │
-│ • Position close alerts (TP/SL/MACRO)                   │
-│ • Open position + P&L summary                           │
+│ PHASE 4 — notifier/ package                             │
+│ • Combined main signal card (SPOT + FUTURES in one)     │
+│ • Position open alerts (dedicated card)                 │
+│ • Position close alerts (TP/SL/MACRO/FLIP)              │
 │ • Macro risk banner when active                         │
-│ → Telegram (HTML) + Discord (markdown)                  │
+│ → Telegram (HTML)                                       │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -162,19 +164,19 @@ Entry ─┬─ TP1 (50%) → partial exit + trail moves to breakeven
 
 ## Notifications (Telegram)
 
-3-5 messages per cycle, clean vertical format:
+Per cycle, in order:
 
 | # | Message | Content |
-|---|---|---|
-| 1 | Macro risk banner | Only when HIGH impact event <2h (sent first if active) |
-| 2 | SPOT signal card | Verdict, Price & Trend, HTF, Technicals, Market, Sentiment, Reasons |
-| 3 | FUTURES signal card | Same + funding, L/S, OI, basis |
-| 4 | Open + P&L | Open positions entry→TP1 trail, closed P&L per mode, outcome (W/L/MC) |
-| 5 | Position closed | Only when positions exit — entry→exit, P&L%, outcome label |
+|---|---|---|---|
+| 1 | Macro risk banner | Only when HIGH impact event <2h |
+| 2 | **Main signal card** | Combined SPOT + FUTURES: verdicts, price & trend, market structure, position sizing, VERDICT with 🔥/❄️, per-mode performance, sentiment, headlines |
+| 3 | Position opened | Only when new position opens — entry, SL, TP1, TP2, R/R |
+| 4 | Position closed | Only when positions exit — entry→exit, P&L%, outcome label |
 
-- **All signals sent** — BUY, SELL, and HOLD (HOLD shows gap-to-fire + leading direction)
-- **Vertical layout** — one indicator per line (`Label    Value`), scannable on mobile
-- SPOT HOLD bearish = "BEARISH" direction + "SPOT is BUY-only" note
+- 🔥 = FIRED, ❄️ = HOLD with buy/sell breakdown
+- **Per-mode performance** — W/L, win rate, P&L shown separately for SPOT and FUTURES
+- **News downgrade** — VERDICT shows "news downgrade → HOLD" when signal drops below threshold post-news
+- SPOT HOLD bearish = "BEARISH" + "BUY-only → HOLD" note
 
 ---
 
@@ -191,7 +193,6 @@ All values in `config.py`, overridable via `.env`:
 | `LOOP_INTERVAL` | 60 | Loop cadence (minutes) |
 | `TELEGRAM_BOT_TOKEN` | — | Telegram bot token |
 | `TELEGRAM_CHAT_ID` | — | Telegram target chat |
-| `DISCORD_WEBHOOK_URL` | — | Discord webhook URL |
 
 **Adaptive threshold:** auto-adjusts based on signal frequency (72h window):
 - >8 signals → +0.5 (raises threshold)
@@ -270,13 +271,38 @@ ORDER BY id DESC LIMIT 50;
 
 ## Position Sizing
 
-| Parameter | Spot | Futures |
+### Spot
+- Risk per trade: 2% of balance
+- Stop loss: 1.5× ATR from entry
+- Take profit: 2.5× R:R from SL
+- Max position: 10% of balance
+- Max positions: 1 (BUY only)
+
+### Futures — Conviction-Based Dynamic Leverage
+Leverage is not static. A 6-factor model computes a confidence multiplier (0.25–1.5×) and volatility cap (0.33–1.0×) that together determine effective risk and max leverage.
+
+| Factor | Weight | Effect |
 |---|---|---|
-| Risk per trade | 2% of balance | 3% of balance |
-| Stop loss | 1.5× ATR from entry | same |
-| Take profit | 2.5× R:R from SL | same |
-| Trailing stop | 1.0× ATR | same |
-| Max leverage | — | 10× |
-| Max position | 10% of balance | 20% margin |
-| Max positions | 1 (BUY only) | 2 (1 LONG + 1 SHORT) |
-| TP cap | Clamped to nearest S/R (min 1.0 R:R) | same |
+| Strength vs threshold | ~30% | Score at 2× threshold → +0.30 multiplier |
+| HTF alignment | ~25% | Aligned → +0.20, diverging → -0.10 |
+| RSI zone confirmation | ~15% | Oversold BUY → +0.15, normal zone → +0.05 |
+| Funding rate | ~10% | Negative funding + BUY → +0.10 |
+| F&G extreme fear | ~10% | F&G ≤20 + BUY → +0.15 contrarian |
+| ATR percentile (volatility) | cap | High vol (≥75%) → leverage cap at 0.50–0.75×, extreme (≥90%) → 0.33× |
+
+```
+effective_risk = base_risk × confidence_mult × vol_cap
+leverage = clamp(optimal_leverage, 1, max_leverage × vol_cap)
+```
+
+| Scenario | Leverage | Risk | Tier |
+|---|---|---|---|
+| Strong + aligned + low vol | 7–10x | 3–5% | AGGRESSIVE |
+| Normal | 3–6x | 2–3% | MODERATE |
+| Weak + diverging + high vol | 1–3x | 1–2% | CONSERVATIVE |
+
+- Risk per trade base: 3% of balance
+- Max leverage: 10× (before volatility cap)
+- Max margin: 20% of balance
+- Max positions: 2 (1 LONG + 1 SHORT)
+- Trailing stop: 1.0× ATR, partial TP at 50% (TP1), remaining 50% (TP2)

@@ -4,6 +4,50 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-09 — Dynamic Leverage + Bug Fixes + Polish
+
+### Added
+
+- **Conviction-based dynamic leverage** (`signals/sizing.py`) — 6-factor model replaces static leverage formula. Leverage now scales with signal confidence: strength ratio vs threshold, HTF alignment, RSI zone confirmation, funding rate, Fear & Greed contrarian, and volatility regime. `_compute_confidence()` returns 0.25–1.5 multiplier. ATR percentile caps max leverage in high-vol regimes (0.33x–1.0x). Effective risk = base_risk × confidence × vol_cap. Tier labels: CONSERVATIVE (≤3x), MODERATE (≤6x), AGGRESSIVE (≤10x).
+- **ATR percentile** (`signals/indicators.py`) — `compute_atr_percentile()` ranks current ATR in 100-period history. Used by dynamic leverage.
+- **LEVERAGE_CONFIG** (`config.py`) — new config dict for base_max_leverage, atr_lookback, fractional_kelly, confidence bounds.
+
+### Fixed
+
+- **Post-news strength below threshold still fired** (`signals/engine.py`) — `integrate_news_with_signal()` drains strength (macro -2.0, contradictory news -0.5) but never re-validated against threshold. Now stores `_threshold` in `generate_signals()` and downgrades to HOLD if post-news `strength < threshold`.
+- **Futures leverage always 1x** (`signals/sizing.py`) — broken formula `int(1 / (sl_pct * 100))` always returned 0 for realistic stops (>0.5%), clamped to 1x. Replaced with risk-based calculation: `needed_position = risk_amount / sl_distance_pct`.
+- **Backtest crash** (`backtest.py`) — `generate_signals()` called without `threshold_override=None`, causing `float >= None` TypeError. Now passes `SIGNAL_THRESHOLD`.
+- **Per-mode stats were global** (`trading/history.py`) — `get_outcome_breakdown()`, `get_win_rate()`, `get_profit_factor()` now accept optional `mode` parameter. `print_paper_summary()`, `print_open_status()`, Telegram PERFORMANCE, and combined display all pass per-mode filtering. Previously SPOT and FUTURES showed identical global W/L counts.
+- **Negative gap display** — when news downgraded a signal, gap showed as negative (`-2.10 to fire`). Now displays "news downgrade → HOLD" in both terminal and Telegram.
+
+### Changed
+
+- **Telegram notification order** (`run_bot.py`) — main signal alert now sent first, position open/close/warning follow. Previously position notifications fired during Phase 3 before the main signal.
+- **Position open gets dedicated Telegram card** (`notifier/telegram.py`) — `_format_open_notification()` sends vertical card with entry, SL%, TP1, TP2, R/R when position opens. Separate from main signal.
+
+### Removed
+
+- **Discord** — `notifier/discord.py` deleted. All Discord references removed from `config.py`, `notifier/common.py`, `notifier/__init__.py`, `notifier.py` shim. Discord webhook logic was unused and added maintenance burden.
+
+---
+
+## 2026-05-08 — Combined Terminal Display + Per-Mode Cleanup
+
+### Added
+
+- **Combined SPOT + FUTURES terminal display** (`signals/terminal.py`) — `display_combined()` replaces two separate `display_analysis()` calls with a single narrow (52-char), fully vertical output. Shared sections (market structure, sentiment, performance) appear once. Mode-specific sections (technicals, HTF, trade setup, reasons) stack vertically per mode. Old `display_analysis()` kept for backward compat with `display=True` kwarg.
+- **Mid-cycle check header** (`run_bot.py`) — `run_position_check()` now prints clean separator with BTC price.
+
+### Changed
+
+- **VERDICT section** — terminal and Telegram both use 🔥 (FIRED) / ❄️ (HOLD) icons, buy/sell score breakdown (`B:7.10 · S:2.80`), threshold comparison. Replaced old bar charts and verbose NOTE format.
+- **_signal_box()** — boxed verdict now includes buy/sell scores, 🔥/❄️ icons, per-mode max scores.
+- **Phase 3 summary** (console) — cleaner header, 🚀 icon for opens, structured block.
+- **print_open_status()** — multi-line per position format with SL, TP1, TP2, Trail, Opened.
+- **Label consistency** — `FUT 1H` standardized to `FUTURES 1H` across all display sections.
+
+---
+
 ## 2026-05-08 — Cron-scheduling fix + heartbeat logs
 
 ### Fixed
