@@ -479,46 +479,52 @@ def get_recent_signals(limit=50):
     return [dict(r) for r in reversed(rows)]
 
 
-def get_win_rate():
+def get_win_rate(mode=None):
     """Win rate = WINS / (WINS + LOSSES) from paper_positions.
 
     MACRO_CLOSE and BREAKEVEN excluded from denominator.
     Returns None when there is no resolved data.
     """
     c = _conn()
+    mf, mp = ("AND mode = ?", [mode]) if mode else ("", [])
     total = c.execute(
-        "SELECT COUNT(*) FROM paper_positions WHERE outcome IN ('WIN','LOSS')"
+        f"SELECT COUNT(*) FROM paper_positions WHERE outcome IN ('WIN','LOSS') {mf}",
+        mp,
     ).fetchone()[0]
     if total == 0:
         return None
     wins = c.execute(
-        "SELECT COUNT(*) FROM paper_positions WHERE outcome='WIN'"
+        f"SELECT COUNT(*) FROM paper_positions WHERE outcome='WIN' {mf}", mp
     ).fetchone()[0]
     return wins / total
 
 
-def get_outcome_breakdown():
+def get_outcome_breakdown(mode=None):
     """Return dict of outcome → count from paper_positions for stats display."""
     c = _conn()
+    mf, mp = ("AND mode = ?", [mode]) if mode else ("", [])
     rows = c.execute(
-        "SELECT outcome, COUNT(*) as cnt FROM paper_positions "
-        "WHERE outcome IS NOT NULL GROUP BY outcome"
+        f"SELECT outcome, COUNT(*) as cnt FROM paper_positions "
+        f"WHERE outcome IS NOT NULL {mf} GROUP BY outcome", mp
     ).fetchall()
     return {r["outcome"]: r["cnt"] for r in rows}
 
 
-def get_profit_factor():
+def get_profit_factor(mode=None):
     """Profit factor = gross winning P&L / gross losing P&L from paper_positions.
 
     Returns float('inf') when there are wins but no losses.
     Returns None when there is no resolved data at all.
     """
     c = _conn()
+    mf, mp = ("AND mode = ?", [mode]) if mode else ("", [])
     wins = c.execute(
-        "SELECT COALESCE(SUM(pnl_pct), 0) FROM paper_positions WHERE outcome='WIN'"
+        f"SELECT COALESCE(SUM(pnl_pct), 0) FROM paper_positions WHERE outcome='WIN' {mf}",
+        mp,
     ).fetchone()[0]
     losses = c.execute(
-        "SELECT COALESCE(SUM(ABS(pnl_pct)), 0) FROM paper_positions WHERE outcome='LOSS'"
+        f"SELECT COALESCE(SUM(ABS(pnl_pct)), 0) FROM paper_positions WHERE outcome='LOSS' {mf}",
+        mp,
     ).fetchone()[0]
     if losses == 0:
         return float("inf") if wins > 0 else None

@@ -294,7 +294,7 @@ def print_paper_summary(mode=None):
     print(f"   Avg per Trade:    {avg:+.2f}%")
 
     # Outcome breakdown
-    bd = sh.get_outcome_breakdown()
+    bd = sh.get_outcome_breakdown(mode)
     if bd:
         w  = bd.get("WIN", 0)
         l  = bd.get("LOSS", 0)
@@ -307,11 +307,11 @@ def print_paper_summary(mode=None):
             parts.append(f"{be} BE")
         print(f"   Outcomes:         {' · '.join(parts)}")
 
-    wr = sh.get_win_rate()
+    wr = sh.get_win_rate(mode)
     if wr is not None:
         print(f"   Win Rate:         {wr:.1%}")
 
-    pf = sh.get_profit_factor()
+    pf = sh.get_profit_factor(mode)
     if pf is not None:
         pf_str = "∞" if pf == float("inf") else f"{pf:.2f}"
         print(f"   Profit Factor:    {pf_str}")
