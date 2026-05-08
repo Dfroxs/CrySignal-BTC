@@ -3,6 +3,8 @@
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
+from config import LEVERAGE_CONFIG
+
 from trading.history import log_cycle, log_signal
 from signals.ohlcv import fetch_ohlcv_df
 from signals.htf import get_htf_trend
@@ -76,6 +78,11 @@ def analyze_futures_signal(symbol='BTC/USDT', include_news=True, display=False):
         signal['mode'] = 'futures'
         signal['_threshold'] = threshold
         log_cycle(signal, df, market_structure, htf, 'futures')
+        # ATR percentile for dynamic leverage
+        from signals.indicators import compute_atr_percentile
+        signal['_atr_percentile'] = round(
+            compute_atr_percentile(df, LEVERAGE_CONFIG["atr_lookback"]), 3
+        )
         signal['_htf'] = htf
         signal['_market'] = market_structure
         signal['_news_data'] = news_data

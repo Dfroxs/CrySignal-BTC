@@ -97,6 +97,15 @@ ADAPTIVE_MAX_SIGNALS  = 8
 TELEGRAM_BOT_TOKEN       = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID         = os.getenv("TELEGRAM_CHAT_ID", "")
 
+# Dynamic leverage config — conviction-based multipliers
+LEVERAGE_CONFIG = {
+    "base_max_leverage": 10,          # absolute cap
+    "atr_lookback": 100,             # candles for percentile calc
+    "fractional_kelly": 0.25,        # 1/4 Kelly as base risk fraction
+    "confidence_mult_min": 0.25,     # floor
+    "confidence_mult_max": 1.5,      # ceiling
+}
+
 
 # ---------------------------------------------------------------------------
 # Caching helpers

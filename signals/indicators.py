@@ -143,3 +143,12 @@ def detect_support_resistance(df, lookback=50, tolerance=0.005):
         result['support'] = support_levels[-1]
 
     return result
+
+
+def compute_atr_percentile(df, lookback=100):
+    """ATR percentile over lookback. 1.0 = extreme high vol, 0.0 = extreme low."""
+    if 'ATR_14' not in df.columns or len(df) < lookback:
+        return 0.5
+    current = df['ATR_14'].iloc[-1]
+    history = df['ATR_14'].iloc[-lookback:-1]
+    return (history < current).sum() / len(history)
