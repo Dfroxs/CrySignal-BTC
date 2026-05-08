@@ -621,7 +621,7 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
             if mode == "spot" and dir_str == "BEARISH":
                 # Spot can't short — sell score is irrelevant for firing
                 lines.append(
-                    f"⏸ <b>{label}</b>  ·  HOLD  ·  "
+                    f"❄️ <b>{label}</b>  ·  HOLD  ·  "
                     f"<code>{score:.2f}/{mscore:.2f}</code>  ·  "
                     f"BEARISH · BUY-only → HOLD"
                 )
@@ -631,7 +631,7 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
                 ]
             else:
                 lines.append(
-                    f"⏸ <b>{label}</b>  ·  HOLD  ·  "
+                    f"❄️ <b>{label}</b>  ·  HOLD  ·  "
                     f"<code>{score:.2f}/{mscore:.2f}</code>  ·  "
                     f"gap <b>{gap:.2f}</b> to fire"
                 )
@@ -646,7 +646,7 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
         else:
             icon = "🟢" if stype == "BUY" else "🔴"
             lines.append(
-                f"{icon} <b>{label}</b>  ·  {stype} FIRED  ·  "
+                f"{icon} <b>{label}</b>  ·  {stype} 🔥  ·  "
                 f"<code>{score:.2f}/{mscore:.2f}</code>  ·  "
                 f"≥ thr <b>{threshold:.2f}</b>"
             )
