@@ -1,11 +1,9 @@
-"""Shared helpers and public API dispatcher for Telegram + Discord notifications."""
+"""Shared helpers and public API dispatcher for Telegram notifications."""
 
 import logging
 from datetime import datetime
 
-from trading import history as _sh
 from config import (
-    DISCORD_WEBHOOK_URL,
     HTTP_SESSION,
     SIGNAL_MAX_SCORE,
     SPOT_MAX_SCORE,
@@ -71,33 +69,25 @@ def _send_telegram_message(text, label="alert"):
 
 
 def send_signal_alert(spot_signal=None, futures_signal=None, symbol="BTC/USDT"):
-    """Send combined SPOT + FUTURES alert to all configured channels."""
+    """Send combined SPOT + FUTURES alert to Telegram."""
     from notifier.telegram import _format_compact_signal_telegram, _send_combined_telegram
-    from notifier.discord import _send_combined_discord, send_discord_alert
 
     # Backward compat: positional single-signal call
     if futures_signal is None and spot_signal is not None and isinstance(spot_signal, dict):
         if "mode" not in spot_signal:
-            single = spot_signal
-            text = _format_compact_signal_telegram(single)
+            text = _format_compact_signal_telegram(spot_signal)
             _send_telegram_message(text, "signal")
-            send_discord_alert(single, symbol)
             return
 
     has_spot = spot_signal is not None
     has_futures = futures_signal is not None
-    spot_active = has_spot and spot_signal is not None
-    futures_active = has_futures and futures_signal is not None
 
-    if not spot_active and not futures_active:
+    if not has_spot and not has_futures:
         return
 
     if has_spot and has_futures:
         _send_combined_telegram(spot_signal, futures_signal, symbol)
-        _send_combined_discord(spot_signal, futures_signal, symbol)
-    elif spot_active:
+    elif has_spot:
         _send_telegram_message(_format_compact_signal_telegram(spot_signal), "spot-signal")
-        send_discord_alert(spot_signal, symbol)
-    elif futures_active:
+    else:
         _send_telegram_message(_format_compact_signal_telegram(futures_signal), "futures-signal")
-        send_discord_alert(futures_signal, symbol)

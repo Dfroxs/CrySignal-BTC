@@ -438,28 +438,22 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
         total_trades = spot_cnt + fut_cnt
 
         if total_trades > 0:
-            lines.append("<b>━━━ 📉 PERFORMANCE (all-time) ━━━</b>")
-            if spot_cnt > 0:
-                lines.append(f"SPOT     {spot_cnt} trades  <b>{spot_pnl:+.2f}%</b>")
-            if fut_cnt > 0:
-                lines.append(f"FUTURES  {fut_cnt} trades  <b>{fut_pnl:+.2f}%</b>")
-            if spot_cnt > 0 and fut_cnt > 0:
-                lines.append(f"Total    {total_trades} trades  <b>{spot_pnl + fut_pnl:+.2f}%</b>")
+            # Per-mode breakdown
+            sp_bd = _sh.get_outcome_breakdown("spot") if spot_cnt > 0 else {}
+            fu_bd = _sh.get_outcome_breakdown("futures") if fu_cnt > 0 else {}
+            sp_w = sp_bd.get("WIN", 0); sp_l = sp_bd.get("LOSS", 0)
+            fu_w = fu_bd.get("WIN", 0); fu_l = fu_bd.get("LOSS", 0)
 
-            bd = _sh.get_outcome_breakdown()
-            w  = bd.get("WIN", 0)
-            l  = bd.get("LOSS", 0)
-            mc = bd.get("MACRO_CLOSE", 0)
-            be = bd.get("BREAKEVEN", 0)
-            wr_str = f"WR {w/(w+l)*100:.0f}%" if (w + l) > 0 else ""
-            parts = [f"{w}W", f"{l}L"]
-            if mc:
-                parts.append(f"{mc}MC")
-            if be:
-                parts.append(f"{be}BE")
-            parts.append(wr_str) if wr_str else None
-            lines.append(" · ".join(parts))
-            lines.append("")
+            if spot_cnt > 0:
+                sp_wr = f"WR {sp_w/(sp_w+sp_l)*100:.0f}%" if (sp_w + sp_l) > 0 else ""
+                lines.append(f"SPOT     {spot_cnt} trades  {sp_w}W {sp_l}L {sp_wr}  <b>{spot_pnl:+.2f}%</b>")
+            if fut_cnt > 0:
+                fu_wr = f"WR {fu_w/(fu_w+fu_l)*100:.0f}%" if (fu_w + fu_l) > 0 else ""
+                lines.append(f"FUTURES  {fut_cnt} trades  {fu_w}W {fu_l}L {fu_wr}  <b>{fut_pnl:+.2f}%</b>")
+            if spot_cnt > 0 and fut_cnt > 0:
+                total_pnl = spot_pnl + fut_pnl
+                tot_col = "+" if total_pnl >= 0 else ""
+                lines.append(f"Total    {total_trades} trades  {sp_w+fu_w}W {sp_l+fu_l}L  <b>{tot_col}{total_pnl:.2f}%</b>")
     except Exception:
         pass
 

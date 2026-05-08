@@ -265,7 +265,7 @@ def print_open_status(mode=None):
 
     total, count, avg = sh.get_closed_pnl(mode)
     if count > 0:
-        bd = sh.get_outcome_breakdown()
+        bd = sh.get_outcome_breakdown(mode)
         w = bd.get("WIN", 0)
         l = bd.get("LOSS", 0)
         m = bd.get("MACRO_CLOSE", 0)
