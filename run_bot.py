@@ -67,7 +67,8 @@ def run_cycle():
 
     # Phase 3 — paper trading
     logger.info("[PHASE 3] Updating paper positions ...")
-    phase3_actions = []  # track what happened for summary
+    phase3_actions = []     # track what happened for summary
+    pending_tg    = []      # defer Telegram notifications until after Phase 4
     try:
         # Spot positions — BUY-only (no short selling on spot)
         if spot_signal and spot_signal["type"] != "HOLD":
@@ -85,7 +86,7 @@ def run_cycle():
                 msg = f"SPOT {spot_signal['type']} opened (#{pid}) @ ${spot_signal['entry_price']:,.0f}"
                 logger.info(msg)
                 phase3_actions.append(f"🚀 {msg}")
-                _send_telegram_message(_format_open_notification(spot_signal, pid, "spot"), "position-open")
+                pending_tg.append((_format_open_notification(spot_signal, pid, "spot"), "position-open"))
 
         # Futures positions — close-and-flip on opposite signal
         if futures_signal and futures_signal["type"] != "HOLD":
@@ -109,7 +110,7 @@ def run_cycle():
                 msg = f"FUT {futures_signal['type']} opened (#{pid}) @ ${futures_signal['entry_price']:,.0f}"
                 logger.info(msg)
                 phase3_actions.append(f"🚀 {msg}")
-                _send_telegram_message(_format_open_notification(futures_signal, pid, "futures"), "position-open")
+                pending_tg.append((_format_open_notification(futures_signal, pid, "futures"), "position-open"))
             elif has_open_position_same_direction(futures_signal["type"], "futures"):
                 msg = f"Already have open {futures_signal['type']} futures — skipping"
                 logger.info(msg)
@@ -119,7 +120,7 @@ def run_cycle():
                 msg = f"FUT {futures_signal['type']} opened (#{pid}) @ ${futures_signal['entry_price']:,.0f}"
                 logger.info(msg)
                 phase3_actions.append(f"🚀 {msg}")
-                _send_telegram_message(_format_open_notification(futures_signal, pid, "futures"), "position-open")
+                pending_tg.append((_format_open_notification(futures_signal, pid, "futures"), "position-open"))
 
         # Determine current price for position checks
         if futures_signal and futures_signal.get("entry_price"):
@@ -147,17 +148,21 @@ def run_cycle():
             for action in phase3_actions:
                 print(f"  {action}")
 
-        # Send close notification if any positions closed this cycle
+        # Collect close notification (defer to after Phase 4)
         if all_closed:
             close_msg = _format_close_notification(all_closed)
             if close_msg:
-                _send_telegram_message(close_msg, "position-close")
+                pending_tg.append((close_msg, "position-close"))
 
     except Exception as e:
         logger.error("Paper trading update failed: %s", e)
 
-    # Phase 4 — notify
+    # Phase 4 — main signal alert FIRST
     send_signal_alert(spot_signal=spot_signal, futures_signal=futures_signal)
+
+    # Then position open/close/warning
+    for msg, label in pending_tg:
+        _send_telegram_message(msg, label)
 
 
 # ---------------------------------------------------------------------------
