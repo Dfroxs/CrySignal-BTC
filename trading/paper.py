@@ -239,29 +239,33 @@ def print_open_status(mode=None):
     if not positions:
         return
 
-    mode_str = f" [{mode.upper()}]" if mode else ""
-    print(f"\n📝 PAPER POSITIONS (open{mode_str}):")
+    mode_str = f" ({mode.upper()})" if mode else ""
+    print(f"\n  {'─' * 40}")
+    print(f"  OPEN POSITIONS{mode_str}")
+    print(f"  {'─' * 40}")
     for pos in positions:
-        icon    = "\U0001f7e2" if pos["type"] == "BUY" else "\U0001f534"
+        icon    = "🟢" if pos["type"] == "BUY" else "🔴"
+        pid     = pos["id"]
         entry   = pos["entry_price"]
+        sl      = pos["stop_loss"]
         trail   = pos.get("trailing_stop") or pos["stop_loss"]
         tp1     = pos.get("tp1") or pos["take_profit"]
         tp2     = pos.get("tp2")
         partial = pos.get("partial_closed", 0)
-        tag     = " [½ taken]" if partial else ""
+        tag     = "  [½ taken]" if partial else ""
         opened  = pos.get("opened_at", "")[:16]
 
-        tp2_str = f" | TP2: ${tp2:,.2f}" if tp2 else ""
-        print(
-            f"   {icon} {pos['type']}{tag} | Entry: ${entry:,.2f} "
-            f"| Trail: ${trail:,.2f} | TP1: ${tp1:,.2f}{tp2_str} "
-            f"| Opened: {opened}"
-        )
+        print(f"  {icon} {pos['type']}{tag}  #{pid}  @ ${entry:,.0f}")
+        parts = [f"SL ${sl:,.0f}", f"TP1 ${tp1:,.0f}"]
+        if tp2:
+            parts.append(f"TP2 ${tp2:,.0f}")
+        parts.append(f"Trail ${trail:,.0f}")
+        parts.append(f"Opened {opened}")
+        print(f"     " + "  ·  ".join(parts))
 
     total, count, avg = sh.get_closed_pnl(mode)
     if count > 0:
         bd = sh.get_outcome_breakdown()
-        # Filter to this mode (outcome_breakdown is global — approximate)
         w = bd.get("WIN", 0)
         l = bd.get("LOSS", 0)
         m = bd.get("MACRO_CLOSE", 0)
@@ -271,12 +275,10 @@ def print_open_status(mode=None):
         if l: parts.append(f"{l}L")
         if m: parts.append(f"{m}MC")
         if be: parts.append(f"{be}BE")
-        outcome_str = " · ".join(parts) if parts else ""
-        wr_str = f"  WR: {w/(w+l)*100:.0f}%" if (w + l) > 0 else ""
-        print(
-            f"   Closed: {count} trades ({outcome_str}{wr_str}) | "
-            f"Net P&L: {total:+.2f}% | Avg: {avg:+.2f}%"
-        )
+        outcome_str = "  ".join(parts) if parts else ""
+        wr_str = f"  WR {w/(w+l)*100:.0f}%" if (w + l) > 0 else ""
+        pnl_col = "+" if total >= 0 else ""
+        print(f"  Closed: {count} trades  {outcome_str}{wr_str}  |  P&L {pnl_col}{total:.2f}%  Avg {avg:+.2f}%")
 
 
 def print_paper_summary(mode=None):
