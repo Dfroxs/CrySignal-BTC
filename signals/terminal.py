@@ -557,3 +557,403 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
             print(f"  {_C['gry']}·{_C['rst']} {_C['bld']}{label}{_C['rst']} — {_C['gry']}{explanation}{_C['rst']}")
 
     print()
+
+
+# ---------------------------------------------------------------------------
+# Combined SPOT + FUTURES display (single-page, no duplication)
+# ---------------------------------------------------------------------------
+
+def _sig_line(signal, mode):
+    """Return (box_line, detail_line) for one signal — used in combined display."""
+    stype     = signal["type"]
+    buy_s     = signal.get("buy_score", 0)
+    sell_s    = signal.get("sell_score", 0)
+    score     = signal.get("strength", 0)
+    conf      = signal.get("confidence", "")
+    reasons_n = len(signal.get("reasons", []))
+    max_score = SPOT_MAX_SCORE if mode == "spot" else SIGNAL_MAX_SCORE
+    threshold = signal.get("_threshold", 0)
+    label     = "SPOT 4H" if mode == "spot" else "FUT 1H"
+
+    if stype == "HOLD":
+        if buy_s > sell_s:
+            dir_str, lead = "BUY", buy_s
+        elif sell_s > buy_s:
+            dir_str = "BEARISH" if mode == "spot" else "SELL"
+            lead = sell_s
+        else:
+            dir_str, lead = "NEUTRAL", max(buy_s, sell_s)
+        gap = threshold - lead
+
+        if mode == "spot" and dir_str == "BEARISH":
+            box = (f"  ❄️ {_C['yel']}{_C['bld']}{label}  HOLD{_C['rst']}     "
+                   f"Score {_C['bld']}{score:.2f}/{max_score}{_C['rst']}  "
+                   f"B:{_C['grn']}{buy_s:.2f}{_C['rst']} S:{_C['red']}{sell_s:.2f}{_C['rst']}  "
+                   f"{_C['red']}BEARISH · BUY-only → HOLD{_C['rst']}")
+            detail = (f"       B:{_C['grn']}{buy_s:.2f}{_C['rst']}  ·  S:{_C['red']}{sell_s:.2f}{_C['rst']}"
+                      f"  ·  BUY-only → HOLD")
+        else:
+            box = (f"  ❄️ {_C['yel']}{_C['bld']}{label}  HOLD{_C['rst']}     "
+                   f"Score {_C['bld']}{score:.2f}/{max_score}{_C['rst']}  "
+                   f"B:{_C['grn']}{buy_s:.2f}{_C['rst']} S:{_C['red']}{sell_s:.2f}{_C['rst']}  "
+                   f"gap {_C['yel']}{gap:.2f}{_C['rst']} to fire")
+            detail = f"       B:{_C['grn']}{buy_s:.2f}{_C['rst']}  ·  S:{_C['red']}{sell_s:.2f}{_C['rst']}"
+            if dir_str == "NEUTRAL":
+                detail += "  ·  NEUTRAL"
+            elif gap <= 0:
+                detail += f"  ·  {_C['yel']}{dir_str} leads · gap 0.00 READY{_C['rst']}"
+            else:
+                detail += f"  ·  {dir_str} leads"
+    else:
+        icon = "🟢" if stype == "BUY" else "🔴"
+        c1   = "grn" if stype == "BUY" else "red"
+        box = (f"  {icon} {_C[c1]}{_C['bld']}{label}  {stype} 🔥{_C['rst']}  "
+               f"Score {_C['bld']}{score:.2f}/{max_score}{_C['rst']}  "
+               f"B:{_C['grn']}{buy_s:.2f}{_C['rst']} S:{_C['red']}{sell_s:.2f}{_C['rst']}  "
+               f"≥ thr {_C['dim']}{threshold:.2f}{_C['rst']}")
+        detail = (f"       B:{_C['grn']}{buy_s:.2f}{_C['rst']}  ·  "
+                  f"S:{_C['red']}{sell_s:.2f}{_C['rst']}")
+        if reasons_n:
+            detail += f"  ·  {reasons_n} reasons"
+        if conf:
+            detail += f"  ·  {conf} conf"
+
+    return box, detail
+
+
+def display_combined(spot_signal, futures_signal):
+    """Single combined terminal display — shared sections once, mode-specific compact."""
+    import trading.history as _sh
+
+    primary = futures_signal or spot_signal
+    if not primary:
+        return
+    mkt  = primary.get("_market", {}) or {}
+    news = primary.get("_news_data") or {}
+
+    sep = f"  {'─' * (_M - 6)}"
+
+    # HEADER
+    print(f"\n{_C['dim']}╭{'─' * (_M - 2)}╮{_C['rst']}")
+    time_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    print(f"{_C['dim']}│{_C['rst']} {_C['bld']}{_C['wht']}{'CrySignal · BTC/USDT':^{_M - 4}}{_C['dim']} │{_C['rst']}")
+    print(f"{_C['dim']}│{_C['rst']} {_C['gry']}{time_str:^{_M - 4}}{_C['dim']} │{_C['rst']}")
+    print(f"{_C['dim']}│{_C['rst']} {_C['gry']}{'hobby · study · experiment — not financial advice':^{_M - 4}}{_C['dim']} │{_C['rst']}")
+    print(f"{_C['dim']}╰{'─' * (_M - 2)}╯{_C['rst']}")
+
+    # COMBINED SIGNAL BOX
+    box_lines = []
+    for sig, mode in [(spot_signal, "spot"), (futures_signal, "futures")]:
+        if sig:
+            box_line, _ = _sig_line(sig, mode)
+            box_lines.append(box_line)
+
+    if box_lines:
+        print(f"╭{'─' * (_M - 2)}╮")
+        for bl in box_lines:
+            print(f"│{bl:<{_M}}│")
+        print(f"╰{'─' * (_M - 2)}╯")
+
+    # MARKET STRUCTURE (shared)
+    if mkt:
+        print()
+        print(f"  {_C['bld']}MARKET STRUCTURE{_C['rst']}")
+        print(sep)
+
+        funding  = mkt.get("funding", {})
+        ls       = mkt.get("long_short", {})
+        oi       = mkt.get("open_interest", {})
+        dxy      = mkt.get("dxy", {})
+        sp500    = mkt.get("sp500", {})
+        btcdom   = mkt.get("btc_dom", {})
+        stable   = mkt.get("stablecoin", {})
+
+        row1 = []
+        if funding:
+            fp = funding.get("rate_pct", 0)
+            fi = _bias_icon(funding.get("bias", ""))
+            row1.append(f"Funding {_C['bld']}{fp:+.5f}%{_C['rst']} {fi}")
+        if ls:
+            lr = ls.get("ratio", 1)
+            li = _bias_icon(ls.get("bias", ""))
+            row1.append(f"L/S {_C['bld']}{lr:.2f}{_C['rst']} {li}")
+        if oi.get("notional"):
+            ov = oi["notional"] / 1e9
+            oi_dir = _bias_icon(oi.get("bias", ""))
+            row1.append(f"OI {_C['bld']}${ov:.2f}B{_C['rst']} {oi_dir}")
+        basis_pct = funding.get("basis_pct", 0)
+        if basis_pct:
+            row1.append(f"Basis {_C['bld']}{basis_pct:+.4f}%{_C['rst']}")
+        if row1:
+            print("  " + "  ·  ".join(row1))
+
+        row2 = []
+        if dxy.get("current"):
+            row2.append(f"DXY {_C['bld']}{dxy['current']:.3f}{_C['rst']} ({dxy['change_pct']:+.2f}%)")
+        if sp500.get("current"):
+            sp_dir = _bias_icon(sp500.get("bias", ""))
+            row2.append(f"S&P {_C['bld']}{sp500['current']:,.0f}{_C['rst']} ({sp500['change_pct']:+.2f}%) {sp_dir}")
+        if btcdom.get("current"):
+            bd_dir = _bias_icon(btcdom.get("bias", ""))
+            row2.append(f"BTC.D {_C['bld']}{btcdom['current']:.1f}%{_C['rst']} {bd_dir}")
+        if stable.get("total_b"):
+            st_dir = _bias_icon(stable.get("bias", ""))
+            row2.append(f"Stable {_C['bld']}${stable['total_b']:.0f}B{_C['rst']} {st_dir}")
+        if row2:
+            print("  " + "  ·  ".join(row2))
+
+    # PRICE & TREND (per mode)
+    print()
+    print(f"  {_C['bld']}PRICE & TREND{_C['rst']}")
+    print(sep)
+
+    for sig, mode in [(spot_signal, "spot"), (futures_signal, "futures")]:
+        if not sig:
+            continue
+        last = sig.get("_last", {})
+        if not last:
+            continue
+        label  = "SPOT 4H" if mode == "spot" else "FUT 1H"
+        price  = sig.get("entry_price", last.get("close", 0))
+        ema200 = last.get("ema200", 0)
+        tr_icon = f"{_C['grn']}▲ BULLISH{_C['rst']}" if price > ema200 else f"{_C['red']}▼ BEARISH{_C['rst']}"
+        hi24 = last.get("hi24", 0)
+        lo24 = last.get("lo24", 0)
+        sr = sig.get("support_resistance", {})
+
+        line = (f"  {_C['bld']}{label:>10}{_C['rst']}  "
+                f"${price:,.0f}  "
+                f"EMA200 ${ema200:,.0f} {tr_icon}  "
+                f"24h H:${hi24:,.0f} L:${lo24:,.0f}")
+        if sr.get("resistance"):
+            line += f"  R:${sr['resistance']:,.0f}"
+        if sr.get("support"):
+            line += f"  S:${sr['support']:,.0f}"
+        print(line)
+
+    # TECHNICALS (side-by-side)
+    print()
+    print(f"  {_C['bld']}TECHNICALS{_C['rst']}")
+    print(sep)
+    print(f"  {'':>10}  {'RSI':>8}  {'MACD':>10}  {'StochRSI':>10}  {'VWAP':>10}  {'ATR':>8}  {'OBV':>8}")
+
+    for sig, mode in [(spot_signal, "spot"), (futures_signal, "futures")]:
+        if not sig:
+            continue
+        last = sig.get("_last", {})
+        if not last:
+            continue
+        label  = "SPOT 4H" if mode == "spot" else "FUT 1H"
+        price  = sig.get("entry_price", last.get("close", 0))
+        rsi    = last.get("rsi", 0)
+        macd   = last.get("macd", 0)
+        msig   = last.get("macd_sig", 0)
+        sk     = last.get("stoch_k")
+        sd     = last.get("stoch_d")
+        vwap   = last.get("vwap")
+        atr    = last.get("atr", 0)
+        obv    = last.get("obv_slope", 0)
+
+        rsi_tag = f" {_C['red']}OB{_C['rst']}" if rsi > 70 else (f" {_C['grn']}OS{_C['rst']}" if rsi < 30 else "")
+        rsi_str = f"{rsi:.1f}{rsi_tag}"
+        macd_dir = f"{_C['grn']}▲{_C['rst']}" if macd > msig else f"{_C['red']}▼{_C['rst']}"
+        macd_str = f"{macd:+.0f} {macd_dir}"
+        if sk is not None:
+            import pandas as pd
+            if not pd.isna(sk):
+                sk_tag = f" {_C['red']}OB{_C['rst']}" if sk > 80 else (f" {_C['grn']}OS{_C['rst']}" if sk < 20 else "")
+                stoch_str = f"{sk:.0f}/{sd:.0f}{sk_tag}" if sd is not None else f"{sk:.0f}{sk_tag}"
+            else:
+                stoch_str = "—"
+        else:
+            stoch_str = "—"
+        if vwap:
+            vw_dir = f"{_C['grn']}▲{_C['rst']}" if price > vwap else f"{_C['red']}▼{_C['rst']}"
+            vwap_str = f"${vwap:,.0f}{vw_dir}"
+        else:
+            vwap_str = "—"
+        atr_str = f"${atr:,.0f}"
+        obv_dir = f"{_C['grn']}▲{_C['rst']}" if obv > 0 else f"{_C['red']}▼{_C['rst']}"
+        obv_str = f"{obv:+,.0f}{obv_dir}"
+
+        print(f"  {_C['bld']}{label:>10}{_C['rst']}  "
+              f"{rsi_str:>12}  {macd_str:>10}  {stoch_str:>10}  {vwap_str:>10}  {atr_str:>8}  {obv_str:>8}")
+
+    for sig, mode in [(spot_signal, "spot"), (futures_signal, "futures")]:
+        if not sig:
+            continue
+        div = sig.get("rsi_divergence", "")
+        if div and str(div).strip() not in ("", "NONE", "─"):
+            label = "SPOT 4H" if mode == "spot" else "FUT 1H"
+            div_str = {"BULLISH": f"{_C['grn']}▲ BULL{_C['rst']}", "BEARISH": f"{_C['red']}▼ BEAR{_C['rst']}"}.get(str(div), str(div))
+            print(f"  {_C['bld']}{label:>10}{_C['rst']}  RSI Div: {div_str}")
+
+    # HTF (per mode)
+    htf_any = any(sig and sig.get("_htf") for sig in [spot_signal, futures_signal])
+    if htf_any:
+        print()
+        print(f"  {_C['bld']}HTF{_C['rst']}")
+        print(sep)
+
+        for sig, mode in [(spot_signal, "spot"), (futures_signal, "futures")]:
+            if not sig:
+                continue
+            htf = sig.get("_htf", {})
+            if not htf:
+                continue
+            label = "SPOT" if mode == "spot" else "FUTURES"
+            tf_order = ["1d", "1w"] if mode == "spot" else ["4h", "1d"]
+            parts = []
+            for tf in tf_order:
+                if tf not in htf:
+                    continue
+                trend = htf[tf]
+                tc = "grn" if trend == "BULLISH" else ("red" if trend == "BEARISH" else "dim")
+                parts.append(f"{tf.upper()} {_C[tc]}{trend}{_C['rst']}")
+            aligned = f"{_C['grn']}✓ ALIGNED{_C['rst']}" if htf.get("aligned") else f"{_C['red']}✗ DIVERGING{_C['rst']}"
+            parts.append(aligned)
+            print(f"  {_C['bld']}{label:<10}{_C['rst']}  " + "  ".join(parts))
+
+    # VERDICT per mode + trade setup + reasons
+    for sig, mode in [(spot_signal, "spot"), (futures_signal, "futures")]:
+        if not sig:
+            continue
+        label = "SPOT 4H" if mode == "spot" else "FUTURES 1H"
+        is_active = sig["type"] != "HOLD" and sig.get("stop_loss")
+        last = sig.get("_last", {})
+        entry_px = sig.get("entry_price", last.get("close", 0))
+        atr = last.get("atr", 0)
+        buy_s = sig.get("buy_score", 0)
+        sell_s = sig.get("sell_score", 0)
+        direction = "BUY" if buy_s > sell_s else ("SELL" if sell_s > buy_s else "neutral")
+
+        print()
+        print(f"  {_C['bld']}{label}{_C['rst']}")
+        print(sep)
+        box_line, detail = _sig_line(sig, mode)
+        print(box_line)
+        print(detail)
+
+        trade_lines = []
+        if is_active:
+            sl = sig["stop_loss"]
+            tp = sig["take_profit"]
+            tp2 = sig.get("tp2")
+            sl_pct = abs(entry_px - sl) / entry_px * 100
+            tp_pct = abs(tp - entry_px) / entry_px * 100
+            rr = tp_pct / sl_pct if sl_pct > 0 else 0
+            trade_lines.append(f"SL ${sl:,.0f} ({sl_pct:.2f}%)  ·  TP1 ${tp:,.0f} (+{tp_pct:.2f}%)")
+            if tp2:
+                tp2_pct = abs(tp2 - entry_px) / entry_px * 100
+                trade_lines.append(f"TP2 ${tp2:,.0f} (+{tp2_pct:.2f}%)  ·  R/R 1:{rr:.2f}")
+            else:
+                trade_lines.append(f"R/R 1:{rr:.2f}")
+
+            if mode == "spot":
+                pos = calculate_position_size(sig)
+                trade_lines.append(f"Position ${pos['usdt_amount']:,.0f} ({pos['position_ratio']:.1f}%)  ·  Max Risk ${pos['risk_amount']:,.0f}")
+            else:
+                fut = calculate_futures_position(sig)
+                if fut:
+                    trade_lines.append(f"{fut['leverage']}x [{fut['tier']}]  Margin ${fut['margin']:,.0f}  Liq ${fut['liquidation_price']:,.0f}  Risk ${fut['risk_amount']:,.0f}")
+        else:
+            if atr > 0 and direction != "neutral":
+                sl_dist = atr * RISK_CONFIG["atr_multiplier"]
+                tp_dist = sl_dist * RISK_CONFIG["take_profit_rr"]
+                if direction == "BUY":
+                    hypo_sl = entry_px - sl_dist
+                    hypo_tp = entry_px + tp_dist
+                else:
+                    hypo_sl = entry_px + sl_dist
+                    hypo_tp = entry_px - tp_dist
+                trade_lines.append(f"{_C['gry']}If fired: SL ~${hypo_sl:,.0f}  TP ~${hypo_tp:,.0f}  R/R 1:{RISK_CONFIG['take_profit_rr']:.1f}{_C['rst']}")
+            else:
+                trade_lines.append(f"{_C['gry']}No active trade{_C['rst']}")
+
+        for tl in trade_lines:
+            print(f"       {tl}")
+
+        reasons = sig.get("reasons", [])
+        if reasons:
+            buy_reasons = [r for r in reasons if r.startswith("✓")]
+            neg_reasons = [r for r in reasons if r.startswith("✗")]
+            max_show = 6
+            shown = []
+            for r in buy_reasons[:max_show]:
+                stripped = r[2:].strip()
+                shown.append(f"{_C['grn']}✓{_C['rst']} {stripped}")
+            for r in neg_reasons[:max(0, max_show - len(shown))]:
+                stripped = r[2:].strip()
+                shown.append(f"{_C['red']}✗{_C['rst']} {stripped}")
+            if len(reasons) > max_show:
+                shown.append(f"{_C['dim']}+{len(reasons) - max_show} more{_C['rst']}")
+            if shown:
+                print(f"       " + "  ".join(shown))
+
+    # SENTIMENT (shared)
+    if news:
+        print()
+        print(f"  {_C['bld']}SENTIMENT{_C['rst']}")
+        print(sep)
+
+        if news.get("fear_greed"):
+            fng = news["fear_greed"]
+            val = fng["value"]
+            bar_f = min(val // 10, 10)
+            bar = f"{_C['grn']}{'█' * bar_f}{_C['gry']}{'░' * (10 - bar_f)}{_C['rst']}"
+            _kv("F&G Index", f"[{bar}] {val}/100  {fng.get('label','')}")
+
+        primary_sig = futures_signal or spot_signal
+        sent = primary_sig.get("news_sentiment", "NEUTRAL")
+        conf_n = primary_sig.get("news_confidence", 0)
+        sent_col = "grn" if sent == "BULLISH" else ("red" if sent == "BEARISH" else "dim")
+        _kv("Sentiment", f"{_C[sent_col]}{sent}{_C['rst']}  ({conf_n:.0f}% confidence)")
+        sources = ", ".join(news.get("sources_checked", []))
+        _kv("Sources", f"{_C['dim']}{sources[:70]}{_C['rst']}")
+
+        headlines = news.get("headlines", [])
+        if headlines:
+            print()
+            print(f"  {_C['bld']}TOP HEADLINES{_C['rst']}")
+            print(sep)
+            for i, h in enumerate(headlines[:5], 1):
+                icon = f"{_C['grn']}▲{_C['rst']}" if h["sentiment"] > 0 else (f"{_C['red']}▼{_C['rst']}" if h["sentiment"] < 0 else "─")
+                cat = "G" if h.get("category") == "geopolitical" else "C"
+                print(f"  {i}. {cat} {icon} {h['title'][:75]}")
+
+    # PERFORMANCE (shared)
+    try:
+        spot_pnl, sp_cnt, _ = _sh.get_closed_pnl("spot")
+        fut_pnl, fu_cnt, _  = _sh.get_closed_pnl("futures")
+        total_trades = sp_cnt + fu_cnt
+        if total_trades > 0:
+            print()
+            print(f"  {_C['bld']}PERFORMANCE{_C['rst']} (all-time)")
+            print(sep)
+
+            bd = _sh.get_outcome_breakdown()
+            w = bd.get("WIN", 0)
+            l = bd.get("LOSS", 0)
+            mc = bd.get("MACRO_CLOSE", 0)
+            be = bd.get("BREAKEVEN", 0)
+            wr_str = f"WR {w/(w+l)*100:.0f}%" if (w + l) > 0 else ""
+            parts = [f"{w}W", f"{l}L"]
+            if mc: parts.append(f"{mc}MC")
+            if be: parts.append(f"{be}BE")
+            if wr_str: parts.append(wr_str)
+            summary = "  ".join(parts)
+
+            if sp_cnt > 0:
+                sp_col = "grn" if spot_pnl > 0 else "red"
+                print(f"  SPOT     {sp_cnt} trades  {summary}  P&L {_C[sp_col]}{spot_pnl:+.2f}%{_C['rst']}")
+            if fu_cnt > 0:
+                fu_col = "grn" if fut_pnl > 0 else "red"
+                print(f"  FUTURES  {fu_cnt} trades  {summary}  P&L {_C[fu_col]}{fut_pnl:+.2f}%{_C['rst']}")
+            if sp_cnt > 0 and fu_cnt > 0:
+                total_pnl = spot_pnl + fut_pnl
+                tot_col = "grn" if total_pnl > 0 else "red"
+                print(f"  Total    {total_trades} trades  P&L {_C[tot_col]}{total_pnl:+.2f}%{_C['rst']}")
+    except Exception:
+        pass
+
+    print()

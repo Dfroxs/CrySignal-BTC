@@ -26,7 +26,7 @@ from signals.terminal import display_analysis
 logger = logging.getLogger(__name__)
 
 
-def analyze_futures_signal(symbol='BTC/USDT', include_news=True):
+def analyze_futures_signal(symbol='BTC/USDT', include_news=True, display=False):
     """Full 1H futures pipeline: 18 conditions including funding/L/S/OI/basis."""
     logger.info("[FUTURES] Analyzing %s (1H)...", symbol)
     try:
@@ -68,7 +68,8 @@ def analyze_futures_signal(symbol='BTC/USDT', include_news=True):
             news_data = get_combined_sentiment(fng=fng)
             signal = integrate_news_with_signal(signal, news_data)
 
-        display_analysis(df, signal, news_data, htf, market_structure, timeframe='1H', mode='futures')
+        if display:
+            display_analysis(df, signal, news_data, htf, market_structure, timeframe='1H', mode='futures')
         signal['db_id'] = log_signal(signal, df, htf)
         update_threshold_state(signal['type'])
 

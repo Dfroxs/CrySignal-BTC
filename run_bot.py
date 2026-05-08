@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 
 from signals.spot import analyze_spot_signal
 from signals.futures import analyze_futures_signal
+from signals.terminal import display_combined
 from news_scraper import scrape_and_export
 from notifier import _format_close_notification, _format_open_notification, _send_telegram_message, send_signal_alert
 from trading.paper import check_and_close_positions, print_open_status, print_paper_summary
@@ -60,6 +61,9 @@ def run_cycle():
         futures_signal = analyze_futures_signal(symbol="BTC/USDT", include_news=True)
     except Exception as e:
         logger.error("Futures analysis failed: %s", e)
+
+    # Combined terminal display (once, not per-mode)
+    display_combined(spot_signal, futures_signal)
 
     # Phase 3 — paper trading
     logger.info("[PHASE 3] Updating paper positions ...")
