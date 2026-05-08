@@ -264,6 +264,35 @@ def _format_close_notification(closed):
 
     return "\n".join(lines)
 
+
+def _format_open_notification(signal, pos_id, mode):
+    """Dedicated 'Position Opened' Telegram card — separate from main signal."""
+    stype     = signal["type"]
+    entry     = signal["entry_price"]
+    sl        = signal["stop_loss"]
+    tp1       = signal["take_profit"]
+    tp2       = signal.get("tp2")
+    sl_pct    = abs(entry - sl) / entry * 100
+    tp1_pct   = abs(tp1 - entry) / entry * 100
+    rr        = tp1_pct / sl_pct if sl_pct > 0 else 0
+
+    icon  = "🟢" if stype == "BUY" else "🔴"
+    label = "SPOT" if mode == "spot" else "FUTURES"
+
+    lines = [
+        f"🚀 <b>Position Opened — {label}</b>",
+        f"{icon} <b>{stype}</b> @ <code>${entry:,.0f}</code>  ·  #{pos_id}",
+        f"SL      <code>${sl:,.0f}</code>  (<code>-{sl_pct:.2f}%</code>)",
+        f"TP1     <code>${tp1:,.0f}</code>  (<code>+{tp1_pct:.2f}%</code>)",
+    ]
+    if tp2:
+        tp2_pct = abs(tp2 - entry) / entry * 100
+        lines.append(f"TP2     <code>${tp2:,.0f}</code>  (<code>+{tp2_pct:.2f}%</code>)")
+    lines.append(f"R/R     <b>1:{rr:.2f}</b>")
+
+    return "\n".join(lines)
+
+
 def _format_consolidated_telegram(spot_signal, futures_signal):
     """Single consolidated message — all sections in one clean vertical card."""
     lines = []
@@ -564,16 +593,20 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
         lines.append("")
 
     # ── NOTE ───────────────────────────────────────────────────
-    lines.append("<b>━━━ 📝 NOTE ━━━</b>")
+    lines.append("<b>━━━ 📝 VERDICT ━━━</b>")
     for sig in [spot_signal, futures_signal]:
         if not sig:
             continue
-        mode   = sig.get("mode", "futures")
-        stype  = sig["type"]
-        label  = "SPOT" if mode == "spot" else "FUTURES"
-        buy_s  = sig.get("buy_score", 0)
-        sell_s = sig.get("sell_score", 0)
+        mode      = sig.get("mode", "futures")
+        stype     = sig["type"]
+        label     = "SPOT" if mode == "spot" else "FUTURES"
+        buy_s     = sig.get("buy_score", 0)
+        sell_s    = sig.get("sell_score", 0)
+        score     = sig.get("strength", 0)
+        mscore    = _max_score(sig)
         threshold = sig.get("_threshold", 0)
+        conf      = sig.get("confidence", "")
+        reasons_n = len(sig.get("reasons", []))
 
         if stype == "HOLD":
             if buy_s > sell_s:
@@ -585,16 +618,45 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
                 dir_str, lead = "NEUTRAL", max(buy_s, sell_s)
             gap = threshold - lead
 
-            if dir_str == "NEUTRAL":
-                lines.append(f"{label}    NEUTRAL (both {buy_s:.2f}) — gap {gap:.2f} to fire")
-            elif mode == "spot" and dir_str == "BEARISH":
-                lines.append(f"{label}    BEARISH leads ({buy_s:.2f} buy vs {sell_s:.2f} sell) — BUY‑only → HOLD")
-            elif gap <= 0:
-                lines.append(f"{label}    {dir_str} by {abs(buy_s - sell_s):.2f} — gap 0.00 READY but overrides")
+            if mode == "spot" and dir_str == "BEARISH":
+                # Spot can't short — sell score is irrelevant for firing
+                lines.append(
+                    f"⏸ <b>{label}</b>  ·  HOLD  ·  "
+                    f"<code>{score:.2f}/{mscore:.2f}</code>  ·  "
+                    f"BEARISH · BUY-only → HOLD"
+                )
+                detail = [
+                    f"Buy <b>{buy_s:.2f}</b>  ·  Sell <b>{sell_s:.2f}</b>",
+                    "BUY-only → HOLD",
+                ]
             else:
-                lines.append(f"{label}    {dir_str} leads ({lead:.2f}) — gap {gap:.2f} to fire")
+                lines.append(
+                    f"⏸ <b>{label}</b>  ·  HOLD  ·  "
+                    f"<code>{score:.2f}/{mscore:.2f}</code>  ·  "
+                    f"gap <b>{gap:.2f}</b> to fire"
+                )
+                detail = [f"Buy <b>{buy_s:.2f}</b>  ·  Sell <b>{sell_s:.2f}</b>"]
+                if dir_str == "NEUTRAL":
+                    detail.append("NEUTRAL")
+                elif gap <= 0:
+                    detail.append(f"{dir_str} leads  ·  gap 0.00 READY")
+                else:
+                    detail.append(f"{dir_str} leads")
+            lines.append("         " + "  ·  ".join(detail))
         else:
-            lines.append(f"{label}    {stype} {sig.get('strength', 0):.2f}/{_max_score(sig)} > threshold {threshold:.2f} → FIRED")
+            icon = "🟢" if stype == "BUY" else "🔴"
+            lines.append(
+                f"{icon} <b>{label}</b>  ·  {stype} FIRED  ·  "
+                f"<code>{score:.2f}/{mscore:.2f}</code>  ·  "
+                f"≥ thr <b>{threshold:.2f}</b>"
+            )
+
+            detail = [f"Buy <b>{buy_s:.2f}</b>  ·  Sell <b>{sell_s:.2f}</b>"]
+            if reasons_n:
+                detail.append(f"{reasons_n} reasons")
+            if conf:
+                detail.append(f"{conf} conf")
+            lines.append("         " + "  ·  ".join(detail))
 
     lines.append("")
     lines.append("ⓘ  hobby · study · experiment — not financial advice")

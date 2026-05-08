@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from signals.spot import analyze_spot_signal
 from signals.futures import analyze_futures_signal
 from news_scraper import scrape_and_export
-from notifier import _format_close_notification, _send_telegram_message, send_signal_alert
+from notifier import _format_close_notification, _format_open_notification, _send_telegram_message, send_signal_alert
 from trading.paper import check_and_close_positions, print_open_status, print_paper_summary
 from config import RISK_CONFIG, FUTURES_CONFIG
 from trading.history import close as close_db, close_paper_position, get_open_positions, has_open_position_same_direction, open_paper_position
@@ -81,6 +81,7 @@ def run_cycle():
                 msg = f"SPOT {spot_signal['type']} opened (#{pid}) @ ${spot_signal['entry_price']:,.0f}"
                 logger.info(msg)
                 phase3_actions.append(f"✅ {msg}")
+                _send_telegram_message(_format_open_notification(spot_signal, pid, "spot"), "position-open")
 
         # Futures positions — close-and-flip on opposite signal
         if futures_signal and futures_signal["type"] != "HOLD":
@@ -104,6 +105,7 @@ def run_cycle():
                 msg = f"FUT {futures_signal['type']} opened (#{pid}) @ ${futures_signal['entry_price']:,.0f}"
                 logger.info(msg)
                 phase3_actions.append(f"✅ {msg}")
+                _send_telegram_message(_format_open_notification(futures_signal, pid, "futures"), "position-open")
             elif has_open_position_same_direction(futures_signal["type"], "futures"):
                 msg = f"Already have open {futures_signal['type']} futures — skipping"
                 logger.info(msg)
@@ -113,6 +115,7 @@ def run_cycle():
                 msg = f"FUT {futures_signal['type']} opened (#{pid}) @ ${futures_signal['entry_price']:,.0f}"
                 logger.info(msg)
                 phase3_actions.append(f"✅ {msg}")
+                _send_telegram_message(_format_open_notification(futures_signal, pid, "futures"), "position-open")
 
         # Determine current price for position checks
         if futures_signal and futures_signal.get("entry_price"):
