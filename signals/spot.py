@@ -24,7 +24,7 @@ from signals.terminal import display_analysis
 logger = logging.getLogger(__name__)
 
 
-def analyze_spot_signal(symbol='BTC/USDT', include_news=True):
+def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
     """Full 4H spot pipeline: 15 conditions (no funding/L/S/OI/basis)."""
     logger.info("[SPOT] Analyzing %s (4H)...", symbol)
     try:
@@ -61,7 +61,8 @@ def analyze_spot_signal(symbol='BTC/USDT', include_news=True):
             news_data = get_combined_sentiment(fng=fng)
             signal = integrate_news_with_signal(signal, news_data)
 
-        display_analysis(df, signal, news_data, htf, market_structure, timeframe='4H', mode='spot')
+        if display:
+            display_analysis(df, signal, news_data, htf, market_structure, timeframe='4H', mode='spot')
         signal['db_id'] = log_signal(signal, df, htf)
         update_spot_threshold_state(signal['type'])
 
