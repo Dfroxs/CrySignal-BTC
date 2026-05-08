@@ -916,19 +916,20 @@ def display_combined(spot_signal, futures_signal):
         if sp_cnt + fu_cnt > 0:
             _section("PERFORMANCE (all-time)")
 
-            bd = _sh.get_outcome_breakdown()
-            w = bd.get("WIN", 0)
-            l = bd.get("LOSS", 0)
-            mc = bd.get("MACRO_CLOSE", 0)
-            be = bd.get("BREAKEVEN", 0)
-            wr_str = f"WR {w/(w+l)*100:.0f}%" if (w + l) > 0 else ""
-
             if sp_cnt > 0:
+                sp_bd = _sh.get_outcome_breakdown("spot")
+                sp_w = sp_bd.get("WIN", 0)
+                sp_l = sp_bd.get("LOSS", 0)
+                sp_wr = f"WR {sp_w/(sp_w+sp_l)*100:.0f}%" if (sp_w + sp_l) > 0 else ""
                 sp_col = "grn" if spot_pnl > 0 else "red"
-                _kv("SPOT", f"{sp_cnt} trades  {w}W {l}L  {wr_str}  P&L {_C[sp_col]}{spot_pnl:+.2f}%{_C['rst']}")
+                _kv("SPOT", f"{sp_cnt} trades  {sp_w}W {sp_l}L  {sp_wr}  P&L {_C[sp_col]}{spot_pnl:+.2f}%{_C['rst']}")
             if fu_cnt > 0:
+                fu_bd = _sh.get_outcome_breakdown("futures")
+                fu_w = fu_bd.get("WIN", 0)
+                fu_l = fu_bd.get("LOSS", 0)
+                fu_wr = f"WR {fu_w/(fu_w+fu_l)*100:.0f}%" if (fu_w + fu_l) > 0 else ""
                 fu_col = "grn" if fut_pnl > 0 else "red"
-                _kv("FUTURES", f"{fu_cnt} trades  {w}W {l}L  {wr_str}  P&L {_C[fu_col]}{fut_pnl:+.2f}%{_C['rst']}")
+                _kv("FUTURES", f"{fu_cnt} trades  {fu_w}W {fu_l}L  {fu_wr}  P&L {_C[fu_col]}{fut_pnl:+.2f}%{_C['rst']}")
             if sp_cnt > 0 and fu_cnt > 0:
                 total_pnl = spot_pnl + fut_pnl
                 tot_col = "grn" if total_pnl > 0 else "red"
