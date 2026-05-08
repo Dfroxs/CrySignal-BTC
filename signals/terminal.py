@@ -573,7 +573,7 @@ def _sig_line(signal, mode):
     reasons_n = len(signal.get("reasons", []))
     max_score = SPOT_MAX_SCORE if mode == "spot" else SIGNAL_MAX_SCORE
     threshold = signal.get("_threshold", 0)
-    label     = "SPOT 4H" if mode == "spot" else "FUT 1H"
+    label     = "SPOT 4H" if mode == "spot" else "FUTURES 1H"
 
     if stype == "HOLD":
         if buy_s > sell_s:
@@ -713,7 +713,7 @@ def display_combined(spot_signal, futures_signal):
         last = sig.get("_last", {})
         if not last:
             continue
-        label  = "SPOT 4H" if mode == "spot" else "FUT 1H"
+        label  = "SPOT 4H" if mode == "spot" else "FUTURES 1H"
         price  = sig.get("entry_price", last.get("close", 0))
         ema200 = last.get("ema200", 0)
         tr_icon = f"{_C['grn']}▲ BULLISH{_C['rst']}" if price > ema200 else f"{_C['red']}▼ BEARISH{_C['rst']}"
@@ -743,7 +743,7 @@ def display_combined(spot_signal, futures_signal):
         last = sig.get("_last", {})
         if not last:
             continue
-        label  = "SPOT 4H" if mode == "spot" else "FUT 1H"
+        label  = "SPOT 4H" if mode == "spot" else "FUTURES 1H"
         price  = sig.get("entry_price", last.get("close", 0))
         rsi    = last.get("rsi", 0)
         macd   = last.get("macd", 0)
@@ -784,7 +784,7 @@ def display_combined(spot_signal, futures_signal):
             continue
         div = sig.get("rsi_divergence", "")
         if div and str(div).strip() not in ("", "NONE", "─"):
-            label = "SPOT 4H" if mode == "spot" else "FUT 1H"
+            label = "SPOT 4H" if mode == "spot" else "FUTURES 1H"
             div_str = {"BULLISH": f"{_C['grn']}▲ BULL{_C['rst']}", "BEARISH": f"{_C['red']}▼ BEAR{_C['rst']}"}.get(str(div), str(div))
             print(f"  {_C['bld']}{label:>10}{_C['rst']}  RSI Div: {div_str}")
 

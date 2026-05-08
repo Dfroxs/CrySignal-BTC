@@ -172,6 +172,10 @@ def run_position_check():
         ticker = exchange.fetch_ticker("BTC/USDT")
         price = ticker["last"]
 
+        print(f"\n  {'─' * 40}")
+        print(f"  MID-CYCLE CHECK  ·  BTC ${price:,.0f}")
+        print(f"  {'─' * 40}")
+
         closed_spot = check_and_close_positions(price, mode="spot")
         closed_fut = check_and_close_positions(price, mode="futures")
         all_closed = (closed_spot or []) + (closed_fut or [])
