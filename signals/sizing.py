@@ -54,7 +54,11 @@ def calculate_futures_position(signal):
     if sl_distance_pct <= 0:
         return None
 
-    optimal_leverage = int(1 / (sl_distance_pct * 100))
+    # How much position value so stop distance = risk_amount?
+    risk_amount = balance * risk_pct
+    max_margin = balance * max_margin_pct
+    needed_position = risk_amount / sl_distance_pct
+    optimal_leverage = int(needed_position / max_margin)
     leverage = max(1, min(optimal_leverage, max_leverage))
 
     if leverage <= 3:
@@ -64,8 +68,6 @@ def calculate_futures_position(signal):
     else:
         tier = "AGGRESSIVE"
 
-    risk_amount = balance * risk_pct
-    max_margin = balance * max_margin_pct
     margin = min(risk_amount / (sl_distance_pct * leverage), max_margin)
     position_value = margin * leverage
 
