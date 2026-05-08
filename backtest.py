@@ -22,13 +22,7 @@ from signals.indicators import calculate_atr, calculate_bollinger_bands, calcula
 from signals.engine import generate_signals
 from signals.ohlcv import fetch_ohlcv_df
 from signals.htf import _htf_indicators
-from signals.market_data import exchange  # was core_analysis import (
-# 
-    fetch_ohlcv_df,
-    detect_support_resistance,
-    generate_signals,
-    get_htf_trend,
-)
+from signals.market_data import exchange
 
 logger = logging.getLogger(__name__)
 
