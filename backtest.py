@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 
-from config import FUTURES_CONFIG, RISK_CONFIG
+from config import FUTURES_CONFIG, RISK_CONFIG, SIGNAL_THRESHOLD
 from signals.indicators import calculate_atr, calculate_bollinger_bands, calculate_ema, calculate_macd, calculate_obv, calculate_rsi, calculate_stoch_rsi, calculate_vwap, detect_rsi_divergence, detect_support_resistance
 from signals.engine import generate_signals
 from signals.ohlcv import fetch_ohlcv_df
@@ -65,7 +65,7 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h",
         except Exception:
             htf = None
 
-        signal = generate_signals(window, htf=htf, market_structure=None, sr=sr)
+        signal = generate_signals(window, htf=htf, market_structure=None, sr=sr, threshold_override=SIGNAL_THRESHOLD)
 
         if signal["type"] == "HOLD":
             continue
