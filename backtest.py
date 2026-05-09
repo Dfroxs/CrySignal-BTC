@@ -90,11 +90,9 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
             htf = None
             regime = {"threshold_bump": 0, "size_adj": 1.0}
 
-        # Session bump
-        utc_hour = _candle_utc_hour(df, i, timeframe)
-        session_bump = 0.5 if utc_hour < 8 else (-0.25 if 13 <= utc_hour < 22 else 0)
-
-        effective_threshold = threshold + regime.get("threshold_bump", 0) + session_bump
+        # Pass base threshold only; generate_signals() applies regime + session bump once internally.
+        # Pre-computing them here would double-apply (engine recomputes from same window data).
+        effective_threshold = threshold
 
         signal = generate_signals(
             window, htf=htf, market_structure=None, sr=sr,
@@ -169,6 +167,14 @@ def _passes_entry_gates(signal, mode, window):
         if atr and vwap and sr_entry > vwap + atr:
             return False  # FOMO entry
 
+        # Gate: psychology SL vulnerability — SL within 0.15% below a $1k round number
+        sl = signal.get("stop_loss", 0)
+        if sl > 0:
+            step = 1000
+            next_round = (int(sl // step) + 1) * step
+            if (next_round - sl) / sl * 100 <= 0.15:
+                return False
+
     return True
 
 
@@ -202,9 +208,15 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
         tp2 = tp2_raw * (1 + entry_cost) if tp2_raw else None
 
     trail = sl
-    trail_factor = FUTURES_CONFIG.get("trailing_atr_factor", 0.7) if mode == "futures" else 1.0
+    base_trail_factor = FUTURES_CONFIG.get("trailing_atr_factor", 0.9) if mode == "futures" else RISK_CONFIG.get("trailing_atr_factor", 1.0)
+    post_tp1_factor   = RISK_CONFIG.get("trailing_post_tp1_factor", 0.8)
+    min_adv_ratio     = RISK_CONFIG.get("trailing_advance_min_ratio", 0.5)
     partial_closed = False
     partial_pnl = 0
+    exit_fee_pct = ec["futures_fee_pct"] if mode == "futures" else ec["spot_fee_pct"]
+    exit_cost = (exit_fee_pct + slip) / 100
+    # Funding exit threshold for futures (proxy — no historical funding data in backtest)
+    funding_exit_gain_pct = 12.0  # close futures LONG if unrealized > 12% (high funding proxy)
 
     for j in range(entry_idx + 1, min(entry_idx + 1 + max_hold, len(df))):
         c = df.iloc[j]
@@ -213,23 +225,35 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
 
         # Time exit
         age = j - entry_idx
-        max_hours = RISK_CONFIG.get("max_position_hours", 72)
+        if mode == "spot":
+            max_hours = RISK_CONFIG.get("max_position_hours_spot", 48)
+        else:
+            max_hours = RISK_CONFIG.get("max_position_hours", 72)
         if age * (4 if timeframe == "4h" else 1) > max_hours:
             exit_px = c["close"]
-            exit_pnl = _calc_backtest_pnl(stype, entry, exit_px, partial_closed, partial_pnl)
+            exit_pnl = _calc_backtest_pnl(stype, entry, exit_px, partial_closed, partial_pnl, mode)
             return _make_trade(df, entry_idx, j, signal, "TIME_EXIT", entry, exit_px, exit_pnl)
 
         # Vol exit
         if atr_entry > 0 and atr_now > atr_entry * RISK_CONFIG.get("vol_expansion_exit_mult", 2.0):
             exit_px = c["close"]
-            exit_pnl = _calc_backtest_pnl(stype, entry, exit_px, partial_closed, partial_pnl)
+            exit_pnl = _calc_backtest_pnl(stype, entry, exit_px, partial_closed, partial_pnl, mode)
             return _make_trade(df, entry_idx, j, signal, "VOL_EXIT", entry, exit_px, exit_pnl)
 
         if stype == "BUY":
-            # Advance trailing stop
+            # Funding exit proxy for futures — sustained large gain signals crowded longs
+            if mode == "futures" and not partial_closed:
+                unrealized = (c["close"] - entry) / entry * 100
+                if unrealized > funding_exit_gain_pct:
+                    exit_pnl = _calc_backtest_pnl(stype, entry, c["close"], partial_closed, partial_pnl, mode)
+                    return _make_trade(df, entry_idx, j, signal, "FUNDING_EXIT", entry, c["close"], exit_pnl)
+
+            # Advance trailing stop (with minimum advance threshold)
             if atr_now > 0:
-                new_trail = c["close"] - atr_now * trail_factor
-                if new_trail > trail:
+                tf = base_trail_factor * (post_tp1_factor if partial_closed else 1.0)
+                new_trail = c["close"] - atr_now * tf
+                min_adv = atr_now * tf * min_adv_ratio
+                if new_trail > trail + min_adv:
                     trail = new_trail
 
             # Partial TP1 (50%)
@@ -246,16 +270,25 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
 
             # Trailing stop hit
             if low <= trail:
-                exit_px = trail
-                remaining = (trail - entry) / entry * 100
+                net_exit = trail * (1 - exit_cost)
+                remaining = (net_exit - entry) / entry * 100
                 exit_pnl = partial_pnl * 0.5 + remaining * 0.5 if partial_closed else remaining
-                outcome = "WIN" if trail >= entry else "LOSS"
-                return _make_trade(df, entry_idx, j, signal, outcome, entry, exit_px, exit_pnl)
+                outcome = "WIN" if net_exit >= entry else "LOSS"
+                return _make_trade(df, entry_idx, j, signal, outcome, entry, trail, exit_pnl)
 
         else:  # SELL
+            # Funding exit proxy — sustained large short gain signals crowded shorts
+            if mode == "futures" and not partial_closed:
+                unrealized = (entry - c["close"]) / entry * 100
+                if unrealized > funding_exit_gain_pct:
+                    exit_pnl = _calc_backtest_pnl(stype, entry, c["close"], partial_closed, partial_pnl, mode)
+                    return _make_trade(df, entry_idx, j, signal, "FUNDING_EXIT", entry, c["close"], exit_pnl)
+
             if atr_now > 0:
-                new_trail = c["close"] + atr_now * trail_factor
-                if new_trail < trail:
+                tf = base_trail_factor * (post_tp1_factor if partial_closed else 1.0)
+                new_trail = c["close"] + atr_now * tf
+                min_adv = atr_now * tf * min_adv_ratio
+                if new_trail < trail - min_adv:
                     trail = new_trail
 
             if not partial_closed and low <= tp1:
@@ -269,11 +302,11 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
                 return _make_trade(df, entry_idx, j, signal, "WIN", entry, tp2, exit_pnl)
 
             if high >= trail:
-                exit_px = trail
-                remaining = (entry - trail) / entry * 100
+                net_exit = trail * (1 + exit_cost)
+                remaining = (entry - net_exit) / entry * 100
                 exit_pnl = partial_pnl * 0.5 + remaining * 0.5 if partial_closed else remaining
-                outcome = "WIN" if trail <= entry else "LOSS"
-                return _make_trade(df, entry_idx, j, signal, outcome, entry, exit_px, exit_pnl)
+                outcome = "WIN" if net_exit <= entry else "LOSS"
+                return _make_trade(df, entry_idx, j, signal, outcome, entry, trail, exit_pnl)
 
     # Ran out of candles — still open
     return _make_trade(df, entry_idx, entry_idx + max_hold, signal, "OPEN",
@@ -284,10 +317,11 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _calc_backtest_pnl(stype, entry, exit_px, partial_closed, partial_pnl):
+def _calc_backtest_pnl(stype, entry, exit_px, partial_closed, partial_pnl, mode="futures"):
     """Calculate blended P&L including exit fee."""
     ec = EXECUTION_CONFIG
-    exit_cost = (ec.get("slippage_pct", 0.05)) / 100  # slippage only on exit (fee already in entry)
+    fee_pct = ec["futures_fee_pct"] if mode == "futures" else ec["spot_fee_pct"]
+    exit_cost = (fee_pct + ec.get("slippage_pct", 0.05)) / 100
     if stype == "BUY":
         gross = (exit_px * (1 - exit_cost) - entry) / entry * 100
     else:
@@ -345,22 +379,27 @@ def _compute_htf_from_df(df, idx, timeframe):
                 trend = "NEUTRAL"
 
             # Compute HTF RSI + MACD
-            high_s = small["high"].resample(rule).max().dropna()
-            low_s = small["low"].resample(rule).min().dropna()
             if len(ohlc) >= 14:
-                delta = ohlc.diff()
-                gain = delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean()
-                loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()
-                rsi = 100 - (100 / (1 + gain.iloc[-1] / loss.iloc[-1])) if loss.iloc[-1] > 0 else 100
-                rsi_zone = "oversold" if rsi < 30 else ("overbought" if rsi > 70 else "neutral")
+                from signals.indicators import calculate_rsi, calculate_macd
+                rsi_series = calculate_rsi(ohlc, period=14)
+                rsi = rsi_series.iloc[-1] if not pd.isna(rsi_series.iloc[-1]) else 50
+                rsi_zone = (
+                    "oversold" if rsi < 30 else
+                    "low" if rsi < 45 else
+                    "neutral" if rsi < 55 else
+                    "elevated" if rsi < 70 else
+                    "overbought"
+                )
+                macd_line, signal_line, _ = calculate_macd(ohlc)
+                macd_dir = "BULLISH" if macd_line.iloc[-1] > signal_line.iloc[-1] else "BEARISH"
             else:
-                rsi, rsi_zone = 50, "neutral"
+                rsi, rsi_zone, macd_dir = 50, "neutral", "NEUTRAL"
 
             result[tf_key] = trend
             result[f"{tf_key}_indicators"] = {
                 "rsi": round(rsi, 1),
                 "rsi_zone": rsi_zone,
-                "macd": "BULLISH" if (len(ohlc) >= 2 and ohlc.iloc[-1] > ohlc.iloc[-2]) else "BEARISH",
+                "macd": macd_dir,
                 "vol_trend": "RISING" if len(ohlc) >= 20 and ohlc.iloc[-5:].mean() > ohlc.iloc[-20:].mean() else "FLAT",
             }
         except Exception:

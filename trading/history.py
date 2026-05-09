@@ -447,14 +447,16 @@ def get_open_position_count_by_direction(direction, mode=None):
 
 
 def close_paper_position(pos_id, outcome, pnl_pct, closed_at=None):
-    """Mark a paper position as closed."""
+    """Mark a paper position as closed, weighting P&L by size_factor for pyramid entries."""
     c = _conn()
+    row = c.execute("SELECT size_factor FROM paper_positions WHERE id=?", (pos_id,)).fetchone()
+    sf = float(row["size_factor"] or 1.0) if row else 1.0
     c.execute(
         """UPDATE paper_positions
            SET outcome=?, pnl_pct=?, closed_at=?
            WHERE id=?""",
         (
-            outcome, round(pnl_pct, 3),
+            outcome, round(pnl_pct * sf, 3),
             closed_at or datetime.now(UTC).isoformat(), pos_id,
         ),
     )
@@ -549,6 +551,19 @@ def get_profit_factor(mode=None):
     if losses == 0:
         return float("inf") if wins > 0 else None
     return wins / losses
+
+
+def get_daily_pnl(mode=None):
+    """Sum of pnl_pct for positions closed today (UTC). Used for daily loss limit."""
+    c = _conn()
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
+    mf, mp = ("AND mode = ?", [mode]) if mode else ("", [])
+    rows = c.execute(
+        f"SELECT pnl_pct FROM paper_positions "
+        f"WHERE pnl_pct IS NOT NULL AND closed_at >= ? {mf}",
+        [today + " 00:00:00"] + (mp if isinstance(mp, list) else [mp] if mp else []),
+    ).fetchall()
+    return sum(r["pnl_pct"] for r in rows) if rows else 0.0
 
 
 def get_closed_pnl(mode=None):

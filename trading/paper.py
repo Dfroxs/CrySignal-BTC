@@ -126,7 +126,10 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
         partial = pos.get("partial_closed", 0)
 
         # ── Exit 0a: time-based stale position ──
-        max_hours = RISK_CONFIG.get("max_position_hours", 72)
+        if pos.get("mode") == "spot":
+            max_hours = RISK_CONFIG.get("max_position_hours_spot", 48)
+        else:
+            max_hours = RISK_CONFIG.get("max_position_hours", 72)
         opened_str = pos.get("opened_at", "")
         if opened_str:
             try:
@@ -201,8 +204,13 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
         if pos["type"] == "BUY":
             # 1 — advance trailing stop
             if atr:
-                new_trail = current_price - atr * _trail_factor(pos.get("mode", "futures"))
-                if new_trail > trail:
+                mode_key = pos.get("mode", "futures")
+                trail_mult = _trail_factor(mode_key)
+                if partial:  # tighten 20% after TP1 — remaining half needs less room
+                    trail_mult *= RISK_CONFIG.get("trailing_post_tp1_factor", 0.8)
+                new_trail = current_price - atr * trail_mult
+                min_adv = atr * trail_mult * RISK_CONFIG.get("trailing_advance_min_ratio", 0.5)
+                if new_trail > trail + min_adv:
                     trail = new_trail
                     sh.update_trailing_stop(pos_id, trail)
 
@@ -240,10 +248,7 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
                 )
             elif current_price <= trail:
                 _check_slippage(trail, current_price, pos_id)
-                exit_pnl = (trail - entry) / entry * 100
-                if partial:
-                    partial_pnl = pos.get("partial_pnl") or 0
-                    exit_pnl = partial_pnl * 0.5 + exit_pnl * 0.5
+                exit_pnl = _calc_pnl(pos, trail)
                 outcome = "WIN" if trail >= entry else "LOSS"
                 sh.close_paper_position(pos_id, outcome, exit_pnl)
                 closed.append({
@@ -260,8 +265,13 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
         elif pos["type"] == "SELL":
             # 1 — advance trailing stop (moves down for shorts)
             if atr:
-                new_trail = current_price + atr * _trail_factor(pos.get("mode", "futures"))
-                if new_trail < trail:
+                mode_key = pos.get("mode", "futures")
+                trail_mult = _trail_factor(mode_key)
+                if partial:
+                    trail_mult *= RISK_CONFIG.get("trailing_post_tp1_factor", 0.8)
+                new_trail = current_price + atr * trail_mult
+                min_adv = atr * trail_mult * RISK_CONFIG.get("trailing_advance_min_ratio", 0.5)
+                if new_trail < trail - min_adv:
                     trail = new_trail
                     sh.update_trailing_stop(pos_id, trail)
 
@@ -298,10 +308,7 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
                 )
             elif current_price >= trail:
                 _check_slippage(trail, current_price, pos_id)
-                exit_pnl = (entry - trail) / entry * 100
-                if partial:
-                    partial_pnl = pos.get("partial_pnl") or 0
-                    exit_pnl = partial_pnl * 0.5 + exit_pnl * 0.5
+                exit_pnl = _calc_pnl(pos, trail)
                 outcome = "WIN" if trail <= entry else "LOSS"
                 sh.close_paper_position(pos_id, outcome, exit_pnl)
                 closed.append({

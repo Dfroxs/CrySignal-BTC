@@ -5,7 +5,8 @@ integrate_news_with_signal() for macro/sentiment overlay.
 import pandas as pd
 
 from config import RISK_CONFIG
-from signals.indicators import calculate_adx, classify_regime, detect_rsi_divergence
+from signals.indicators import (calculate_adx, classify_regime,
+                                detect_candlestick_pattern, detect_rsi_divergence)
 from signals.market_data import get_signal_confidence
 from signals.sentiment import check_upcoming_macro_events
 
@@ -31,13 +32,18 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     buy_conditions = 0.0
     sell_conditions = 0.0
 
-    # 1 — EMA 200 trend
-    if current['close'] > current['EMA_200']:
-        buy_conditions += 1
-        signal['reasons'].append("✓ Price above EMA 200 (bullish trend)")
+    # 1 — EMA 200 trend + slope (rising EMA = strengthening trend)
+    ema200_now  = current['EMA_200']
+    ema200_prev = df['EMA_200'].iloc[-6]  # 5-candle slope avoids single-candle noise
+    ema_rising  = ema200_now > ema200_prev
+    if current['close'] > ema200_now:
+        buy_conditions += 1.0 if ema_rising else 0.5
+        label = "rising ✓" if ema_rising else "flat/falling ⚠️"
+        signal['reasons'].append(f"✓ Price above EMA 200 ({label})")
     else:
-        sell_conditions += 1
-        signal['reasons'].append("✗ Price below EMA 200 (bearish trend)")
+        sell_conditions += 1.0 if not ema_rising else 0.5
+        label = "falling ✓" if not ema_rising else "flat/rising ⚠️"
+        signal['reasons'].append(f"✗ Price below EMA 200 ({label})")
 
     # 2 — RSI
     rsi = current['RSI_14']
@@ -88,14 +94,14 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     # 4b — Volume climax / Effort vs Result (Wyckoff)
     candle_range = current['high'] - current['low']
     range_vs_atr = candle_range / current['ATR_14'] if current['ATR_14'] > 0 else 1
-    if vol_ratio >= 2.0 and range_vs_atr < 0.5:
+    if vol_ratio >= 1.5 and range_vs_atr < 0.75:
         close_pos = (current['close'] - current['low']) / candle_range if candle_range > 0 else 0.5
-        if close_pos < 0.35:
+        if close_pos < 0.40 and current['close'] >= current['open']:  # green close near low = accumulation
             buy_conditions += 0.75
-            signal['reasons'].append(f"✓ Volume climax ({vol_ratio:.1f}x) + narrow range — potential accumulation")
-        elif close_pos > 0.65:
+            signal['reasons'].append(f"✓ Effort vs Result ({vol_ratio:.1f}x vol, narrow range) — accumulation")
+        elif close_pos > 0.60 and current['close'] <= current['open']:  # red close near high = distribution
             sell_conditions += 0.75
-            signal['reasons'].append(f"✗ Volume climax ({vol_ratio:.1f}x) + narrow range — potential distribution")
+            signal['reasons'].append(f"✗ Effort vs Result ({vol_ratio:.1f}x vol, narrow range) — distribution")
 
     # 5 — Bollinger Bands
     _bb_lower = False
@@ -108,10 +114,22 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         sell_conditions += 1
         _bb_upper = True
         signal['reasons'].append("✗ Price at/above BB Upper — overbought")
-    elif current['close'] > current['BB_Middle']:
-        buy_conditions += 0.25
     else:
-        sell_conditions += 0.25
+        # BB middle zone — only score on volatility compression (squeeze)
+        bb_mid = current['BB_Middle']
+        if bb_mid and bb_mid > 0:
+            bb_width_series = (df['BB_Upper'] - df['BB_Lower']) / df['BB_Middle'].replace(0, float('nan'))
+            bb_width_now = bb_width_series.iloc[-1]
+            valid = bb_width_series.dropna()
+            if not pd.isna(bb_width_now) and len(valid) >= 20:
+                squeeze = (valid < bb_width_now).mean() <= 0.30  # bottom 30% — compressed
+                if squeeze:
+                    if current['close'] > bb_mid:
+                        buy_conditions += 0.25
+                        signal['reasons'].append("✓ BB squeeze + above middle — breakout coil")
+                    else:
+                        sell_conditions += 0.25
+                        signal['reasons'].append("✗ BB squeeze + below middle — breakdown coil")
 
     # 6 — Multi-timeframe alignment
     if htf:
@@ -178,21 +196,11 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         else:
             signal['reasons'].append(f"⚠️  HTF Disagreement ({htf_label}) — caution")
 
-    # 7 — RSI Divergence
-    divergence = detect_rsi_divergence(df)
-    signal['rsi_divergence'] = divergence
-    if divergence == 'BULLISH':
-        buy_conditions += 2.0
-        signal['reasons'].append("✓ RSI BULLISH DIVERGENCE — price lower low, RSI higher low")
-    elif divergence == 'BEARISH':
-        sell_conditions += 2.0
-        signal['reasons'].append("✗ RSI BEARISH DIVERGENCE — price higher high, RSI lower high")
-
     # 8 — OBV slope (5-candle)
     obv_slope = df['OBV'].iloc[-1] - df['OBV'].iloc[-5]
     obv_denom = df['volume'].iloc[-5:].sum()
     obv_rel = abs(obv_slope) / obv_denom if obv_denom > 0 else 0
-    if obv_rel >= 0.001:
+    if obv_rel >= 0.002:
         if obv_slope > 0:
             buy_conditions += 0.75
             signal['reasons'].append("✓ OBV rising — accumulation detected")
@@ -264,14 +272,15 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             sell_conditions += 0.5
             signal['reasons'].append(f"✗ DXY RISING ({dxy.get('change_pct', 0):+.2f}%) — strong USD")
 
-    # 10 — S&P 500 trend
+    # 10 — S&P 500 trend (0.5 for spot: BTC-SPX correlation weakens in crypto-driven cycles)
     if market_structure:
         sp500 = market_structure.get('sp500', {})
+        sp500_weight = 0.5 if mode == 'spot' else 1.0
         if sp500.get('bias') == 'BULLISH':
-            buy_conditions += 1.0
+            buy_conditions += sp500_weight
             signal['reasons'].append(f"✓ S&P500 RISING ({sp500.get('change_pct',0):+.2f}%) — risk-on")
         elif sp500.get('bias') == 'BEARISH':
-            sell_conditions += 1.0
+            sell_conditions += sp500_weight
             signal['reasons'].append(f"✗ S&P500 FALLING ({sp500.get('change_pct',0):+.2f}%) — risk-off")
 
         # 11 — Stablecoin supply
@@ -357,15 +366,19 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             sell_conditions += 0.75
             signal['reasons'].append(f"✗ Rejected at resistance ${resistance:,.0f} (within {prox_pct*100:.2f}%)")
 
-    # 17 — VWAP position
+    # 17 — VWAP crossover (require recent cross — pure position scores nothing in a trending market)
     vwap = current.get('VWAP_24')
-    if vwap and not pd.isna(vwap):
+    if vwap and not pd.isna(vwap) and len(df) >= 6:
+        lookback_close = df['close'].iloc[-6:-1]
+        lookback_vwap  = df['VWAP_24'].iloc[-6:-1]
         if current['close'] > vwap:
-            buy_conditions += 0.75
-            signal['reasons'].append(f"✓ Price above VWAP ${vwap:,.2f} — institutional buying")
+            if lookback_close.lt(lookback_vwap).any():  # was below VWAP in last 5 candles
+                buy_conditions += 0.75
+                signal['reasons'].append(f"✓ Price crossed above VWAP ${vwap:,.2f} — institutional buying")
         else:
-            sell_conditions += 0.75
-            signal['reasons'].append(f"✗ Price below VWAP ${vwap:,.2f} — institutional selling")
+            if lookback_close.gt(lookback_vwap).any():  # was above VWAP in last 5 candles
+                sell_conditions += 0.75
+                signal['reasons'].append(f"✗ Price crossed below VWAP ${vwap:,.2f} — institutional selling")
 
     # 18 — ADX trend strength + DI crossover
     try:
@@ -409,6 +422,9 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             signal['reasons'].append(f"📊 Gold rising ({gold['change_pct']:+.1f}%) — safe-haven demand")
             if current['close'] < df['close'].iloc[-5]:
                 sell_conditions += 0.25  # Gold up + BTC down = risk-off
+        elif gold.get("change_pct", 0) < -0.5:
+            buy_conditions += 0.25
+            signal['reasons'].append(f"📊 Gold falling ({gold['change_pct']:+.1f}%) — risk-on, capital rotating to crypto")
         if vix.get("change_pct", 0) > 3:
             buy_conditions += 0.25
             signal['reasons'].append(f"📊 VIX spiking ({vix['change_pct']:+.1f}%) — fear gauge, contrarian BTC bid")
@@ -433,7 +449,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             buy_conditions += 0.75
             signal['reasons'].append(f"✓ OI↑ ({oi_change:+.1f}%) + Price↑ — healthy uptrend")
         elif oi_change > 1 and price_change < -0.5:
-            sell_conditions += 0.5
+            sell_conditions += 0.75
             signal['reasons'].append(f"✗ OI↑ ({oi_change:+.1f}%) + Price↓ — distribution")
         elif oi_change < -1 and price_change > 0.5:
             buy_conditions += 0.25
@@ -456,14 +472,37 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         sell_conditions -= penalty
         signal['reasons'].append(f"⚠️  {sell_extremes} overbought conditions clustered — diminishing returns applied (-{penalty:.2f})")
 
-    # ── RSI divergence overrides RSI zone (they contradict) ──
+    # 7 — RSI Divergence (scored after diminishing-returns penalty — structurally independent)
+    divergence = detect_rsi_divergence(df)
+    signal['rsi_divergence'] = divergence
     if divergence == 'BULLISH' and _rsi_ob:
-        # Bullish divergence + overbought RSI: divergence wins, suppress OB score
-        buy_conditions += 1.5   # was already suppressed by OB; restore divergence advantage
-        signal['reasons'].append("⚠️  RSI OB suppressed by BULLISH divergence — divergence stronger signal")
+        sell_conditions -= 1.5  # cancel OB sell score
+        buy_conditions += 1.5   # restore divergence advantage
+        signal['reasons'].append("⚠️  RSI OB cancelled by BULLISH divergence — divergence takes precedence")
     elif divergence == 'BEARISH' and _rsi_os:
+        buy_conditions -= 1.5   # cancel OS buy score
         sell_conditions += 1.5
-        signal['reasons'].append("⚠️  RSI OS suppressed by BEARISH divergence — divergence stronger signal")
+        signal['reasons'].append("⚠️  RSI OS cancelled by BEARISH divergence — divergence takes precedence")
+    elif divergence == 'BULLISH':
+        buy_conditions += 2.0
+        signal['reasons'].append("✓ RSI BULLISH DIVERGENCE — price lower low, RSI higher low")
+    elif divergence == 'BEARISH':
+        sell_conditions += 2.0
+        signal['reasons'].append("✗ RSI BEARISH DIVERGENCE — price higher high, RSI lower high")
+
+    # 19 — Candlestick pattern recognition
+    cs = detect_candlestick_pattern(df)
+    signal['candlestick'] = cs
+    _cs_weights = {'ENGULFING': 1.0, 'MORNING_STAR': 1.0, 'EVENING_STAR': 1.0,
+                   'HAMMER': 0.75, 'SHOOTING_STAR': 0.75, 'HARAMI': 0.5}
+    if cs['bullish']:
+        w = _cs_weights.get(cs['bullish'], 0.5)
+        buy_conditions += w
+        signal['reasons'].append(f"✓ {cs['bullish'].replace('_', ' ')} pattern — bullish reversal")
+    if cs['bearish'] and mode == 'futures':
+        w = _cs_weights.get(cs['bearish'], 0.5)
+        sell_conditions += w
+        signal['reasons'].append(f"✗ {cs['bearish'].replace('_', ' ')} pattern — bearish reversal")
 
     # Determine final signal
     if buy_conditions >= threshold and buy_conditions > sell_conditions:
@@ -503,13 +542,22 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     signal['atr'] = current['ATR_14']
     signal['_threshold'] = threshold
 
-    # TP2 = 2× the TP1 distance
+    # TP2 = 2× the TP1 distance, capped below nearest resistance (BUY) or above support (SELL)
     if signal['type'] != 'HOLD' and signal['take_profit'] is not None:
         tp1_dist = abs(signal['take_profit'] - signal['entry_price'])
+        sr_levels = signal.get('support_resistance') or {}
         if signal['type'] == 'BUY':
-            signal['tp2'] = signal['entry_price'] + tp1_dist * 2
+            tp2_raw = signal['entry_price'] + tp1_dist * 2
+            resistance = sr_levels.get('resistance')
+            if resistance and signal['entry_price'] < resistance < tp2_raw:
+                tp2_raw = resistance * 0.995  # 0.5% buffer below resistance
+            signal['tp2'] = round(tp2_raw, 2)
         else:
-            signal['tp2'] = signal['entry_price'] - tp1_dist * 2
+            tp2_raw = signal['entry_price'] - tp1_dist * 2
+            support = sr_levels.get('support')
+            if support and signal['entry_price'] > support > tp2_raw:
+                tp2_raw = support * 1.005  # 0.5% buffer above support
+            signal['tp2'] = round(tp2_raw, 2)
 
     if signal['type'] != 'HOLD':
         signal['confidence'] = get_signal_confidence(signal['strength'], threshold)
@@ -572,5 +620,9 @@ def integrate_news_with_signal(signal, news_data):
         enhanced['reasons'].append(
             f"⚠️  Post-news strength ({enhanced['strength']:.2f}) below threshold ({thr:.2f}) — downgraded to HOLD"
         )
+
+    # Always recalculate confidence after news adjustments — strength may have changed
+    if enhanced['type'] != 'HOLD':
+        enhanced['confidence'] = get_signal_confidence(enhanced['strength'], thr)
 
     return enhanced
