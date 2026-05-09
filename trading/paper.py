@@ -8,6 +8,7 @@ Each cycle:
 """
 
 import logging
+from datetime import UTC, datetime, timedelta
 
 import trading.history as sh
 from config import RISK_CONFIG
@@ -55,7 +56,7 @@ def _check_slippage(trigger_price, fill_price, pos_id):
 # Position management
 # ---------------------------------------------------------------------------
 
-def check_and_close_positions(current_price, mode=None):
+def check_and_close_positions(current_price, mode=None, current_atr=0):
     """Check open paper positions against *current_price*, optionally filtered by mode.
 
     If a HIGH impact USD macro event is within 2 hours, all open positions
@@ -108,6 +109,46 @@ def check_and_close_positions(current_price, mode=None):
         tp1     = pos.get("tp1") or pos["take_profit"]
         tp2     = pos.get("tp2")
         partial = pos.get("partial_closed", 0)
+
+        # ── Exit 0a: time-based stale position ──
+        max_hours = RISK_CONFIG.get("max_position_hours", 72)
+        opened_str = pos.get("opened_at", "")
+        if opened_str:
+            try:
+                opened_dt = datetime.fromisoformat(opened_str)
+                age_hours = (datetime.now(UTC) - opened_dt).total_seconds() / 3600
+                if age_hours > max_hours:
+                    exit_pnl = _calc_pnl(pos, current_price)
+                    sh.close_paper_position(pos_id, "TIME_EXIT", exit_pnl, closed_at=current_price)
+                    closed.append({
+                        "type": pos["type"], "entry": entry,
+                        "exit": current_price, "pnl": exit_pnl,
+                        "outcome": "TIME_EXIT", "mode": pos.get("mode", "futures"),
+                    })
+                    logger.info(
+                        "Paper %s %s → TIME_EXIT after %.0fh (%.2f%%)",
+                        pos["type"], pos_id, age_hours, exit_pnl,
+                    )
+                    continue  # skip remaining checks for this position
+            except (ValueError, TypeError):
+                pass
+
+        # ── Exit 0b: volatility expansion ──
+        entry_atr = pos.get("atr") or 0
+        vol_mult = RISK_CONFIG.get("vol_expansion_exit_mult", 2.0)
+        if entry_atr > 0 and current_atr > 0 and current_atr > entry_atr * vol_mult:
+            exit_pnl = _calc_pnl(pos, current_price)
+            sh.close_paper_position(pos_id, "VOL_EXIT", exit_pnl, closed_at=current_price)
+            closed.append({
+                "type": pos["type"], "entry": entry,
+                "exit": current_price, "pnl": exit_pnl,
+                "outcome": "VOL_EXIT", "mode": pos.get("mode", "futures"),
+            })
+            logger.info(
+                "Paper %s %s → VOL_EXIT (ATR %.0f > %.0f ×%.1f, %.2f%%)",
+                pos["type"], pos_id, _CURRENT_ATR, entry_atr, vol_mult, exit_pnl,
+            )
+            continue
 
         if pos["type"] == "BUY":
             # 1 — advance trailing stop

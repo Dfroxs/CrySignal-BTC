@@ -37,6 +37,8 @@ RISK_CONFIG = {
     "atr_multiplier":        1.5,
     "take_profit_rr":        2.5,
     "trailing_atr_factor":   1.0,   # trail distance = ATR × this (tighter than entry SL)
+    "max_position_hours":     72,    # force-close position if open longer than this
+    "vol_expansion_exit_mult": 2.0,  # close if current ATR > entry ATR × this
     "max_positions":         2,     # max 1 BUY + 1 SELL (one per direction)
     "pyramid": {
         "enabled":                 True,       # allow adding to existing position on STRONG signals

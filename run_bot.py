@@ -257,6 +257,17 @@ def run_cycle():
                 fakeout_warn = _detect_fakeout_rejection(
                     spot_signal, wick_ratio=pyramid_cfg.get("fakeout_wick_ratio", 0.6),
                 )
+                psy_warn = _check_psychology_sl_risk(
+                    spot_signal["entry_price"], spot_signal["stop_loss"],
+                    pyramid_cfg.get("psychology_level_step", 1000),
+                    pyramid_cfg.get("psychology_buffer_pct", 0.15),
+                )
+                sr_warn = _check_sr_entry_risk(
+                    spot_signal["entry_price"],
+                    spot_signal.get("support_resistance", {}),
+                    spot_signal["type"], spot_signal.get("atr", 0),
+                    atr_mult=pyramid_cfg.get("sr_entry_risk_atr", 1.0),
+                )
 
                 # Gate 0a: TA-driven re-entry quality (price improved or confidence upgraded)
                 reentry_warn = _check_reentry_quality(spot_signal, "spot")
@@ -270,10 +281,20 @@ def run_cycle():
                     logger.info(msg)
                     phase3_actions.append(f"⏭ SPOT  {msg}")
 
-                # Gate 0c: fakeout check (dangerous for any entry)
+                # Gate 0c: fakeout check
                 elif fakeout_warn:
                     logger.info("Spot %s — %s — skipping", spot_signal['type'], fakeout_warn)
                     phase3_actions.append(f"⏭ SPOT  {fakeout_warn}")
+
+                # Gate 0d: psychology-level SL vulnerability
+                elif psy_warn:
+                    logger.info("Spot %s — %s — skipping", spot_signal['type'], psy_warn)
+                    phase3_actions.append(f"⏭ SPOT  {psy_warn}")
+
+                # Gate 0e: S/R entry proximity risk
+                elif sr_warn:
+                    logger.info("Spot %s — %s — skipping", spot_signal['type'], sr_warn)
+                    phase3_actions.append(f"⏭ SPOT  {sr_warn}")
 
                 else:
                     pid = open_paper_position(spot_signal, mode="spot", pyramid_entry=1, size_factor=1.0)
@@ -459,8 +480,9 @@ def run_cycle():
             ticker = exchange.fetch_ticker("BTC/USDT")
             current_price = ticker["last"]
 
-        closed_spot = check_and_close_positions(current_price, mode="spot")
-        closed_fut   = check_and_close_positions(current_price, mode="futures")
+        current_atr = (spot_signal or futures_signal or {}).get("atr", 0)
+        closed_spot = check_and_close_positions(current_price, mode="spot", current_atr=current_atr)
+        closed_fut   = check_and_close_positions(current_price, mode="futures", current_atr=current_atr)
         all_closed   = (closed_spot or []) + (closed_fut or [])
 
         print_open_status("spot")
@@ -508,8 +530,8 @@ def run_position_check():
         print(f"  MID-CYCLE CHECK  ·  BTC ${price:,.0f}")
         print(f"  {'─' * 40}")
 
-        closed_spot = check_and_close_positions(price, mode="spot")
-        closed_fut = check_and_close_positions(price, mode="futures")
+        closed_spot = check_and_close_positions(price, mode="spot", current_atr=0)
+        closed_fut = check_and_close_positions(price, mode="futures", current_atr=0)
         all_closed = (closed_spot or []) + (closed_fut or [])
 
         print_open_status("spot")
