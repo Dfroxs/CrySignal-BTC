@@ -666,6 +666,8 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
                 detail.append(f"{reasons_n} reasons")
             if conf:
                 detail.append(f"{conf} conf")
+                if mode == "spot" and conf == "STRONG":
+                    detail.append("🧩 pyramid eligible")
             lines.append("         " + "  ·  ".join(detail))
 
     lines.append("")

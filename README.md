@@ -51,6 +51,7 @@ Paper trading is simulated. Past results do not guarantee future performance.
 ┌─────────────────────────────────────────────────────────┐
 │ PHASE 3 — trading/ package + run_bot.py                 │
 │ • Macro gate → force-close all if HIGH impact event <2h │
+│ • SPOT pyramiding → add entries on STRONG signals       │
 │ • Position dedup → SPOT BUY-only, FUTURES max 1+1       │
 │ • Trailing stop update → advance trail each cycle       │
 │ • TP1 (50%) → move trail to breakeven                   │
@@ -143,7 +144,12 @@ Scoring is nuanced:
 ### Opening
 - **SPOT: BUY-only** (no short selling on spot market)
 - **FUTURES: max 1 LONG + 1 SHORT** (dedup check prevents stacking)
-- New signal in same direction as existing position → skipped with log message
+- **SPOT Pyramiding:** when a BUY signal fires with STRONG confidence and a BUY position is already open, opens an additional pyramid entry instead of skipping
+  - Max 3 total entries (1 initial + 2 pyramid)
+  - Each entry gets progressively tighter SL (×0.8 per level) and smaller size (×0.5 per level)
+  - 11 safety gates across first-entry (3 gates) and pyramid (8 gates)
+  - TA-driven re-entry: only re-opens if price improved or confidence upgraded
+  - Terminal shows `[pyramid #N ×50%]` tag; Telegram uses 🧩 icon
 
 ### Trailing Stop + Partial TP
 ```
@@ -191,6 +197,13 @@ All values in `config.py`, overridable via `.env`:
 | `ACCOUNT_BALANCE` | 1000 | Spot account balance (USDT) |
 | `FUTURES_BALANCE` | 500 | Futures sub-account balance |
 | `LOOP_INTERVAL` | 60 | Loop cadence (minutes) |
+| `pyramid.enabled` | True | Enable spot pyramiding |
+| `pyramid.max_entries` | 3 | Max total entries per direction |
+| `pyramid.min_initial_confidence` | NORMAL | Confidence floor for first entry |
+| `pyramid.min_confidence` | STRONG | Confidence required to pyramid |
+| `pyramid.size_reduction` | 0.5 | Size multiplier per pyramid level |
+| `pyramid.tighten_sl_factor` | 0.8 | SL distance multiplier per level |
+| `pyramid.max_aggregate_risk_pct` | 5.0 | Max total risk % across all entries |
 | `TELEGRAM_BOT_TOKEN` | — | Telegram bot token |
 | `TELEGRAM_CHAT_ID` | — | Telegram target chat |
 
@@ -276,7 +289,8 @@ ORDER BY id DESC LIMIT 50;
 - Stop loss: 1.5× ATR from entry
 - Take profit: 2.5× R:R from SL
 - Max position: 10% of balance
-- Max positions: 1 (BUY only)
+- Max positions: 3 (with pyramiding — 1 initial + 2 pyramid)
+- Pyramid entries: tighter SL (×0.8ⁿ⁻¹), smaller size (×0.5ⁿ⁻¹), aggregate risk capped at 5%
 
 ### Futures — Conviction-Based Dynamic Leverage
 Leverage is not static. A 6-factor model computes a confidence multiplier (0.25–1.5×) and volatility cap (0.33–1.0×) that together determine effective risk and max leverage.
