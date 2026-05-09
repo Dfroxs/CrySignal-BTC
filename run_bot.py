@@ -81,22 +81,23 @@ def _check_psychology_entry_risk(entry, step, buffer_pct):
     return None
 
 
-def _check_sr_entry_risk(entry, sr, direction, atr):
+def _check_sr_entry_risk(entry, sr, direction, atr, atr_mult=1.0):
     """Check if entry is near resistance (BUY) or support (SELL) — higher reversal risk."""
     if not sr or not atr:
         return None
+    threshold = atr * atr_mult
     if direction == "BUY" and sr.get("resistance"):
         dist = sr["resistance"] - entry
-        if 0 < dist <= atr:
-            return f"Entry ${entry:,.0f} within 1× ATR of resistance ${sr['resistance']:,.0f} — rejection risk elevated"
+        if 0 < dist <= threshold:
+            return f"Entry ${entry:,.0f} within {atr_mult}× ATR of resistance ${sr['resistance']:,.0f} — rejection risk elevated"
     elif direction == "SELL" and sr.get("support"):
         dist = entry - sr["support"]
-        if 0 < dist <= atr:
-            return f"Entry ${entry:,.0f} within 1× ATR of support ${sr['support']:,.0f} — bounce risk elevated"
+        if 0 < dist <= threshold:
+            return f"Entry ${entry:,.0f} within {atr_mult}× ATR of support ${sr['support']:,.0f} — bounce risk elevated"
     return None
 
 
-def _detect_fakeout_rejection(signal):
+def _detect_fakeout_rejection(signal, wick_ratio=0.6):
     """Detect potential fake breakout via wick analysis on 24H range.
 
     A long upper wick with close near the low = possible fake bullish breakout.
@@ -110,12 +111,12 @@ def _detect_fakeout_rejection(signal):
         return None
 
     range_24h = hi - lo
-    upper_wick_ratio = (hi - close) / range_24h   # > 0.6 = long upper wick
-    lower_wick_ratio = (close - lo) / range_24h    # > 0.6 = long lower wick
+    upper_wick_ratio = (hi - close) / range_24h
+    lower_wick_ratio = (close - lo) / range_24h
 
-    if signal["type"] == "BUY" and upper_wick_ratio > 0.6:
+    if signal["type"] == "BUY" and upper_wick_ratio > wick_ratio:
         return f"Fake bullish breakout: upper wick {(upper_wick_ratio * 100):.0f}% of 24H range — rejection from ${hi:,.0f}"
-    if signal["type"] == "SELL" and lower_wick_ratio > 0.6:
+    if signal["type"] == "SELL" and lower_wick_ratio > wick_ratio:
         return f"Fake bearish breakdown: lower wick {(lower_wick_ratio * 100):.0f}% of 24H range — rejection from ${lo:,.0f}"
     return None
 
@@ -128,8 +129,13 @@ def _calc_aggregate_risk(mode, new_entry_price, new_sl, new_size_factor, pyramid
 
     for pos in get_open_positions(mode):
         entry = pos["entry_price"]
-        sl = pos.get("stop_loss") or entry
-        sf = pos.get("size_factor") or 1.0
+        trail = pos.get("trailing_stop")
+        sl = trail if trail is not None else pos.get("stop_loss")
+        if sl is None:
+            sl = entry
+        sf = pos.get("size_factor")
+        if sf is None:
+            sf = 1.0
         risk = abs(entry - sl) / entry * 100
         total_risk += risk * sf
 
@@ -197,12 +203,16 @@ def run_cycle():
                 min_conf   = pyramid_cfg.get("min_confidence", "STRONG")
                 actual_conf = spot_signal.get("confidence")
                 entry_prices = _get_entry_prices_by_direction(spot_signal["type"], "spot")
-                first_entry  = entry_prices[0]
-                last_entry   = entry_prices[-1]
                 atr          = spot_signal.get("atr", 0)
 
+                # Safety: bail if positions vanished between queries (macro close race)
+                if not entry_prices:
+                    msg = f"Spot {spot_signal['type']} positions cleared — skipping"
+                    logger.info(msg)
+                    phase3_actions.append(f"⏭ SPOT  {msg}")
+
                 # Gate 1: max entries
-                if existing_count >= max_entries:
+                elif existing_count >= max_entries:
                     msg = f"Spot {spot_signal['type']} pyramid max {max_entries} reached ({existing_count} open) — skipping"
                     logger.info(msg)
                     phase3_actions.append(f"⏭ SPOT  {msg}")
@@ -214,15 +224,15 @@ def run_cycle():
                     phase3_actions.append(f"⏭ SPOT  {msg}")
 
                 # Gate 3: min distance from last entry (prevent doubling down)
-                elif atr > 0 and abs(spot_signal["entry_price"] - last_entry) / atr < pyramid_cfg.get("min_entry_distance_atr", 0.5):
+                elif atr <= 0 or abs(spot_signal["entry_price"] - entry_prices[-1]) / atr < pyramid_cfg.get("min_entry_distance_atr", 0.5):
                     dist_pct = abs(spot_signal["entry_price"] - last_entry) / last_entry * 100
                     msg = f"Spot {spot_signal['type']} pyramid distance {dist_pct:.2f}% (< {pyramid_cfg['min_entry_distance_atr']}× ATR) — skipping"
                     logger.info(msg)
                     phase3_actions.append(f"⏭ SPOT  {msg}")
 
                 # Gate 4: max distance from first entry (risk/reward degraded)
-                elif abs(spot_signal["entry_price"] - first_entry) / first_entry * 100 > pyramid_cfg.get("max_entry_distance_pct", 6.0):
-                    dist_pct = abs(spot_signal["entry_price"] - first_entry) / first_entry * 100
+                elif abs(spot_signal["entry_price"] - entry_prices[0]) / entry_prices[0] * 100 > pyramid_cfg.get("max_entry_distance_pct", 6.0):
+                    dist_pct = abs(spot_signal["entry_price"] - entry_prices[0]) / entry_prices[0] * 100
                     msg = f"Spot {spot_signal['type']} pyramid distance from 1st {dist_pct:.1f}% (> {pyramid_cfg['max_entry_distance_pct']}%) — skipping"
                     logger.info(msg)
                     phase3_actions.append(f"⏭ SPOT  {msg}")
@@ -250,12 +260,15 @@ def run_cycle():
                     spot_signal["entry_price"],
                     spot_signal.get("support_resistance", {}),
                     spot_signal["type"], atr,
+                    atr_mult=pyramid_cfg.get("sr_entry_risk_atr", 1.0),
                 )):
                     logger.info("Spot %s — %s — skipping", spot_signal['type'], sr_warn)
                     phase3_actions.append(f"⏭ SPOT  {sr_warn}")
 
                 # Gate 7: fakeout / rejection pattern
-                elif (fakeout_warn := _detect_fakeout_rejection(spot_signal)):
+                elif (fakeout_warn := _detect_fakeout_rejection(
+                    spot_signal, wick_ratio=pyramid_cfg.get("fakeout_wick_ratio", 0.6),
+                )):
                     logger.info("Spot %s — %s — skipping", spot_signal['type'], fakeout_warn)
                     phase3_actions.append(f"⏭ SPOT  {fakeout_warn}")
 
@@ -263,6 +276,7 @@ def run_cycle():
                     entry_number = existing_count + 1
                     size_factor = get_pyramid_size_factor(entry_number, pyramid_cfg)
                     min_size = pyramid_cfg.get("min_size_usdt", 10.0)
+                    # Compute base size BEFORE SL tightening to get correct sizing
                     base_size = calculate_position_size(spot_signal)["usdt_amount"]
 
                     if base_size * size_factor < min_size:
@@ -270,7 +284,7 @@ def run_cycle():
                         logger.info(msg)
                         phase3_actions.append(f"⏭ SPOT  {msg}")
                     else:
-                        # Tighten SL for pyramid entries
+                        # Tighten SL for pyramid entries (after sizing so base_size stays correct)
                         tighten = pyramid_cfg.get("tighten_sl_factor", 0.8)
                         sl_mult = tighten ** (entry_number - 1)  # 1.0 → 0.8 → 0.64
                         if atr > 0 and sl_mult < 1.0:
