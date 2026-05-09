@@ -447,14 +447,16 @@ def get_open_position_count_by_direction(direction, mode=None):
 
 
 def close_paper_position(pos_id, outcome, pnl_pct, closed_at=None):
-    """Mark a paper position as closed."""
+    """Mark a paper position as closed, weighting P&L by size_factor for pyramid entries."""
     c = _conn()
+    row = c.execute("SELECT size_factor FROM paper_positions WHERE id=?", (pos_id,)).fetchone()
+    sf = float(row["size_factor"] or 1.0) if row else 1.0
     c.execute(
         """UPDATE paper_positions
            SET outcome=?, pnl_pct=?, closed_at=?
            WHERE id=?""",
         (
-            outcome, round(pnl_pct, 3),
+            outcome, round(pnl_pct * sf, 3),
             closed_at or datetime.now(UTC).isoformat(), pos_id,
         ),
     )

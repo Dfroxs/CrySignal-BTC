@@ -4,6 +4,15 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-10 — Pyramid Strategy Review: 2 Bug Fixes (Cache Mutation, P&L Weighting)
+
+### Fixed
+
+- **Spot signal cache no longer mutated by run_bot** (`signals/spot.py`): `analyze_spot_signal()` was returning the cached dict reference directly. `run_bot.py` mutates `spot_signal["type"]`, `stop_loss`, `take_profit`, and `tp2` at multiple points (HOLD forcing, SL tightening for pyramid entries). Subsequent bot cycles within the same 4H candle received a corrupted cached signal — e.g. a forced HOLD would suppress valid signals for the rest of the candle, and pyramid SL tightening would compound on itself each cycle. Fixed by returning `dict(_spot_cache["signal"])` (shallow copy) on cache hit.
+- **Pyramid P&L now weighted by size_factor** (`trading/history.py`): `close_paper_position()` was storing raw `pnl_pct` for all positions regardless of pyramid size. Entry #3 (25% of base size) was reporting the same percentage contribution as Entry #1 (100%), inflating aggregate P&L stats and win-rate calculations. Fixed in `close_paper_position()` by multiplying `pnl_pct` by the position's stored `size_factor` (1.0 for initial entries, 0.5/0.25 for pyramid entries) before storing.
+
+---
+
 ## 2026-05-10 — Full Codebase Review: 3 Bug Fixes (Paper Trail Fee, Sizing Threshold, Docstring)
 
 ### Fixed

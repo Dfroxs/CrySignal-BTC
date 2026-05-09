@@ -36,7 +36,7 @@ def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
 
     if _spot_cache["timestamp"] == candle_ts and _spot_cache["signal"] is not None:
         logger.info("[SPOT] Cache hit — reusing 4H candle %d result", candle_ts)
-        return _spot_cache["signal"]
+        return dict(_spot_cache["signal"])  # shallow copy — prevent run_bot mutations (type/SL/TP) from corrupting cache
 
     logger.info("[SPOT] Analyzing %s (4H)...", symbol)
     try:
