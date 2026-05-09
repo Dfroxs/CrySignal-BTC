@@ -85,6 +85,47 @@ def _check_reentry_quality(signal, mode):
     return f"entry ${new_entry:,.0f} worse than last ${last_entry:,.0f} with no confidence upgrade ({new_strength:.1f} vs {last_strength:.1f})"
 
 
+def _is_bearish_regime(signal):
+    """Block spot BUY if regime is bearish (DI- > DI+)."""
+    regime = signal.get("_regime", {})
+    return regime.get("trend_dir") == "BEARISH"
+
+
+def _trend_confluence_ok(signal):
+    """Require at least 2 of 3 bullish confirmations for spot entry."""
+    last = signal.get("_last", {})
+    regime = signal.get("_regime", {})
+    score = 0
+    # 1. EMA200 bullish
+    if last.get("close", 0) > last.get("ema200", 0):
+        score += 1
+    # 2. ADX trend bullish
+    if regime.get("trend_dir") == "BULLISH":
+        score += 1
+    # 3. Price above VWAP
+    if last.get("close", 0) > last.get("vwap", 0):
+        score += 1
+    return score >= 2
+
+
+def _is_breakout_chase(signal):
+    """Block spot entry if price is far above VWAP and not near support (breakout chase)."""
+    last = signal.get("_last", {})
+    sr = signal.get("support_resistance", {})
+    price = signal.get("entry_price", 0)
+    vwap = last.get("vwap", 0)
+    atr = signal.get("atr", 0)
+    support = sr.get("support", 0)
+
+    if not vwap or not atr:
+        return False
+    # Breakout chase: price > VWAP by more than 1 ATR AND not near support
+    if price > vwap + atr:
+        if not support or (price - support) > atr * 1.5:
+            return True
+    return False
+
+
 def _get_entry_prices_by_direction(direction, mode):
     """Return list of entry prices for open positions in the given direction, ordered by opened_at."""
     from trading.history import _conn
@@ -324,6 +365,24 @@ def run_cycle():
                 elif sr_warn:
                     logger.info("Spot %s — %s — skipping", spot_signal['type'], sr_warn)
                     phase3_actions.append(f"⏭ SPOT  {sr_warn}")
+
+                # Gate 0f: regime filter — no BUY in bearish trend
+                elif _is_bearish_regime(spot_signal):
+                    msg = f"Spot BUY blocked — bearish trend regime"
+                    logger.info(msg)
+                    phase3_actions.append(f"⏭ SPOT  {msg}")
+
+                # Gate 0g: trend confluence — need 2/3 bullish confirmations
+                elif not _trend_confluence_ok(spot_signal):
+                    msg = f"Spot BUY blocked — trend confluence < 2/3"
+                    logger.info(msg)
+                    phase3_actions.append(f"⏭ SPOT  {msg}")
+
+                # Gate 0h: pullback-only — avoid breakout chase
+                elif _is_breakout_chase(spot_signal):
+                    msg = f"Spot BUY blocked — breakout chase (price above VWAP, not near support)"
+                    logger.info(msg)
+                    phase3_actions.append(f"⏭ SPOT  {msg}")
 
                 else:
                     pid = open_paper_position(spot_signal, mode="spot", pyramid_entry=1, size_factor=1.0)
