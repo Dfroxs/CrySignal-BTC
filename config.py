@@ -37,8 +37,9 @@ RISK_CONFIG = {
     "atr_multiplier":        1.5,
     "take_profit_rr":        2.5,
     "trailing_atr_factor":   1.0,   # trail distance = ATR × this (tighter than entry SL)
-    "max_position_hours":     72,    # force-close position if open longer than this
-    "vol_expansion_exit_mult": 2.0,  # close if current ATR > entry ATR × this
+    "max_position_hours":      72,   # force-close futures position if open longer than this
+    "max_position_hours_spot": 48,   # spot 4H: move materializes in 12-15 candles, free capital sooner
+    "vol_expansion_exit_mult": 1.5,  # close if current ATR > entry ATR × this
     "max_positions":         2,     # max 1 BUY + 1 SELL (one per direction)
     "pyramid": {
         "enabled":                 True,       # allow adding to existing position on STRONG signals
@@ -49,7 +50,8 @@ RISK_CONFIG = {
         "min_size_usdt":           10.0,       # skip pyramid entry if calculated size < this
         "min_entry_distance_atr":  0.5,        # minimum ATR-multiple distance from previous entry
         "max_entry_distance_pct":  6.0,        # max % distance from first entry to allow pyramid
-        "tighten_sl_factor":       0.8,        # multiply SL distance by this per pyramid level
+        "tighten_sl_factor":       0.8,        # kept for reference; additive formula used instead
+        "tighten_sl_atr_step":     0.25,       # reduce SL by this × ATR per level: 1.5→1.25→1.0 (floor)
         "max_aggregate_risk_pct":  5.0,        # max total risk % of account across all entries
         "psychology_level_step":   1000,       # round numbers at this interval ($80k, $81k, …)
         "psychology_buffer_pct":   0.15,       # % distance considered "near" psychology level
@@ -71,10 +73,10 @@ FUTURES_CONFIG = {
         "fakeout_wick_ratio":     0.60,       # reject on >60% upper/lower wick
         "max_aggregate_risk_pct": 8.0,        # max total risk % across all futures positions
     },
-    "trailing_atr_factor":   0.7,    # tighter than spot (1.0) — leverage amplifies noise
+    "trailing_atr_factor":   0.9,    # reduced from 0.7 — 0.7× triggered on normal wicks at 1H
     "funding_exit": {
         "close_long_rate":   0.10,   # close LONG if funding > 0.10% (expensive to hold)
-        "close_short_rate": -0.05,   # close SHORT if funding < -0.05% (expensive to short)
+        "close_short_rate": -0.08,   # close SHORT if funding < -0.08% (symmetric with long threshold)
     },
 }
 
@@ -109,7 +111,7 @@ THRESHOLD_MAX    = 8.0
 
 # Spot signal thresholds (4H, 15 conditions — no funding/L/S/OI/basis)
 SPOT_THRESHOLD    = float(os.getenv("SPOT_THRESHOLD", 4.3))
-SPOT_MAX_SCORE    = 18.25  # all spot conditions max − diminishing-returns penalty; divergence immune after fix
+SPOT_MAX_SCORE    = 17.75  # S&P500 weight halved (1.0→0.5) for spot; divergence immune after fix
 SPOT_THRESHOLD_MIN = 3.0
 SPOT_THRESHOLD_MAX = 7.0
 

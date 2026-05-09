@@ -4,6 +4,37 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-10 — Strategy Tuning: 10 Parameter Fixes (Vol Exit, Trail, OBV, S&P, VWAP, Funding, Time Exit, EMA Slope, BB Squeeze, Pyramid SL)
+
+### Changed
+
+- **EMA 200 condition now includes slope** (`signals/engine.py`): Condition #1 differentiates between price above a rising EMA (full 1.0 pt) vs price above a flat/falling EMA (0.5 pt). Previously, a bullish position in a months-long uptrend always scored 1.0 regardless of EMA momentum. Uses a 5-candle slope to avoid single-candle noise.
+- **Bollinger Band middle zone replaced with squeeze detection** (`signals/engine.py`): The unconditional ±0.25 "price above/below BB middle" score is replaced with a volatility compression check. Score only awarded when the current BB width is in the bottom 30th percentile of the past 20+ candles (squeeze), combined with price direction vs middle. This was previously firing on almost every non-extreme candle.
+- **Pyramid SL tightening: multiplicative → additive ATR-based** (`run_bot.py`, `config.py`): SL per pyramid level now uses `entry - atr × max(1.0, 1.5 - 0.25 × (n-1))` instead of `sl_dist × 0.8^(n-1)`. Results: Entry #2 = 1.25× ATR (was 0.8×), Entry #3 = 1.0× ATR (was 0.64×). The multiplicative formula compounded to below-wick levels at entry #3; the additive formula has a hard 1.0× ATR floor. Added `tighten_sl_atr_step: 0.25` to pyramid config.
+
+---
+
+## 2026-05-10 — Strategy Tuning: 7 Parameter Fixes (Vol Exit, Futures Trail, OBV, S&P, VWAP, Funding, Time Exit)
+
+### Changed
+
+- **S&P500 weight halved for spot mode** (`signals/engine.py`): S&P500 bias now scores 0.5 (spot) vs 1.0 (futures). BTC-SPX correlation weakens during crypto-driven cycles; 1.0 was equivalent to a MACD crossover — too high for an external macro factor. `SPOT_MAX_SCORE` updated 18.25 → 17.75.
+- **VWAP requires recent crossover** (`signals/engine.py`): Condition #17 now only scores when price crossed the VWAP in the last 5 candles (was below/above within lookback window). Pure "price above VWAP" in a sustained trend no longer awards 0.75 automatically — that was effectively a free score in any uptrend.
+- **Funding exit short threshold symmetric** (`config.py`): `close_short_rate` raised from `-0.05%` → `-0.08%`. The previous asymmetry (long closed at >0.10%, short closed at <-0.05%) was treating shorts as far more sensitive than longs. `-0.08%` is more proportional.
+- **Spot time exit reduced to 48h** (`config.py`, `trading/paper.py`, `backtest.py`): Added `max_position_hours_spot: 48`. BTC 4H signals typically materialize within 12-15 candles (48-60h); holding to 72h locks capital in declining-quality setups. Futures unchanged at 72h. Both paper.py and backtest.py now read mode-aware values.
+
+---
+
+## 2026-05-10 — Strategy Tuning: 3 Parameter Fixes (Vol Exit, Futures Trail, OBV Filter)
+
+### Changed
+
+- **Vol expansion exit threshold tightened** (`config.py`): `vol_expansion_exit_mult` reduced from `2.0` → `1.5`. BTC 4H ATR can spike 1.8-2.0× in a single candle during news events, meaning the 2.0× exit was triggering *after* damage already occurred. 1.5× catches exhaustion earlier while still filtering noise.
+- **Futures trailing stop loosened** (`config.py`): `FUTURES_CONFIG["trailing_atr_factor"]` raised from `0.7` → `0.9`. At 0.7× ATR on 1H candles, normal wicks frequently triggered premature trail exits — the tighter trail was intended to reflect leverage amplification, but 0.7× is below typical wick size on BTC 1H. Spot trail unchanged at 1.0×.
+- **OBV activation threshold tightened** (`signals/engine.py`): OBV signal threshold raised from `obv_rel >= 0.001` → `>= 0.002`. The 0.001 threshold fired on nearly every candle with any volume, making the 0.75-point OBV condition a near-automatic score contribution. 0.002 requires meaningful net OBV flow relative to 5-candle volume.
+
+---
+
 ## 2026-05-10 — Pyramid Strategy Review: 2 Bug Fixes (Cache Mutation, P&L Weighting)
 
 ### Fixed

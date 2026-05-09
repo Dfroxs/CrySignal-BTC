@@ -126,7 +126,10 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
         partial = pos.get("partial_closed", 0)
 
         # ── Exit 0a: time-based stale position ──
-        max_hours = RISK_CONFIG.get("max_position_hours", 72)
+        if pos.get("mode") == "spot":
+            max_hours = RISK_CONFIG.get("max_position_hours_spot", 48)
+        else:
+            max_hours = RISK_CONFIG.get("max_position_hours", 72)
         opened_str = pos.get("opened_at", "")
         if opened_str:
             try:

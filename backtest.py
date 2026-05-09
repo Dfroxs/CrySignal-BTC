@@ -221,7 +221,10 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
 
         # Time exit
         age = j - entry_idx
-        max_hours = RISK_CONFIG.get("max_position_hours", 72)
+        if mode == "spot":
+            max_hours = RISK_CONFIG.get("max_position_hours_spot", 48)
+        else:
+            max_hours = RISK_CONFIG.get("max_position_hours", 72)
         if age * (4 if timeframe == "4h" else 1) > max_hours:
             exit_px = c["close"]
             exit_pnl = _calc_backtest_pnl(stype, entry, exit_px, partial_closed, partial_pnl, mode)

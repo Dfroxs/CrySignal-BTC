@@ -485,18 +485,17 @@ def run_cycle():
                         logger.info(msg)
                         phase3_actions.append(f"⏭ SPOT  {msg}")
                     else:
-                        # Tighten SL for pyramid entries (after sizing so base_size stays correct)
-                        tighten = pyramid_cfg.get("tighten_sl_factor", 0.8)
-                        sl_mult = tighten ** (entry_number - 1)  # 1.0 → 0.8 → 0.64
-                        if atr > 0 and sl_mult < 1.0:
-                            orig_sl = spot_signal["stop_loss"]
-                            sl_dist = abs(spot_signal["entry_price"] - orig_sl)
-                            new_sl = spot_signal["entry_price"] - sl_dist * sl_mult
+                        # Tighten SL for pyramid entries using additive ATR step
+                        # Entry #2: 1.5×ATR → 1.25×ATR, Entry #3: 1.25×ATR → 1.0×ATR (floor)
+                        atr_step = pyramid_cfg.get("tighten_sl_atr_step", 0.25)
+                        base_atr_mult = RISK_CONFIG.get("atr_multiplier", 1.5)
+                        new_atr_mult = max(1.0, base_atr_mult - atr_step * (entry_number - 1))
+                        if atr > 0 and new_atr_mult < base_atr_mult:
+                            new_sl_dist = atr * new_atr_mult
+                            new_sl = spot_signal["entry_price"] - new_sl_dist
                             spot_signal["stop_loss"] = round(new_sl, 2)
-                            # Recalculate TP1 with same R:R from tighter SL
-                            new_atr_stop = sl_dist * sl_mult
-                            spot_signal["take_profit"] = round(spot_signal["entry_price"] + new_atr_stop * RISK_CONFIG["take_profit_rr"], 2)
-                            spot_signal["tp2"] = round(spot_signal["entry_price"] + new_atr_stop * RISK_CONFIG["take_profit_rr"] * 2, 2)
+                            spot_signal["take_profit"] = round(spot_signal["entry_price"] + new_sl_dist * RISK_CONFIG["take_profit_rr"], 2)
+                            spot_signal["tp2"] = round(spot_signal["entry_price"] + new_sl_dist * RISK_CONFIG["take_profit_rr"] * 2, 2)
 
                         # Gate 8: aggregate risk cap
                         agg_risk, agg_warn = _calc_aggregate_risk(
@@ -510,7 +509,7 @@ def run_cycle():
                         else:
                             pid = open_paper_position(spot_signal, mode="spot", pyramid_entry=entry_number, size_factor=size_factor)
                             size_note = f" (size {size_factor * 100:.0f}% of base)" if size_factor < 1.0 else ""
-                            sl_note = f" [SL ×{sl_mult:.2f}]" if sl_mult < 1.0 else ""
+                            sl_note = f" [SL {new_atr_mult:.2f}×ATR]" if new_atr_mult < base_atr_mult else ""
                             msg = f"SPOT {spot_signal['type']} pyramid entry #{entry_number} opened (#{pid}) @ ${spot_signal['entry_price']:,.0f}{size_note}{sl_note}"
                             logger.info(msg)
                             phase3_actions.append(f"🧩 {msg}")

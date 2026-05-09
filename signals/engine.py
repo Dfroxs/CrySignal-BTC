@@ -31,13 +31,18 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     buy_conditions = 0.0
     sell_conditions = 0.0
 
-    # 1 — EMA 200 trend
-    if current['close'] > current['EMA_200']:
-        buy_conditions += 1
-        signal['reasons'].append("✓ Price above EMA 200 (bullish trend)")
+    # 1 — EMA 200 trend + slope (rising EMA = strengthening trend)
+    ema200_now  = current['EMA_200']
+    ema200_prev = df['EMA_200'].iloc[-6]  # 5-candle slope avoids single-candle noise
+    ema_rising  = ema200_now > ema200_prev
+    if current['close'] > ema200_now:
+        buy_conditions += 1.0 if ema_rising else 0.5
+        label = "rising ✓" if ema_rising else "flat/falling ⚠️"
+        signal['reasons'].append(f"✓ Price above EMA 200 ({label})")
     else:
-        sell_conditions += 1
-        signal['reasons'].append("✗ Price below EMA 200 (bearish trend)")
+        sell_conditions += 1.0 if not ema_rising else 0.5
+        label = "falling ✓" if not ema_rising else "flat/rising ⚠️"
+        signal['reasons'].append(f"✗ Price below EMA 200 ({label})")
 
     # 2 — RSI
     rsi = current['RSI_14']
@@ -108,10 +113,22 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         sell_conditions += 1
         _bb_upper = True
         signal['reasons'].append("✗ Price at/above BB Upper — overbought")
-    elif current['close'] > current['BB_Middle']:
-        buy_conditions += 0.25
     else:
-        sell_conditions += 0.25
+        # BB middle zone — only score on volatility compression (squeeze)
+        bb_mid = current['BB_Middle']
+        if bb_mid and bb_mid > 0:
+            bb_width_series = (df['BB_Upper'] - df['BB_Lower']) / df['BB_Middle'].replace(0, float('nan'))
+            bb_width_now = bb_width_series.iloc[-1]
+            valid = bb_width_series.dropna()
+            if not pd.isna(bb_width_now) and len(valid) >= 20:
+                squeeze = (valid < bb_width_now).mean() <= 0.30  # bottom 30% — compressed
+                if squeeze:
+                    if current['close'] > bb_mid:
+                        buy_conditions += 0.25
+                        signal['reasons'].append("✓ BB squeeze + above middle — breakout coil")
+                    else:
+                        sell_conditions += 0.25
+                        signal['reasons'].append("✗ BB squeeze + below middle — breakdown coil")
 
     # 6 — Multi-timeframe alignment
     if htf:
@@ -182,7 +199,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     obv_slope = df['OBV'].iloc[-1] - df['OBV'].iloc[-5]
     obv_denom = df['volume'].iloc[-5:].sum()
     obv_rel = abs(obv_slope) / obv_denom if obv_denom > 0 else 0
-    if obv_rel >= 0.001:
+    if obv_rel >= 0.002:
         if obv_slope > 0:
             buy_conditions += 0.75
             signal['reasons'].append("✓ OBV rising — accumulation detected")
@@ -254,14 +271,15 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             sell_conditions += 0.5
             signal['reasons'].append(f"✗ DXY RISING ({dxy.get('change_pct', 0):+.2f}%) — strong USD")
 
-    # 10 — S&P 500 trend
+    # 10 — S&P 500 trend (0.5 for spot: BTC-SPX correlation weakens in crypto-driven cycles)
     if market_structure:
         sp500 = market_structure.get('sp500', {})
+        sp500_weight = 0.5 if mode == 'spot' else 1.0
         if sp500.get('bias') == 'BULLISH':
-            buy_conditions += 1.0
+            buy_conditions += sp500_weight
             signal['reasons'].append(f"✓ S&P500 RISING ({sp500.get('change_pct',0):+.2f}%) — risk-on")
         elif sp500.get('bias') == 'BEARISH':
-            sell_conditions += 1.0
+            sell_conditions += sp500_weight
             signal['reasons'].append(f"✗ S&P500 FALLING ({sp500.get('change_pct',0):+.2f}%) — risk-off")
 
         # 11 — Stablecoin supply
@@ -347,15 +365,19 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             sell_conditions += 0.75
             signal['reasons'].append(f"✗ Rejected at resistance ${resistance:,.0f} (within {prox_pct*100:.2f}%)")
 
-    # 17 — VWAP position
+    # 17 — VWAP crossover (require recent cross — pure position scores nothing in a trending market)
     vwap = current.get('VWAP_24')
-    if vwap and not pd.isna(vwap):
+    if vwap and not pd.isna(vwap) and len(df) >= 6:
+        lookback_close = df['close'].iloc[-6:-1]
+        lookback_vwap  = df['VWAP_24'].iloc[-6:-1]
         if current['close'] > vwap:
-            buy_conditions += 0.75
-            signal['reasons'].append(f"✓ Price above VWAP ${vwap:,.2f} — institutional buying")
+            if lookback_close.lt(lookback_vwap).any():  # was below VWAP in last 5 candles
+                buy_conditions += 0.75
+                signal['reasons'].append(f"✓ Price crossed above VWAP ${vwap:,.2f} — institutional buying")
         else:
-            sell_conditions += 0.75
-            signal['reasons'].append(f"✗ Price below VWAP ${vwap:,.2f} — institutional selling")
+            if lookback_close.gt(lookback_vwap).any():  # was above VWAP in last 5 candles
+                sell_conditions += 0.75
+                signal['reasons'].append(f"✗ Price crossed below VWAP ${vwap:,.2f} — institutional selling")
 
     # 18 — ADX trend strength + DI crossover
     try:
