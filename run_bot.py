@@ -539,7 +539,7 @@ def run_cycle():
             for opp in opp_positions:
                 entry = opp["entry_price"]
                 flip_px = futures_signal["entry_price"]
-                pnl = ((flip_px - entry) / entry * 100) if opp_dir == "SELL" else ((entry - flip_px) / entry * 100)
+                pnl = ((entry - flip_px) / entry * 100) if opp_dir == "SELL" else ((flip_px - entry) / entry * 100)
                 close_paper_position(opp["id"], "FLIP", round(pnl, 2), closed_at=flip_px)
                 msg = f"FUT {opp['type']} flipped → {futures_signal['type']} (#{opp['id']} closed, P&L {pnl:+.2f}%)"
                 logger.info(msg)
@@ -549,8 +549,8 @@ def run_cycle():
             if flipped:
                 # Flip profitability: only open if new signal can recover the loss
                 flip_pnl_total = sum(
-                    ((flip_px - p["entry_price"]) / p["entry_price"] * 100) if opp_dir == "SELL"
-                    else ((p["entry_price"] - flip_px) / p["entry_price"] * 100)
+                    ((p["entry_price"] - flip_px) / p["entry_price"] * 100) if opp_dir == "SELL"
+                    else ((flip_px - p["entry_price"]) / p["entry_price"] * 100)
                     for p in opp_positions
                 )
                 new_sl = futures_signal.get("stop_loss", flip_px)

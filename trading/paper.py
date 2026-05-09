@@ -31,7 +31,7 @@ _SLIPPAGE_WARN_PCT = 0.01  # 1%
 # ---------------------------------------------------------------------------
 
 def _calc_pnl(pos, price, with_fees=True):
-    """Calculate P&L % for a position at exit price, including fees + slippage."""
+    """Calculate blended P&L % for a position at exit price, including fees + slippage."""
     entry   = pos["entry_price"]
     mode    = pos.get("mode", "futures")
     partial = pos.get("partial_closed", 0)
@@ -45,17 +45,15 @@ def _calc_pnl(pos, price, with_fees=True):
         ec = EXECUTION_CONFIG
         fee_pct = ec["futures_fee_pct"] if mode == "futures" else ec["spot_fee_pct"]
         slip = ec.get("slippage_pct", 0.05)
-        # 2 sides per trade (open + close), single side for partial close (already paid entry)
         sides = 1 if partial else 2
         costs = (fee_pct + slip) * sides
         gross_pnl -= costs
 
-    return gross_pnl
-
+    # Blend with partial TP1 if already taken
     if partial:
         partial_pnl = pos.get("partial_pnl") or 0
-        return partial_pnl * 0.5 + exit_pnl * 0.5
-    return exit_pnl
+        return partial_pnl * 0.5 + gross_pnl * 0.5
+    return gross_pnl
 
 
 def _check_slippage(trigger_price, fill_price, pos_id):
