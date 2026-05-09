@@ -240,6 +240,23 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
                     buy_conditions -= (_fund_buy + _ls_buy)
                     signal['reasons'].append(f"⚠️  Funding/LS conflict — selling pressure dominates, buy signals removed")
 
+        elif mode == 'spot':
+            # Lightweight futures sentiment for spot (informational, half weight)
+            if funding.get('bias') == 'BULLISH':
+                buy_conditions += 0.25
+                signal['reasons'].append(f"✓ Funding negative ({funding.get('rate_pct',0):.4f}%) — bullish futures sentiment")
+            elif funding.get('bias') == 'BEARISH':
+                sell_conditions += 0.25
+                signal['reasons'].append(f"✗ Funding elevated ({funding.get('rate_pct',0):.4f}%) — bearish futures sentiment")
+
+            ls = market_structure.get('long_short', {})
+            if ls.get('bias') == 'BULLISH':
+                buy_conditions += 0.25
+                signal['reasons'].append(f"✓ L/S {ls.get('ratio',1):.2f} — shorts crowded (futures sentiment)")
+            elif ls.get('bias') == 'BEARISH':
+                sell_conditions += 0.25
+                signal['reasons'].append(f"✗ L/S {ls.get('ratio',1):.2f} — longs crowded (futures sentiment)")
+
         if dxy.get('bias') == 'BULLISH':
             buy_conditions += 0.5
             signal['reasons'].append(f"✓ DXY FALLING ({dxy.get('change_pct', 0):+.2f}%) — weak USD")

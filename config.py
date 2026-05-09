@@ -109,7 +109,7 @@ THRESHOLD_MAX    = 8.0
 
 # Spot signal thresholds (4H, 15 conditions — no funding/L/S/OI/basis)
 SPOT_THRESHOLD    = float(os.getenv("SPOT_THRESHOLD", 4.3))
-SPOT_MAX_SCORE    = 16.75  # 15.5 + ADX(0.5) + DI cross(0.75)
+SPOT_MAX_SCORE    = 17.25  # 15.5 + ADX(0.5) + DI cross(0.75) + funding(0.25) + LS(0.25)
 SPOT_THRESHOLD_MIN = 3.0
 SPOT_THRESHOLD_MAX = 7.0
 
