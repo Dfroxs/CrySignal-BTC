@@ -15,9 +15,11 @@ from signals.market_data import (
     fetch_dxy_trend,
     fetch_fear_and_greed,
     fetch_funding_rate,
+    fetch_gold_price,
     fetch_long_short_ratio,
     fetch_sp500_trend,
     fetch_stablecoin_supply,
+    fetch_vix,
     get_spot_adaptive_threshold,
     update_spot_threshold_state,
 )
@@ -48,7 +50,7 @@ def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
 
         logger.info("Fetching spot market data in parallel...")
         fmap = {}
-        with ThreadPoolExecutor(max_workers=9) as pool:
+        with ThreadPoolExecutor(max_workers=11) as pool:
             fmap['htf'] = pool.submit(get_spot_htf_trend)
             fmap['dxy'] = pool.submit(fetch_dxy_trend)
             fmap['sp500'] = pool.submit(fetch_sp500_trend)
@@ -56,6 +58,8 @@ def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
             fmap['btc_dom'] = pool.submit(fetch_btc_dominance)
             fmap['funding'] = pool.submit(fetch_funding_rate)
             fmap['ls'] = pool.submit(fetch_long_short_ratio)
+            fmap['gold'] = pool.submit(fetch_gold_price)
+            fmap['vix'] = pool.submit(fetch_vix)
             if include_news:
                 fmap['fng'] = pool.submit(fetch_fear_and_greed)
 
@@ -67,6 +71,8 @@ def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
                 'btc_dom': fmap['btc_dom'].result(),
                 'funding': fmap['funding'].result(),
                 'long_short': fmap['ls'].result(),
+                'gold': fmap['gold'].result(),
+                'vix': fmap['vix'].result(),
             }
             fng = fmap['fng'].result() if include_news else None
 
