@@ -11,7 +11,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 import trading.history as sh
-from config import FUTURES_CONFIG, RISK_CONFIG
+from config import EXECUTION_CONFIG, FUTURES_CONFIG, RISK_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -30,15 +30,27 @@ _SLIPPAGE_WARN_PCT = 0.01  # 1%
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _calc_pnl(pos, price):
-    """Calculate blended P&L percentage for a position at the given exit price."""
-    entry    = pos["entry_price"]
-    partial  = pos.get("partial_closed", 0)
+def _calc_pnl(pos, price, with_fees=True):
+    """Calculate P&L % for a position at exit price, including fees + slippage."""
+    entry   = pos["entry_price"]
+    mode    = pos.get("mode", "futures")
+    partial = pos.get("partial_closed", 0)
 
     if pos["type"] == "BUY":
-        exit_pnl = (price - entry) / entry * 100
+        gross_pnl = (price - entry) / entry * 100
     else:
-        exit_pnl = (entry - price) / entry * 100
+        gross_pnl = (entry - price) / entry * 100
+
+    if with_fees:
+        ec = EXECUTION_CONFIG
+        fee_pct = ec["futures_fee_pct"] if mode == "futures" else ec["spot_fee_pct"]
+        slip = ec.get("slippage_pct", 0.05)
+        # 2 sides per trade (open + close), single side for partial close (already paid entry)
+        sides = 1 if partial else 2
+        costs = (fee_pct + slip) * sides
+        gross_pnl -= costs
+
+    return gross_pnl
 
     if partial:
         partial_pnl = pos.get("partial_pnl") or 0

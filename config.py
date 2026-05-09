@@ -136,6 +136,18 @@ LEVERAGE_CONFIG = {
     "maintenance_margin_rate": 0.005, # Binance: 0.5% at ≤10x, 1.0% at 20x+
 }
 
+EXECUTION_CONFIG = {
+    "spot_fee_pct":       0.10,   # Binance spot taker fee (%)
+    "futures_fee_pct":    0.04,   # Binance futures taker fee (%)
+    "slippage_pct":       0.05,   # market order slippage (%)
+}
+
+RISK_LIMITS = {
+    "max_drawdown_pct":   15.0,   # stop new entries if drawdown > this
+    "min_equity_pct":     50.0,   # close all + emergency stop if equity < this
+    "daily_loss_limit":   5.0,    # stop for the day if daily loss > this
+}
+
 
 # ---------------------------------------------------------------------------
 # Caching helpers

@@ -1,27 +1,50 @@
 #!/usr/bin/env python3
-"""Backtesting harness — replay historical OHLCV through the signal pipeline.
+r"""Backtesting harness — replay historical OHLCV through the full signal pipeline.
 
-Fetches 90 days of 1H BTC/USDT data, runs ``generate_signals()`` on each
-candle (after EMA warm-up), and tracks whether each signal's TP or SL
-is hit first within a configurable look-ahead window.
+Supports SPOT 4H and FUTURES 1H modes. Simulates entry gates, trailing stop,
+partial TP (TP1 50% + TP2 50%), time exit, vol exit, and execution costs.
 
-Only technical conditions are testable (no funding, L/S, DXY, S&P 500,
-stablecoin, BTC.D, OI, or liquidation history available without paid APIs).
-These conditions simply score as NEUTRAL.
+Market structure data (funding, L/S, OI, DXY, S&P 500, stablecoin, BTC.D,
+Gold, VIX) is NOT available historically without paid APIs — those conditions
+score as NEUTRAL.  This means backtest results are *conservative* compared to
+live trading, which is safer for evaluation.
+
+Usage:
+    python3 backtest.py              # futures 1H (default)
+    python3 backtest.py --mode spot  # spot 4H
 """
 
+import argparse
 import logging
 import sys
-from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 
-from config import FUTURES_CONFIG, RISK_CONFIG, SIGNAL_THRESHOLD
-from signals.indicators import calculate_atr, calculate_bollinger_bands, calculate_ema, calculate_macd, calculate_obv, calculate_rsi, calculate_stoch_rsi, calculate_vwap, detect_rsi_divergence, detect_support_resistance
+from config import (
+    EXECUTION_CONFIG,
+    FUTURES_CONFIG,
+    RISK_CONFIG,
+    SIGNAL_THRESHOLD,
+    SPOT_THRESHOLD,
+)
 from signals.engine import generate_signals
+from signals.indicators import (
+    calculate_adx,
+    calculate_atr,
+    calculate_bollinger_bands,
+    calculate_ema,
+    calculate_macd,
+    calculate_obv,
+    calculate_rsi,
+    calculate_stoch_rsi,
+    calculate_vwap,
+    classify_regime,
+    compute_atr_percentile,
+    detect_rsi_divergence,
+    detect_support_resistance,
+)
 from signals.ohlcv import fetch_ohlcv_df
-from signals.htf import _htf_indicators
 from signals.market_data import exchange
 
 logger = logging.getLogger(__name__)
@@ -31,106 +54,67 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 LOOKBACK_DAYS = 90
-MAX_HOLD_CANDLES = 72  # max candles to wait for TP/SL hit (72h)
-MIN_WARMUP = 200  # candles needed for EMA200
-SLIPPAGE_PCT = 0.001  # 0.1% per side (entry + exit) — typical BTC/USDT market impact
+MAX_HOLD_CANDLES = {"1h": 72, "4h": 18}  # ~72h for both
+MIN_WARMUP = 200  # candles for EMA200
 
 
 # ---------------------------------------------------------------------------
 # Core loop
 # ---------------------------------------------------------------------------
 
-def run_backtest(symbol="BTC/USDT", timeframe="1h",
+def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
                  lookback_days=LOOKBACK_DAYS):
     """Run backtest and return (trades, summary_stats) dicts."""
-    logger.info("Fetching %d days of %s OHLCV ...", lookback_days, symbol)
-    df = fetch_ohlcv_df(symbol, timeframe, limit=lookback_days * 24 + MIN_WARMUP)
+    limit = lookback_days * (24 if timeframe == "1h" else 6) + MIN_WARMUP
+    max_hold = MAX_HOLD_CANDLES.get(timeframe, 72)
+    threshold = SPOT_THRESHOLD if mode == "spot" else SIGNAL_THRESHOLD
+    ec = EXECUTION_CONFIG
+
+    logger.info("Fetching %d days of %s %s OHLCV ...", lookback_days, mode, symbol)
+    df = fetch_ohlcv_df(symbol, timeframe, limit=limit)
     if len(df) < MIN_WARMUP + 10:
-        logger.error("Not enough data for backtest (got %d candles).", len(df))
+        logger.error("Not enough data (got %d candles).", len(df))
         return [], {}
 
     trades = []
-    for i in range(MIN_WARMUP, len(df) - MAX_HOLD_CANDLES - 1):
+    for i in range(MIN_WARMUP, len(df) - max_hold - 1):
         window = df.iloc[:i + 1].copy()
-
-        # Recompute indicators on the truncated window
-        # (fetch_ohlcv_df always recomputes — but slicing preserves them,
-        #  and since they're calculated on the full series they're accurate
-        #  for the subset too. We only need the latest row.)
         sr = detect_support_resistance(window)
 
-        # HTF trend at this point in history
+        # HTF + regime
         try:
-            htf = _compute_htf_from_df(df, i)
+            htf = _compute_htf_from_df(df, i, timeframe)
+            adx_df = calculate_adx(window)
+            regime = classify_regime(window, adx_df)
         except Exception:
             htf = None
+            regime = {"threshold_bump": 0, "size_adj": 1.0}
 
-        signal = generate_signals(window, htf=htf, market_structure=None, sr=sr, threshold_override=SIGNAL_THRESHOLD)
+        # Session bump
+        utc_hour = _candle_utc_hour(df, i, timeframe)
+        session_bump = 0.5 if utc_hour < 8 else (-0.25 if 13 <= utc_hour < 22 else 0)
+
+        effective_threshold = threshold + regime.get("threshold_bump", 0) + session_bump
+
+        signal = generate_signals(
+            window, htf=htf, market_structure=None, sr=sr,
+            mode=mode, threshold_override=effective_threshold,
+        )
+        signal["mode"] = mode
 
         if signal["type"] == "HOLD":
             continue
 
-        # Simulate forward
-        raw_entry = signal["entry_price"]
-        raw_sl    = signal["stop_loss"]
-        raw_tp    = signal["take_profit"]
+        # ── Entry gate simulation ──
+        if not _passes_entry_gates(signal, mode, window):
+            continue
 
-        # Apply slippage: BUY pays more on entry, receives less on exit
-        if signal["type"] == "BUY":
-            entry = raw_entry * (1 + SLIPPAGE_PCT)
-            sl    = raw_sl    * (1 - SLIPPAGE_PCT)
-            tp    = raw_tp    * (1 - SLIPPAGE_PCT)
-        else:
-            entry = raw_entry * (1 - SLIPPAGE_PCT)
-            sl    = raw_sl    * (1 + SLIPPAGE_PCT)
-            tp    = raw_tp    * (1 + SLIPPAGE_PCT)
-
-        outcome = "OPEN"
-        hit_candle = None
-
-        for j in range(i + 1, min(i + 1 + MAX_HOLD_CANDLES, len(df))):
-            high = df.iloc[j]["high"]
-            low  = df.iloc[j]["low"]
-
-            if signal["type"] == "BUY":
-                if high >= tp:
-                    outcome, hit_candle = "WIN", j
-                    break
-                if low <= sl:
-                    outcome, hit_candle = "LOSS", j
-                    break
-            else:  # SELL
-                if low <= tp:
-                    outcome, hit_candle = "WIN", j
-                    break
-                if high >= sl:
-                    outcome, hit_candle = "LOSS", j
-                    break
-
-        pnl_pct = 0
-        if outcome == "WIN":
-            pnl_pct = abs(tp - entry) / entry * 100
-            if signal["type"] == "SELL":
-                pnl_pct = abs(entry - tp) / entry * 100
-        elif outcome == "LOSS":
-            pnl_pct = -(abs(entry - sl) / entry * 100)
-
-        entry_time = df.iloc[i]["timestamp"]
-        exit_time = df.iloc[hit_candle]["timestamp"] if hit_candle else None
-
-        trades.append({
-            "entry_time":    str(entry_time),
-            "exit_time":     str(exit_time) if exit_time else "",
-            "type":          signal["type"],
-            "entry_price":   entry,
-            "stop_loss":     sl,
-            "take_profit":   tp,
-            "strength":      signal["strength"],
-            "outcome":       outcome,
-            "pnl_pct":       round(pnl_pct, 3),
-            "candles_held":  (hit_candle - i) if hit_candle else 0,
-            "reasons":       "; ".join(signal["reasons"]),
-        })
+        # ── Forward simulation with trailing stop + partial TP ──
+        result = _simulate_forward(
+            df, i, signal, max_hold, timeframe, mode, ec,
+        )
+        if result:
+            trades.append(result)
 
     if not trades:
         logger.warning("No signals generated in backtest period.")
@@ -141,71 +125,300 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h",
 
 
 # ---------------------------------------------------------------------------
+# Entry gate simulation
+# ---------------------------------------------------------------------------
+
+def _passes_entry_gates(signal, mode, window):
+    """Simulate entry gates with historical data."""
+    conf = signal.get("confidence", "WEAK")
+    min_conf = "NORMAL"
+
+    # Confidence gate
+    _CL = {"WEAK": 0, "NORMAL": 1, "STRONG": 2}
+    if _CL.get(conf, -1) < _CL.get(min_conf, 0):
+        return False
+
+    # Fakeout gate — check 24H wick on last candle
+    last = window.iloc[-1]
+    hi24 = window["high"].tail(24).max() if mode == "spot" else window["high"].tail(6).max()
+    lo24 = window["low"].tail(24).min() if mode == "spot" else window["low"].tail(6).min()
+    if hi24 and lo24 and hi24 != lo24:
+        range_24h = hi24 - lo24
+        upper_wick = (hi24 - last["close"]) / range_24h
+        if signal["type"] == "BUY" and upper_wick > 0.6:
+            return False  # fake bullish breakout
+
+    # Spot-only quality gates
+    if mode == "spot" and signal["type"] == "BUY":
+        regime = signal.get("_regime", {})
+        # Gate: regime filter — no BUY in bearish trend
+        if regime.get("trend_dir") == "BEARISH":
+            return False
+        # Gate: trend confluence — need 2/3 bullish confirmations
+        ema200 = last.get("EMA_200", last.get("ema200", 0))
+        vwap = last.get("VWAP_24", last.get("vwap", 0))
+        confluence = 0
+        if last["close"] > ema200: confluence += 1
+        if regime.get("trend_dir") == "BULLISH": confluence += 1
+        if last["close"] > vwap: confluence += 1
+        if confluence < 2:
+            return False
+        # Gate: breakout chase — block if price > VWAP+ATR and not near support
+        atr = last.get("ATR_14", 0)
+        sr_entry = signal.get("entry_price", 0)
+        if atr and vwap and sr_entry > vwap + atr:
+            return False  # FOMO entry
+
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Forward simulation — trailing stop + partial TP
+# ---------------------------------------------------------------------------
+
+def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
+    """Walk forward from entry_idx, managing trailing stop and partial TP."""
+    entry_raw = signal["entry_price"]
+    sl_raw = signal["stop_loss"]
+    tp1_raw = signal["take_profit"]
+    tp2_raw = signal.get("tp2", tp1_raw)
+    atr_entry = signal.get("atr", 0)
+    stype = signal["type"]
+
+    # Apply fees + slippage on entry
+    fee_pct = ec["futures_fee_pct"] if mode == "futures" else ec["spot_fee_pct"]
+    slip = ec.get("slippage_pct", 0.05)
+    entry_cost = (fee_pct + slip) / 100
+
+    if stype == "BUY":
+        entry = entry_raw * (1 + entry_cost)
+        sl = sl_raw * (1 - entry_cost)
+        tp1 = tp1_raw * (1 - entry_cost)
+        tp2 = tp2_raw * (1 - entry_cost) if tp2_raw else None
+    else:
+        entry = entry_raw * (1 - entry_cost)
+        sl = sl_raw * (1 + entry_cost)
+        tp1 = tp1_raw * (1 + entry_cost)
+        tp2 = tp2_raw * (1 + entry_cost) if tp2_raw else None
+
+    trail = sl
+    trail_factor = FUTURES_CONFIG.get("trailing_atr_factor", 0.7) if mode == "futures" else 1.0
+    partial_closed = False
+    partial_pnl = 0
+
+    for j in range(entry_idx + 1, min(entry_idx + 1 + max_hold, len(df))):
+        c = df.iloc[j]
+        high, low = c["high"], c["low"]
+        atr_now = c.get("ATR_14", atr_entry)
+
+        # Time exit
+        age = j - entry_idx
+        max_hours = RISK_CONFIG.get("max_position_hours", 72)
+        if age * (4 if timeframe == "4h" else 1) > max_hours:
+            exit_px = c["close"]
+            exit_pnl = _calc_backtest_pnl(stype, entry, exit_px, partial_closed, partial_pnl)
+            return _make_trade(df, entry_idx, j, signal, "TIME_EXIT", entry, exit_px, exit_pnl)
+
+        # Vol exit
+        if atr_entry > 0 and atr_now > atr_entry * RISK_CONFIG.get("vol_expansion_exit_mult", 2.0):
+            exit_px = c["close"]
+            exit_pnl = _calc_backtest_pnl(stype, entry, exit_px, partial_closed, partial_pnl)
+            return _make_trade(df, entry_idx, j, signal, "VOL_EXIT", entry, exit_px, exit_pnl)
+
+        if stype == "BUY":
+            # Advance trailing stop
+            if atr_now > 0:
+                new_trail = c["close"] - atr_now * trail_factor
+                if new_trail > trail:
+                    trail = new_trail
+
+            # Partial TP1 (50%)
+            if not partial_closed and high >= tp1:
+                partial_pnl = (tp1 - entry) / entry * 100
+                trail = entry  # move to breakeven
+                partial_closed = True
+
+            # TP2 after partial
+            if partial_closed and tp2 and high >= tp2:
+                remaining = (tp2 - entry) / entry * 100
+                exit_pnl = partial_pnl * 0.5 + remaining * 0.5
+                return _make_trade(df, entry_idx, j, signal, "WIN", entry, tp2, exit_pnl)
+
+            # Trailing stop hit
+            if low <= trail:
+                exit_px = trail
+                remaining = (trail - entry) / entry * 100
+                exit_pnl = partial_pnl * 0.5 + remaining * 0.5 if partial_closed else remaining
+                outcome = "WIN" if trail >= entry else "LOSS"
+                return _make_trade(df, entry_idx, j, signal, outcome, entry, exit_px, exit_pnl)
+
+        else:  # SELL
+            if atr_now > 0:
+                new_trail = c["close"] + atr_now * trail_factor
+                if new_trail < trail:
+                    trail = new_trail
+
+            if not partial_closed and low <= tp1:
+                partial_pnl = (entry - tp1) / entry * 100
+                trail = entry
+                partial_closed = True
+
+            if partial_closed and tp2 and low <= tp2:
+                remaining = (entry - tp2) / entry * 100
+                exit_pnl = partial_pnl * 0.5 + remaining * 0.5
+                return _make_trade(df, entry_idx, j, signal, "WIN", entry, tp2, exit_pnl)
+
+            if high >= trail:
+                exit_px = trail
+                remaining = (entry - trail) / entry * 100
+                exit_pnl = partial_pnl * 0.5 + remaining * 0.5 if partial_closed else remaining
+                outcome = "WIN" if trail <= entry else "LOSS"
+                return _make_trade(df, entry_idx, j, signal, outcome, entry, exit_px, exit_pnl)
+
+    # Ran out of candles — still open
+    return _make_trade(df, entry_idx, entry_idx + max_hold, signal, "OPEN",
+                        entry, df.iloc[min(entry_idx + max_hold, len(df) - 1)]["close"], 0)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _compute_htf_from_df(df, idx):
-    """Compute HTF trend from the 4H and 1D subsets of *df* at *idx*."""
-    # Resample to 4H and 1D from the 1H data up to idx
-    small = df.iloc[:idx + 1].copy().set_index("timestamp")
-    result = {"4h": "NEUTRAL", "1d": "NEUTRAL", "aligned": False}
+def _calc_backtest_pnl(stype, entry, exit_px, partial_closed, partial_pnl):
+    """Calculate blended P&L including exit fee."""
+    ec = EXECUTION_CONFIG
+    exit_cost = (ec.get("slippage_pct", 0.05)) / 100  # slippage only on exit (fee already in entry)
+    if stype == "BUY":
+        gross = (exit_px * (1 - exit_cost) - entry) / entry * 100
+    else:
+        gross = (entry - exit_px * (1 + exit_cost)) / entry * 100
+    if partial_closed:
+        return partial_pnl * 0.5 + gross * 0.5
+    return gross
 
-    for tf_key, rule in [("4h", "4h"), ("1d", "1D")]:
+
+def _make_trade(df, entry_idx, exit_idx, signal, outcome, entry, exit_px, pnl_pct):
+    return {
+        "entry_time": str(df.iloc[entry_idx].get("timestamp", "")),
+        "exit_time": str(df.iloc[exit_idx].get("timestamp", "")) if outcome != "OPEN" else "",
+        "type": signal["type"],
+        "entry_price": round(entry, 2),
+        "exit_price": round(exit_px, 2),
+        "stop_loss": signal.get("stop_loss", 0),
+        "take_profit": signal.get("take_profit", 0),
+        "strength": signal.get("strength", 0),
+        "confidence": signal.get("confidence", ""),
+        "outcome": outcome,
+        "pnl_pct": round(pnl_pct, 3),
+        "candles_held": exit_idx - entry_idx,
+        "reasons": "; ".join(signal.get("reasons", [])[:5]),
+    }
+
+
+def _candle_utc_hour(df, idx, timeframe):
+    """Estimate UTC hour from candle index."""
+    try:
+        ts = df.iloc[idx]["timestamp"]
+        if hasattr(ts, 'hour'):
+            return ts.hour
+        return datetime.fromisoformat(str(ts)).hour if ts else 0
+    except Exception:
+        return 0
+
+
+def _compute_htf_from_df(df, idx, timeframe):
+    """Compute HTF trend + indicators from resampled data."""
+    small = df.iloc[:idx + 1].copy().set_index("timestamp")
+    if timeframe == "4h":
+        tf_map = {"1d": "1D", "1w": "1W"}
+    else:
+        tf_map = {"4h": "4h", "1d": "1D"}
+
+    result = {"aligned": False}
+    for tf_key, rule in tf_map.items():
         try:
             ohlc = small["close"].resample(rule).last().dropna()
-            if len(ohlc) >= 200:
-                ema200 = ohlc.ewm(span=200, adjust=False).mean()
-                result[tf_key] = (
-                    "BULLISH" if ohlc.iloc[-1] > ema200.iloc[-1] else "BEARISH"
-                )
-        except Exception:
-            pass
+            if len(ohlc) >= 50:
+                ema200 = ohlc.ewm(span=200, adjust=False).mean() if len(ohlc) >= 200 else ohlc.ewm(span=min(50, len(ohlc)), adjust=False).mean()
+                trend = "BULLISH" if ohlc.iloc[-1] > ema200.iloc[-1] else "BEARISH"
+            else:
+                trend = "NEUTRAL"
 
-    result["aligned"] = result["4h"] == result["1d"] and result["4h"] != "NEUTRAL"
+            # Compute HTF RSI + MACD
+            high_s = small["high"].resample(rule).max().dropna()
+            low_s = small["low"].resample(rule).min().dropna()
+            if len(ohlc) >= 14:
+                delta = ohlc.diff()
+                gain = delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean()
+                loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()
+                rsi = 100 - (100 / (1 + gain.iloc[-1] / loss.iloc[-1])) if loss.iloc[-1] > 0 else 100
+                rsi_zone = "oversold" if rsi < 30 else ("overbought" if rsi > 70 else "neutral")
+            else:
+                rsi, rsi_zone = 50, "neutral"
+
+            result[tf_key] = trend
+            result[f"{tf_key}_indicators"] = {
+                "rsi": round(rsi, 1),
+                "rsi_zone": rsi_zone,
+                "macd": "BULLISH" if (len(ohlc) >= 2 and ohlc.iloc[-1] > ohlc.iloc[-2]) else "BEARISH",
+                "vol_trend": "RISING" if len(ohlc) >= 20 and ohlc.iloc[-5:].mean() > ohlc.iloc[-20:].mean() else "FLAT",
+            }
+        except Exception:
+            result[tf_key] = "NEUTRAL"
+            result[f"{tf_key}_indicators"] = {"rsi": 50, "rsi_zone": "neutral", "macd": "NEUTRAL", "vol_trend": "FLAT"}
+
+    tf_keys = list(tf_map.keys())
+    result["aligned"] = all(result.get(k) == result.get(tf_keys[0]) and result.get(k) != "NEUTRAL" for k in tf_keys)
     return result
 
 
+# ---------------------------------------------------------------------------
+# Statistics
+# ---------------------------------------------------------------------------
+
 def _compute_stats(trades, start_price):
-    """Return summary statistics dict from a list of trade dicts."""
-    closed = [t for t in trades if t["outcome"] in ("WIN", "LOSS")]
+    """Return summary statistics dict."""
+    closed = [t for t in trades if t["outcome"] in ("WIN", "LOSS", "TIME_EXIT", "VOL_EXIT")]
     wins = [t for t in closed if t["outcome"] == "WIN"]
-    losses = [t for t in closed if t["outcome"] == "LOSS"]
+    losses = [t for t in closed if t["outcome"] != "WIN"]
 
     total_pnl = sum(t["pnl_pct"] for t in closed)
     win_rate = len(wins) / len(closed) if closed else 0
     avg_win = sum(t["pnl_pct"] for t in wins) / len(wins) if wins else 0
     avg_loss = sum(t["pnl_pct"] for t in losses) / len(losses) if losses else 0
+    avg_candles = sum(t["candles_held"] for t in closed) / len(closed) if closed else 0
 
     profit_factor = (
         sum(t["pnl_pct"] for t in wins) / abs(sum(t["pnl_pct"] for t in losses))
-        if losses and sum(abs(t["pnl_pct"]) for t in losses) > 0 else 0
+        if losses and sum(abs(t["pnl_pct"]) for t in losses) > 0 else float('inf') if wins else 0
     )
 
-    # Drawdown (cumulative P&L peak-to-trough)
-    cum = 0
-    peak = 0
-    max_dd = 0
+    cum = 0; peak = 0; max_dd = 0
     for t in closed:
         cum += t["pnl_pct"]
-        if cum > peak:
-            peak = cum
-        dd = peak - cum
-        if dd > max_dd:
-            max_dd = dd
+        peak = max(peak, cum)
+        max_dd = max(max_dd, peak - cum)
+
+    confidence_breakdown = {}
+    for t in closed:
+        c = t.get("confidence", "WEAK")
+        confidence_breakdown[c] = confidence_breakdown.get(c, 0) + 1
 
     return {
-        "total_signals":  len(trades),
-        "closed_trades":  len(closed),
-        "open_trades":    len(trades) - len(closed),
-        "wins":           len(wins),
-        "losses":         len(losses),
-        "win_rate":       win_rate,
-        "avg_win_pct":    avg_win,
-        "avg_loss_pct":   avg_loss,
-        "total_pnl_pct":  round(total_pnl, 2),
-        "profit_factor":  round(profit_factor, 2),
-        "max_drawdown":   round(max_dd, 2),
-        "start_price":    start_price,
+        "total_signals": len(trades),
+        "closed_trades": len(closed),
+        "open_trades": len(trades) - len(closed),
+        "wins": len(wins),
+        "losses": len(losses),
+        "win_rate": win_rate,
+        "avg_win_pct": avg_win,
+        "avg_loss_pct": avg_loss,
+        "avg_candles_held": avg_candles,
+        "total_pnl_pct": round(total_pnl, 2),
+        "profit_factor": round(profit_factor, 2) if profit_factor != float('inf') else "∞",
+        "max_drawdown": round(max_dd, 2),
+        "confidence_breakdown": confidence_breakdown,
+        "start_price": start_price,
     }
 
 
@@ -223,35 +436,47 @@ def print_backtest_results(trades, stats):
     print("  📊 BACKTEST RESULTS".center(70))
     print("=" * 70)
 
-    print(f"\n   Period:           {LOOKBACK_DAYS} days (1H candles)")
+    print(f"\n   Period:           {LOOKBACK_DAYS} days")
     print(f"   Start Price:      ${stats['start_price']:,.2f}")
 
     print(f"\n   Total Signals:    {stats['total_signals']}")
     print(f"   Closed Trades:    {stats['closed_trades']}")
-    print(f"   Open (72h max):   {stats['open_trades']}")
+    print(f"   Open (max hold):  {stats['open_trades']}")
 
     print(f"\n   Wins:             {stats['wins']}")
     print(f"   Losses:           {stats['losses']}")
     print(f"   Win Rate:         {stats['win_rate']:.1%}")
     print(f"   Avg Win:          {stats['avg_win_pct']:+.2f}%")
     print(f"   Avg Loss:         {stats['avg_loss_pct']:+.2f}%")
+    print(f"   Avg Hold:         {stats['avg_candles_held']:.0f} candles")
 
     print(f"\n   Total P&L:        {stats['total_pnl_pct']:+.2f}%")
-    print(f"   Profit Factor:    {stats['profit_factor']:.2f}")
+    print(f"   Profit Factor:    {stats['profit_factor']}")
     print(f"   Max Drawdown:     {stats['max_drawdown']:.2f}%")
 
-    print(f"\n   (Technical conditions only — market structure data not available historically)")
+    cb = stats.get("confidence_breakdown", {})
+    if cb:
+        parts = [f"{k}: {v}" for k, v in sorted(cb.items())]
+        print(f"   By Confidence:    {', '.join(parts)}")
 
-    # Recent trades
+    print(f"\n   (Market structure data not available historically — conservative estimate)")
+
     if trades:
         print(f"\n   Recent trades:")
         for t in trades[-8:]:
-            icon = "\U0001f7e2" if t["outcome"] == "WIN" else (
-                "\U0001f534" if t["outcome"] == "LOSS" else "\u26aa")
+            if t["outcome"] == "WIN":
+                icon = "\U0001f7e2"
+            elif t["outcome"] in ("LOSS",):
+                icon = "\U0001f534"
+            elif t["outcome"] in ("TIME_EXIT", "VOL_EXIT"):
+                icon = "\U0001f7e0"
+            else:
+                icon = "⚪"
+            conf = t.get("confidence", "")
             print(
-                f"   {icon} {t['type']:5s} | {t['entry_price']:>10,.2f} → "
-                f"{t['outcome']:5s} ({t['pnl_pct']:+.2f}%) | "
-                f"held {t['candles_held']}h | strength {t['strength']:.2f}"
+                f"   {icon} {t['type']:5s} | ${t['entry_price']:>10,.2f} → "
+                f"{t['outcome']:>10s} ({t['pnl_pct']:+.2f}%) | "
+                f"{t['candles_held']:>3d}c | {t['strength']:.1f} · {conf}"
             )
 
     print("=" * 70 + "\n")
@@ -262,9 +487,18 @@ def print_backtest_results(trades, stats):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="SpotSignal Backtest")
+    parser.add_argument("--mode", choices=["spot", "futures"], default="futures",
+                        help="Trading mode (default: futures)")
+    parser.add_argument("--days", type=int, default=LOOKBACK_DAYS,
+                        help=f"Lookback days (default: {LOOKBACK_DAYS})")
+    args = parser.parse_args()
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
-    trades, stats = run_backtest()
+
+    tf = "4h" if args.mode == "spot" else "1h"
+    trades, stats = run_backtest(mode=args.mode, timeframe=tf, lookback_days=args.days)
     print_backtest_results(trades, stats)
