@@ -183,12 +183,12 @@ def calculate_adx(df, period=14):
     low = df['low']
     close = df['close']
 
-    plus_dm = high.diff()
-    minus_dm = low.diff().abs() * -1  # negative for minus direction
+    up_move = high.diff()
+    down_move = -low.diff()  # positive when price moved down
 
-    # True Directional Movement
-    plus_dm = plus_dm.where((plus_dm > 0) & (plus_dm > (low.diff().abs())), 0)
-    minus_dm = (-minus_dm).where((-minus_dm > 0) & ((-minus_dm) > (high.diff())), 0)
+    # True Directional Movement: +DM fires when up_move > down_move and positive
+    plus_dm = up_move.where((up_move > 0) & (up_move > down_move), 0)
+    minus_dm = down_move.where((down_move > 0) & (down_move > up_move), 0)
 
     tr = pd.concat([
         high - low,

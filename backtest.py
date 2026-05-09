@@ -354,22 +354,27 @@ def _compute_htf_from_df(df, idx, timeframe):
                 trend = "NEUTRAL"
 
             # Compute HTF RSI + MACD
-            high_s = small["high"].resample(rule).max().dropna()
-            low_s = small["low"].resample(rule).min().dropna()
             if len(ohlc) >= 14:
-                delta = ohlc.diff()
-                gain = delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean()
-                loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()
-                rsi = 100 - (100 / (1 + gain.iloc[-1] / loss.iloc[-1])) if loss.iloc[-1] > 0 else 100
-                rsi_zone = "oversold" if rsi < 30 else ("overbought" if rsi > 70 else "neutral")
+                from signals.indicators import calculate_rsi, calculate_macd
+                rsi_series = calculate_rsi(ohlc, period=14)
+                rsi = rsi_series.iloc[-1] if not pd.isna(rsi_series.iloc[-1]) else 50
+                rsi_zone = (
+                    "oversold" if rsi < 30 else
+                    "low" if rsi < 45 else
+                    "neutral" if rsi < 55 else
+                    "elevated" if rsi < 70 else
+                    "overbought"
+                )
+                macd_line, signal_line, _ = calculate_macd(ohlc)
+                macd_dir = "BULLISH" if macd_line.iloc[-1] > signal_line.iloc[-1] else "BEARISH"
             else:
-                rsi, rsi_zone = 50, "neutral"
+                rsi, rsi_zone, macd_dir = 50, "neutral", "NEUTRAL"
 
             result[tf_key] = trend
             result[f"{tf_key}_indicators"] = {
                 "rsi": round(rsi, 1),
                 "rsi_zone": rsi_zone,
-                "macd": "BULLISH" if (len(ohlc) >= 2 and ohlc.iloc[-1] > ohlc.iloc[-2]) else "BEARISH",
+                "macd": macd_dir,
                 "vol_trend": "RISING" if len(ohlc) >= 20 and ohlc.iloc[-5:].mean() > ohlc.iloc[-20:].mean() else "FLAT",
             }
         except Exception:

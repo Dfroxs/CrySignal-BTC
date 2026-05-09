@@ -4,6 +4,17 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-10 — Technical Indicator Review: 4 Correctness Fixes (ADX, Backtest HTF)
+
+### Fixed
+
+- **ADX minus DM formula corrected** (`signals/indicators.py`): was using `low.diff().abs()` (always positive) causing false -DM readings on gap-up days. Fixed to `-low.diff()` so -DM only fires when price actually moves down, matching Wilder's canonical definition.
+- **Backtest HTF MACD now uses actual MACD** (`backtest.py`): was comparing `ohlc[-1] > ohlc[-2]` (price direction) instead of EMA12−EMA26 vs signal line EMA9. Now calls `calculate_macd()` from `signals/indicators.py` — same function used by the live engine.
+- **Backtest HTF RSI now uses 5-zone classification** (`backtest.py`): was using 3 zones (oversold/neutral/overbought) while live `htf.py` uses 5 (oversold/low/neutral/elevated/overbought). Unified to match live behavior.
+- **Backtest HTF RSI now uses Wilder's algorithm** (`backtest.py`): was using EWM approximation directly on gain/loss. Now calls `calculate_rsi()` from `signals/indicators.py` — same Wilder's iterative smoothing used by the live engine.
+
+---
+
 ## 2026-05-10 — Futures Strategy Review: 3 Bug Fixes (Backtest Double-Bump, OI Asymmetry)
 
 ### Fixed
