@@ -4,6 +4,57 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-09 — Strategy Overhaul: Signal Quality, Risk Gates, Exit Conditions, Formula Fixes
+
+### Added
+
+- **5 signal quality improvements** (`signals/engine.py`, `signals/spot.py`, `signals/market_data.py`):
+  - **Diminishing returns** on correlated OS/OB conditions (RSI+BB+StochRSI): 1st full weight, 2nd −0.75, 3rd −1.5
+  - **RSI divergence priority** — suppresses contradictory RSI zone score (divergence is stronger)
+  - **Spot vs Futures directional conflict** — when spot=BUY and futures=SELL, both downgraded to HOLD
+  - **4H candle caching** (`signals/spot.py`) — returns cached result within same candle, saves 75% API calls
+  - **Quality-aware adaptive threshold** (`signals/market_data.py`) — win rate <35% → +0.75 raise; ≥60% → −0.5 drop
+- **6 medium-impact strategy improvements**:
+  - **Time-based exit** (`trading/paper.py`) — force-close positions older than `max_position_hours` (72h)
+  - **Vol-expansion exit** — close if current ATR > entry ATR × `vol_expansion_exit_mult` (2.0×)
+  - **First-entry TA gates** (`run_bot.py`) — added psychology SL + S/R proximity to first entry (was 3, now 5 gates)
+  - **S/R proximity ATR-scaled** (`signals/engine.py`) — 0.2× ATR replaces hardcoded 0.3%
+  - **F&G contradiction** — BUY into GREED (≥70) or SELL into FEAR (≤30) penalized −0.5
+  - **HTF scoring** — aligned ≥1.0, diverging ≤0.5 (was both 0.75)
+  - **Funding vs L/S tie-breaking** — net weight to dominant side on conflict
+- **Futures entry safety gates** (`run_bot.py`) — confidence floor (NORMAL), fakeout rejection, re-entry quality, aggregate risk cap (8%). Flip path also gated.
+- **Funding-based exit** (`trading/paper.py`) — close LONG if funding >0.10%, close SHORT if ←0.05%
+- **ADX/DI trend strength** (`signals/indicators.py`, `signals/engine.py`) — condition #18: ADX >25 trending +0.5, DI+/DI- crossover +0.75. Replaces binary EMA200 with proper trend quantification.
+- **Regime classifier** (`signals/indicators.py`) — TRENDING (ADX>25, threshold −0.25), RANGING (ADX<20, +0.5), VOLATILE (ATR>90th, +0.25, size×0.75), TRANSITION (normal)
+- **OI×Price directional** (`signals/engine.py`) — OI↑+Price↑ = healthy uptrend (+0.75), OI↑+Price↓ = distribution (+0.5), OI↓+Price↑ = short squeeze (+0.25), OI↓+Price↓ = liquidation cascade (+0.5)
+- **Session-based threshold** (`signals/engine.py`) — Asia (0-7 UTC) +0.5, US (13-22 UTC) −0.25
+- **4 futures strategy improvements**:
+  - **F&G symmetry** (`signals/sizing.py`) — SELL at extreme greed (≥80) gets +0.15 (was BUY-only)
+  - **Flip profitability gate** (`run_bot.py`) — block flip if total loss > expected reward
+  - **Proper liquidation formula** — `entry × (1 - (1 - mm_rate) / leverage)` replaces 0.95 fudge
+  - **Futures trailing stop** — 0.7× ATR (was 1.0× shared with spot)
+- **News improvements** (`news_scraper.py`):
+  - **Freshness filter** — drop headlines older than 24h via RSS pubDate parsing (~40% reduction)
+  - **Sentiment normalization** — `score / √word_count` bounds raw keyword count by headline length
+- **Spot improvements**:
+  - **Volatility-adjusted sizing** (`signals/sizing.py`) — max_position_size scaled by ATR percentile (matching futures)
+  - **ATR percentile in spot signal** (`signals/spot.py`) — was futures-only
+  - **Futures sentiment into spot** (`signals/spot.py`, `signals/engine.py`) — funding + L/S as lightweight sentiment (0.25 weight each)
+- **Max scores updated**: Futures 19.25→21.25, Spot 15.5→17.25
+
+### Fixed
+
+- **Wilder's RSI formula** (`signals/indicators.py`) — replaced Cutler's SMA (`rolling(window).mean()`) with proper Wilder's EMA (`avg = (prev × 13 + current) / 14`). Affects RSI, StochRSI, divergence detection.
+- **Wilder's ATR formula** (`signals/indicators.py`) — replaced SMA with `ewm(alpha=1/period)`. Now consistent with ADX smoothing.
+- **3 code bugs**: `_CURRENT_ATR` NameError (crash on vol-exit), `_last_atr` missing `global` (mid-cycle vol-exit disabled), `threshold=None` TypeError
+- **Undefined `last_entry`**, KeyError risk in gate messages, redundant re-imports
+
+### Removed
+
+- **Post-pyramid 12h cooldown** — redundant with TA-driven `_check_reentry_quality()` which already blocks re-entry when price is worse with no confidence upgrade
+
+---
+
 ## 2026-05-09 — Dynamic Leverage + Bug Fixes + Polish
 
 ### Added
