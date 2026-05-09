@@ -43,7 +43,6 @@ RISK_CONFIG = {
         "max_entries":             3,          # 1 initial + 2 pyramid entries max
         "min_initial_confidence":  "NORMAL",   # minimum confidence to open FIRST position
         "min_confidence":          "STRONG",   # signal confidence required to pyramid
-        "reentry_cooldown_minutes": 120,       # min minutes after a close before re-entering
         "size_reduction":          0.5,        # each subsequent entry = prev * this multiplier
         "min_size_usdt":           10.0,       # skip pyramid entry if calculated size < this
         "min_entry_distance_atr":  0.5,        # minimum ATR-multiple distance from previous entry

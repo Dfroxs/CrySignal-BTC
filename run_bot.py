@@ -41,22 +41,47 @@ def _confidence_at_least(actual, minimum):
     return _CONFIDENCE_LEVEL.get(actual, -1) >= _CONFIDENCE_LEVEL.get(minimum, 0)
 
 
-def _get_last_close_time(mode):
-    """Return datetime of the most recent closed position for the given mode, or None."""
+def _check_reentry_quality(signal, mode):
+    """TA-driven re-entry guard: skip if price is worse and confidence didn't improve.
+
+    Returns (reason: str | None) — None means allow re-entry.
+    """
     from trading.history import _conn
-    from datetime import datetime as _dt
     c = _conn()
     row = c.execute(
-        "SELECT MAX(closed_at) FROM paper_positions WHERE outcome IS NOT NULL AND mode = ?",
+        """SELECT p.entry_price, p.type, s.strength
+           FROM paper_positions p
+           JOIN signals s ON p.signal_id = s.id
+           WHERE p.outcome IS NOT NULL AND p.mode = ?
+           ORDER BY p.closed_at DESC LIMIT 1""",
         (mode,),
     ).fetchone()
-    val = row[0]
-    if not val:
+    if not row:
+        return None  # no history → allow
+
+    last_entry = row["entry_price"]
+    last_type = row["type"]
+    last_strength = row["strength"] or 0
+    new_entry = signal["entry_price"]
+    new_type = signal["type"]
+    new_strength = signal.get("strength", 0)
+
+    # Different direction → always allow
+    if new_type != last_type:
         return None
-    try:
-        return _dt.fromisoformat(val)
-    except (ValueError, TypeError):
-        return None
+
+    # Price improved for BUY (lower) / SELL (higher)
+    price_improved = (new_type == "BUY" and new_entry <= last_entry) or \
+                     (new_type == "SELL" and new_entry >= last_entry)
+
+    if price_improved:
+        return None  # better entry price → allow
+
+    # Price is worse — require strength upgrade (at least +0.5)
+    if new_strength >= last_strength + 0.5:
+        return None  # significantly stronger signal → allow
+
+    return f"entry ${new_entry:,.0f} worse than last ${last_entry:,.0f} with no confidence upgrade ({new_strength:.1f} vs {last_strength:.1f})"
 
 
 def _get_entry_prices_by_direction(direction, mode):
@@ -208,22 +233,18 @@ def run_cycle():
             existing_count = get_open_position_count_by_direction(spot_signal["type"], "spot")
 
             if existing_count == 0:
-                # First position — with quality gates (lighter than pyramid)
+                # First position — TA-driven quality gates
                 min_initial = pyramid_cfg.get("min_initial_confidence", "NORMAL")
                 actual_conf = spot_signal.get("confidence")
-                cooldown_mins = pyramid_cfg.get("reentry_cooldown_minutes", 120)
                 fakeout_warn = _detect_fakeout_rejection(
                     spot_signal, wick_ratio=pyramid_cfg.get("fakeout_wick_ratio", 0.6),
                 )
 
-                # Gate 0a: re-entry cooldown
-                last_close = _get_last_close_time("spot")
-                if last_close is not None:
-                    since_close = (datetime.now(UTC) - last_close).total_seconds() / 60
-                    if since_close < cooldown_mins:
-                        msg = f"Spot re-entry cooldown: {since_close:.0f}m since last close (< {cooldown_mins}m) — skipping"
-                        logger.info(msg)
-                        phase3_actions.append(f"⏭ SPOT  {msg}")
+                # Gate 0a: TA-driven re-entry quality (price improved or confidence upgraded)
+                reentry_warn = _check_reentry_quality(spot_signal, "spot")
+                if reentry_warn:
+                    logger.info("Spot %s — %s — skipping", spot_signal['type'], reentry_warn)
+                    phase3_actions.append(f"⏭ SPOT  {reentry_warn}")
 
                 # Gate 0b: initial confidence floor
                 elif not _confidence_at_least(actual_conf, min_initial):
