@@ -23,9 +23,19 @@ from signals.terminal import display_analysis
 
 logger = logging.getLogger(__name__)
 
+# Cache per 4H candle — avoids re-running identical analysis 3× between 4H closes
+_spot_cache = {"timestamp": 0, "signal": None}
+
 
 def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
     """Full 4H spot pipeline: 15 conditions (no funding/L/S/OI/basis)."""
+    import time as _time
+    candle_ts = int(_time.time() // (4 * 3600))  # current 4H candle ID
+
+    if _spot_cache["timestamp"] == candle_ts and _spot_cache["signal"] is not None:
+        logger.info("[SPOT] Cache hit — reusing 4H candle %d result", candle_ts)
+        return _spot_cache["signal"]
+
     logger.info("[SPOT] Analyzing %s (4H)...", symbol)
     try:
         # 6 x 4H candles = 1 trading day
@@ -89,6 +99,8 @@ def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
             'hi24': df['high'].tail(6).max(),
             'lo24': df['low'].tail(6).min(),
         }
+        _spot_cache["timestamp"] = candle_ts
+        _spot_cache["signal"] = signal
         return signal
 
     except Exception as e:

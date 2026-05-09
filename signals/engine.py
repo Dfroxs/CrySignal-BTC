@@ -41,14 +41,18 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
 
     # 2 — RSI
     rsi = current['RSI_14']
+    _rsi_os = False  # track for diminishing-returns check later
+    _rsi_ob = False
     if 30 < rsi < 50:
         buy_conditions += 1
         signal['reasons'].append("✓ RSI in buy zone (30–50)")
     elif rsi <= 30:
         buy_conditions += 1.5
+        _rsi_os = True
         signal['reasons'].append("✓ RSI OVERSOLD (<30) — strong buy signal")
     elif rsi > 70:
         sell_conditions += 1.5
+        _rsi_ob = True
         signal['reasons'].append("✗ RSI OVERBOUGHT (>70) — strong sell signal")
     elif rsi > 55:
         sell_conditions += 0.5
@@ -94,11 +98,15 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             signal['reasons'].append(f"✗ Volume climax ({vol_ratio:.1f}x) + narrow range — potential distribution")
 
     # 5 — Bollinger Bands
+    _bb_lower = False
+    _bb_upper = False
     if current['close'] <= current['BB_Lower']:
         buy_conditions += 1
+        _bb_lower = True
         signal['reasons'].append("✓ Price at/below BB Lower — oversold")
     elif current['close'] >= current['BB_Upper']:
         sell_conditions += 1
+        _bb_upper = True
         signal['reasons'].append("✗ Price at/above BB Upper — overbought")
     elif current['close'] > current['BB_Middle']:
         buy_conditions += 0.25
@@ -274,15 +282,19 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     sk, sd = current.get('StochRSI_K'), current.get('StochRSI_D')
     psk, psd = previous.get('StochRSI_K'), previous.get('StochRSI_D')
     rsi_now = current.get('RSI_14', 50)
+    _stoch_os_cross = False
+    _stoch_ob_cross = False
     if all(pd.notna(v) for v in [sk, sd, psk, psd]):
         if sk < 20 and sk > sd and psk <= psd:
             weight = 1.25 if rsi_now < 30 else 1.0
             buy_conditions += weight
+            _stoch_os_cross = True
             signal['reasons'].append(f"✓ StochRSI oversold crossover K={sk:.1f} — bullish momentum"
                                      + (" (RSI confirms)" if rsi_now < 30 else ""))
         elif sk > 80 and sk < sd and psk >= psd:
             weight = 1.25 if rsi_now > 70 else 1.0
             sell_conditions += weight
+            _stoch_ob_cross = True
             signal['reasons'].append(f"✗ StochRSI overbought crossover K={sk:.1f} — bearish momentum"
                                      + (" (RSI confirms)" if rsi_now > 70 else ""))
         elif sk < 20:
@@ -318,6 +330,29 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         else:
             sell_conditions += 0.75
             signal['reasons'].append(f"✗ Price below VWAP ${vwap:,.2f} — institutional selling")
+
+    # ── Diminishing returns on correlated oversold/overbought conditions ──
+    # RSI OS/OB, BB lower/upper, StochRSI OS/OB crossover all fire from the
+    # same price extreme.  First condition = full weight, second = 0.5×, third = 0.25×.
+    buy_extremes = sum([_rsi_os, _bb_lower, _stoch_os_cross])
+    sell_extremes = sum([_rsi_ob, _bb_upper, _stoch_ob_cross])
+    if buy_extremes >= 2:
+        penalty = (buy_extremes - 1) * 0.75  # 2→-0.75, 3→-1.5
+        buy_conditions -= penalty
+        signal['reasons'].append(f"⚠️  {buy_extremes} oversold conditions clustered — diminishing returns applied (-{penalty:.2f})")
+    if sell_extremes >= 2:
+        penalty = (sell_extremes - 1) * 0.75
+        sell_conditions -= penalty
+        signal['reasons'].append(f"⚠️  {sell_extremes} overbought conditions clustered — diminishing returns applied (-{penalty:.2f})")
+
+    # ── RSI divergence overrides RSI zone (they contradict) ──
+    if divergence == 'BULLISH' and _rsi_ob:
+        # Bullish divergence + overbought RSI: divergence wins, suppress OB score
+        buy_conditions += 1.5   # was already suppressed by OB; restore divergence advantage
+        signal['reasons'].append("⚠️  RSI OB suppressed by BULLISH divergence — divergence stronger signal")
+    elif divergence == 'BEARISH' and _rsi_os:
+        sell_conditions += 1.5
+        signal['reasons'].append("⚠️  RSI OS suppressed by BEARISH divergence — divergence stronger signal")
 
     # Determine final signal
     if buy_conditions >= threshold and buy_conditions > sell_conditions:

@@ -219,6 +219,24 @@ def run_cycle():
     except Exception as e:
         logger.error("Futures analysis failed: %s", e)
 
+    # Cross-check: spot vs futures directional conflict
+    if spot_signal and futures_signal:
+        spot_dir = spot_signal["type"]
+        fut_dir = futures_signal["type"]
+        if spot_dir != "HOLD" and fut_dir != "HOLD" and spot_dir != fut_dir:
+            logger.warning(
+                "⚠️  Directional conflict: SPOT %s vs FUTURES %s — skipping both",
+                spot_dir, fut_dir,
+            )
+            spot_signal["type"] = "HOLD"
+            spot_signal["reasons"].append(
+                f"⚠️  CONFLICT: SPOT {spot_dir} vs FUTURES {fut_dir} — both suppressed"
+            )
+            futures_signal["type"] = "HOLD"
+            futures_signal["reasons"].append(
+                f"⚠️  CONFLICT: FUTURES {fut_dir} vs SPOT {spot_dir} — both suppressed"
+            )
+
     # Combined terminal display (once, not per-mode)
     display_combined(spot_signal, futures_signal)
 

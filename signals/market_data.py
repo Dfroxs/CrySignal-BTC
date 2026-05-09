@@ -371,8 +371,27 @@ def get_signal_confidence(strength, threshold):
 # Adaptive threshold
 # ---------------------------------------------------------------------------
 
+def _get_recent_win_rate(mode, hours=72):
+    """Return win rate (0-1) for positions closed within the window, or None if < 3 trades."""
+    try:
+        from trading.history import _conn
+        c = _conn()
+        cutoff = (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
+        rows = c.execute(
+            """SELECT outcome FROM paper_positions
+               WHERE outcome IS NOT NULL AND mode = ? AND closed_at >= ?""",
+            (mode, cutoff),
+        ).fetchall()
+        if len(rows) < 3:
+            return None
+        wins = sum(1 for r in rows if r["outcome"] == "WIN")
+        return wins / len(rows)
+    except Exception:
+        return None
+
+
 def _get_adaptive_threshold(base, t_min, t_max, state_file, env_var):
-    """Shared adaptive threshold logic."""
+    """Shared adaptive threshold logic with signal-quality awareness."""
     override = float(os.getenv(env_var, 0))
     if override > 0:
         return override
@@ -383,10 +402,18 @@ def _get_adaptive_threshold(base, t_min, t_max, state_file, env_var):
     recent = [ts for ts in state.get("signals", []) if ts > cutoff]
     all_ts = state.get("signals", [])
 
+    # Check win rate to adjust threshold sensitivity
+    mode = "spot" if "spot" in state_file else "futures"
+    wr = _get_recent_win_rate(mode)
+
     if len(recent) > ADAPTIVE_MAX_SIGNALS:
-        base = min(base + 0.5, t_max)
+        # Many signals: raise threshold.  Raise more if win rate is poor.
+        step = 0.75 if (wr is not None and wr < 0.35) else 0.5
+        base = min(base + step, t_max)
     elif len(recent) == 0 and len(all_ts) > 0:
-        base = max(base - 0.25, t_min)
+        # No recent signals: lower threshold.  Lower more if win rate is good.
+        step = 0.5 if (wr is not None and wr >= 0.6) else 0.25
+        base = max(base - step, t_min)
     return base
 
 
