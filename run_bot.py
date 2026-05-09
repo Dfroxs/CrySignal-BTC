@@ -43,8 +43,8 @@ def _confidence_at_least(actual, minimum):
 
 def _get_entry_prices_by_direction(direction, mode):
     """Return list of entry prices for open positions in the given direction, ordered by opened_at."""
-    from trading.history import _conn as history_conn
-    c = history_conn()
+    from trading.history import _conn
+    c = _conn()
     rows = c.execute(
         "SELECT entry_price FROM paper_positions WHERE outcome IS NULL AND type = ? AND mode = ? ORDER BY opened_at ASC",
         (direction, mode),
@@ -123,7 +123,6 @@ def _detect_fakeout_rejection(signal, wick_ratio=0.6):
 
 def _calc_aggregate_risk(mode, new_entry_price, new_sl, new_size_factor, pyramid_cfg):
     """Sum the risk % of all open + new position. Returns (total_risk, warning)."""
-    from trading.history import get_open_positions
     max_risk = pyramid_cfg.get("max_aggregate_risk_pct", 5.0)
     total_risk = 0.0
 
@@ -224,16 +223,24 @@ def run_cycle():
                     phase3_actions.append(f"⏭ SPOT  {msg}")
 
                 # Gate 3: min distance from last entry (prevent doubling down)
-                elif atr <= 0 or abs(spot_signal["entry_price"] - entry_prices[-1]) / atr < pyramid_cfg.get("min_entry_distance_atr", 0.5):
+                elif atr <= 0:
+                    msg = f"Spot {spot_signal['type']} pyramid ATR invalid ({atr}) — cannot check entry distance"
+                    logger.info(msg)
+                    phase3_actions.append(f"⏭ SPOT  {msg}")
+                elif abs(spot_signal["entry_price"] - entry_prices[-1]) / atr < pyramid_cfg.get("min_entry_distance_atr", 0.5):
+                    last_entry = entry_prices[-1]
                     dist_pct = abs(spot_signal["entry_price"] - last_entry) / last_entry * 100
-                    msg = f"Spot {spot_signal['type']} pyramid distance {dist_pct:.2f}% (< {pyramid_cfg['min_entry_distance_atr']}× ATR) — skipping"
+                    min_dist = pyramid_cfg.get("min_entry_distance_atr", 0.5)
+                    msg = f"Spot {spot_signal['type']} pyramid distance {dist_pct:.2f}% (< {min_dist}× ATR) — skipping"
                     logger.info(msg)
                     phase3_actions.append(f"⏭ SPOT  {msg}")
 
                 # Gate 4: max distance from first entry (risk/reward degraded)
                 elif abs(spot_signal["entry_price"] - entry_prices[0]) / entry_prices[0] * 100 > pyramid_cfg.get("max_entry_distance_pct", 6.0):
-                    dist_pct = abs(spot_signal["entry_price"] - entry_prices[0]) / entry_prices[0] * 100
-                    msg = f"Spot {spot_signal['type']} pyramid distance from 1st {dist_pct:.1f}% (> {pyramid_cfg['max_entry_distance_pct']}%) — skipping"
+                    first_entry = entry_prices[0]
+                    dist_pct = abs(spot_signal["entry_price"] - first_entry) / first_entry * 100
+                    max_dist = pyramid_cfg.get("max_entry_distance_pct", 6.0)
+                    msg = f"Spot {spot_signal['type']} pyramid distance from 1st {dist_pct:.1f}% (> {max_dist}%) — skipping"
                     logger.info(msg)
                     phase3_actions.append(f"⏭ SPOT  {msg}")
 
