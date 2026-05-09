@@ -90,11 +90,9 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
             htf = None
             regime = {"threshold_bump": 0, "size_adj": 1.0}
 
-        # Session bump
-        utc_hour = _candle_utc_hour(df, i, timeframe)
-        session_bump = 0.5 if utc_hour < 8 else (-0.25 if 13 <= utc_hour < 22 else 0)
-
-        effective_threshold = threshold + regime.get("threshold_bump", 0) + session_bump
+        # Pass base threshold only; generate_signals() applies regime + session bump once internally.
+        # Pre-computing them here would double-apply (engine recomputes from same window data).
+        effective_threshold = threshold
 
         signal = generate_signals(
             window, htf=htf, market_structure=None, sr=sr,

@@ -423,7 +423,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             buy_conditions += 0.75
             signal['reasons'].append(f"✓ OI↑ ({oi_change:+.1f}%) + Price↑ — healthy uptrend")
         elif oi_change > 1 and price_change < -0.5:
-            sell_conditions += 0.5
+            sell_conditions += 0.75
             signal['reasons'].append(f"✗ OI↑ ({oi_change:+.1f}%) + Price↓ — distribution")
         elif oi_change < -1 and price_change > 0.5:
             buy_conditions += 0.25

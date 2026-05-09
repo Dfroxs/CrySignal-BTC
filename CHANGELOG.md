@@ -4,6 +4,16 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-10 — Futures Strategy Review: 3 Bug Fixes (Backtest Double-Bump, OI Asymmetry)
+
+### Fixed
+
+- **Backtest no longer double-applies regime + session threshold bumps** (`backtest.py`): `effective_threshold` was computed as `base + regime_bump + session_bump` before being passed to `generate_signals()`, which then added them again internally (regime from same window = identical value; session from `datetime.now()` = wrong historical time). Backtest now passes just the base adaptive threshold; the engine applies both adjustments exactly once.
+- **OI×Price bear case now symmetric with bull case** (`signals/engine.py`): `OI↑+Price↓` (new shorts opening as price falls = confirmed distribution) was scored `+0.5` sell while the mirror condition `OI↑+Price↑` scored `+0.75` buy. Updated to `+0.75` — equal information strength in opposite directions.
+- **`SIGNAL_MAX_SCORE` comment updated** (`config.py`): replaced stale calculation comment with accurate description (practical max ~21.25 after diminishing-returns penalty; theoretical ceiling ~22).
+
+---
+
 ## 2026-05-10 — Spot Strategy Review: 5 Bug Fixes (Scoring, Backtest Fees, Gates)
 
 ### Fixed
