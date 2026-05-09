@@ -460,8 +460,22 @@ def run_cycle():
                 flipped = True
 
             if flipped:
-                # After flip — confidence gate before opening new direction
-                if not _confidence_at_least(actual_conf, min_conf):
+                # Flip profitability: only open if new signal can recover the loss
+                flip_pnl_total = sum(
+                    ((flip_px - p["entry_price"]) / p["entry_price"] * 100) if opp_dir == "SELL"
+                    else ((p["entry_price"] - flip_px) / p["entry_price"] * 100)
+                    for p in opp_positions
+                )
+                new_sl = futures_signal.get("stop_loss", flip_px)
+                new_tp = futures_signal.get("take_profit", flip_px)
+                expected_reward = abs(new_tp - flip_px) / flip_px * 100 if flip_px > 0 else 0
+
+                # Gate: skip flip if loss > expected reward (can't recover)
+                if flip_pnl_total < -expected_reward:
+                    msg = f"FUT flip blocked: loss {flip_pnl_total:.2f}% > expected reward {expected_reward:.2f}% — skipping open"
+                    logger.info(msg)
+                    phase3_actions.append(f"⏭ FUT  {msg}")
+                elif not _confidence_at_least(actual_conf, min_conf):
                     msg = f"FUT flip requires ≥{min_conf} confidence (got {actual_conf}) — skipping open"
                     logger.info(msg)
                     phase3_actions.append(f"⏭ FUT  {msg}")

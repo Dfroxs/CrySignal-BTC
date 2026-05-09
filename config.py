@@ -71,6 +71,7 @@ FUTURES_CONFIG = {
         "fakeout_wick_ratio":     0.60,       # reject on >60% upper/lower wick
         "max_aggregate_risk_pct": 8.0,        # max total risk % across all futures positions
     },
+    "trailing_atr_factor":   0.7,    # tighter than spot (1.0) — leverage amplifies noise
     "funding_exit": {
         "close_long_rate":   0.10,   # close LONG if funding > 0.10% (expensive to hold)
         "close_short_rate": -0.05,   # close SHORT if funding < -0.05% (expensive to short)
@@ -132,6 +133,7 @@ LEVERAGE_CONFIG = {
     "fractional_kelly": 0.25,        # 1/4 Kelly as base risk fraction
     "confidence_mult_min": 0.25,     # floor
     "confidence_mult_max": 1.5,      # ceiling
+    "maintenance_margin_rate": 0.005, # Binance: 0.5% at ≤10x, 1.0% at 20x+
 }
 
 

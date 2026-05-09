@@ -92,11 +92,12 @@ def calculate_futures_position(signal):
     margin = min(risk_amount / (sl_distance_pct * leverage), max_margin)
     position_value = margin * leverage
 
-    liq_safety = 0.95
+    # Maintenance margin rate (Binance: 0.5% at 10x, 1.0% at 20x+)
+    mm_rate = LEVERAGE_CONFIG.get("maintenance_margin_rate", 0.005)
     if direction == "LONG":
-        liquidation_price = entry * (1 - (1 / leverage) * liq_safety)
+        liquidation_price = entry * (1 - (1 - mm_rate) / leverage)
     else:
-        liquidation_price = entry * (1 + (1 / leverage) * liq_safety)
+        liquidation_price = entry * (1 + (1 - mm_rate) / leverage)
 
     if direction == "LONG":
         pnl_at_tp = (tp - entry) / entry * position_value
@@ -173,12 +174,16 @@ def _compute_confidence(signal):
     elif funding.get("bias") == "BEARISH" and stype == "SELL":
         mult += 0.05  # positive funding = longs crowded
 
-    # Factor 5: Fear & Greed contrarian (weight ~10%)
+    # Factor 5: Fear & Greed contrarian (weight ~10%, symmetric)
     fng = signal.get("fear_greed_value", 50)
     if stype == "BUY" and fng <= 20:
         mult += 0.15  # extreme fear = contrarian buy
     elif stype == "BUY" and fng <= 40:
         mult += 0.05  # fear zone
+    elif stype == "SELL" and fng >= 80:
+        mult += 0.15  # extreme greed = contrarian sell
+    elif stype == "SELL" and fng >= 60:
+        mult += 0.05  # greed zone
 
     # Factor 6: Low volatility regime bonus (weight ~10%)
     atr_pct = signal.get("_atr_percentile", 0.5)

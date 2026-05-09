@@ -11,11 +11,16 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 import trading.history as sh
-from config import RISK_CONFIG
+from config import FUTURES_CONFIG, RISK_CONFIG
 
 logger = logging.getLogger(__name__)
 
-_TRAIL = RISK_CONFIG["trailing_atr_factor"]
+
+def _trail_factor(mode):
+    """Trailing stop ATR multiplier — tighter for futures (leverage amplifies noise)."""
+    if mode == "futures":
+        return FUTURES_CONFIG.get("trailing_atr_factor", 0.7)
+    return RISK_CONFIG.get("trailing_atr_factor", 1.0)
 
 # Slippage threshold — warn when fill price is this far past the trigger
 _SLIPPAGE_WARN_PCT = 0.01  # 1%
@@ -186,7 +191,7 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
         if pos["type"] == "BUY":
             # 1 — advance trailing stop
             if atr:
-                new_trail = current_price - atr * _TRAIL
+                new_trail = current_price - atr * _trail_factor(pos.get("mode", "futures"))
                 if new_trail > trail:
                     trail = new_trail
                     sh.update_trailing_stop(pos_id, trail)
@@ -245,7 +250,7 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
         elif pos["type"] == "SELL":
             # 1 — advance trailing stop (moves down for shorts)
             if atr:
-                new_trail = current_price + atr * _TRAIL
+                new_trail = current_price + atr * _trail_factor(pos.get("mode", "futures"))
                 if new_trail < trail:
                     trail = new_trail
                     sh.update_trailing_stop(pos_id, trail)
