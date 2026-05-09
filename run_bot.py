@@ -86,9 +86,12 @@ def _check_reentry_quality(signal, mode):
 
 
 def _is_bearish_regime(signal):
-    """Block spot BUY if regime is bearish (DI- > DI+)."""
+    """Block spot BUY only if market is in a confirmed TRENDING bearish regime.
+    Ranging/transition markets with temporary DI- dominance are not blocked —
+    DI- > DI+ at low ADX is normal oscillation, not a trend."""
     regime = signal.get("_regime", {})
-    return regime.get("trend_dir") == "BEARISH"
+    return (regime.get("regime") == "TRENDING" and
+            regime.get("trend_dir") == "BEARISH")
 
 
 def _trend_confluence_ok(signal):
@@ -295,11 +298,24 @@ def run_cycle():
     max_dd = RISK_LIMITS.get("max_drawdown_pct", 15.0)
     min_eq = RISK_LIMITS.get("min_equity_pct", 50.0)
 
-    if total_dd > max_dd:
-        msg = f"⛔ DRAWDOWN {total_dd:.1f}% > {max_dd}% — blocking new entries"
+    daily_pnl = _h.get_daily_pnl()
+    daily_limit = RISK_LIMITS.get("daily_loss_limit", 5.0)
+    daily_breaker = daily_pnl < -daily_limit
+
+    if total_dd > max_dd or daily_breaker:
+        if daily_breaker:
+            msg = f"⛔ DAILY LOSS {daily_pnl:.1f}% > -{daily_limit}% limit — blocking new entries for today"
+        else:
+            msg = f"⛔ DRAWDOWN {total_dd:.1f}% > {max_dd}% — blocking new entries"
         logger.warning(msg)
         phase3_actions.append(msg)
-        pending_tg.append((f"⛔ <b>Circuit Breaker</b>\nDrawdown <b>{total_dd:.1f}%</b> > {max_dd}% limit\nAll new entries blocked.", "circuit-breaker"))
+        pending_tg.append((
+            f"⛔ <b>Circuit Breaker</b>\n"
+            f"{'Daily loss' if daily_breaker else 'Drawdown'} "
+            f"<b>{abs(daily_pnl if daily_breaker else total_dd):.1f}%</b> > limit\n"
+            f"All new entries blocked.",
+            "circuit-breaker",
+        ))
         # Skip Phase 3 entirely — just run position checks (close existing)
         if spot_signal:
             spot_signal["type"] = "HOLD"
@@ -485,18 +501,17 @@ def run_cycle():
                         logger.info(msg)
                         phase3_actions.append(f"⏭ SPOT  {msg}")
                     else:
-                        # Tighten SL for pyramid entries (after sizing so base_size stays correct)
-                        tighten = pyramid_cfg.get("tighten_sl_factor", 0.8)
-                        sl_mult = tighten ** (entry_number - 1)  # 1.0 → 0.8 → 0.64
-                        if atr > 0 and sl_mult < 1.0:
-                            orig_sl = spot_signal["stop_loss"]
-                            sl_dist = abs(spot_signal["entry_price"] - orig_sl)
-                            new_sl = spot_signal["entry_price"] - sl_dist * sl_mult
+                        # Tighten SL for pyramid entries using additive ATR step
+                        # Entry #2: 1.5×ATR → 1.25×ATR, Entry #3: 1.25×ATR → 1.0×ATR (floor)
+                        atr_step = pyramid_cfg.get("tighten_sl_atr_step", 0.25)
+                        base_atr_mult = RISK_CONFIG.get("atr_multiplier", 1.5)
+                        new_atr_mult = max(1.0, base_atr_mult - atr_step * (entry_number - 1))
+                        if atr > 0 and new_atr_mult < base_atr_mult:
+                            new_sl_dist = atr * new_atr_mult
+                            new_sl = spot_signal["entry_price"] - new_sl_dist
                             spot_signal["stop_loss"] = round(new_sl, 2)
-                            # Recalculate TP1 with same R:R from tighter SL
-                            new_atr_stop = sl_dist * sl_mult
-                            spot_signal["take_profit"] = round(spot_signal["entry_price"] + new_atr_stop * RISK_CONFIG["take_profit_rr"], 2)
-                            spot_signal["tp2"] = round(spot_signal["entry_price"] + new_atr_stop * RISK_CONFIG["take_profit_rr"] * 2, 2)
+                            spot_signal["take_profit"] = round(spot_signal["entry_price"] + new_sl_dist * RISK_CONFIG["take_profit_rr"], 2)
+                            spot_signal["tp2"] = round(spot_signal["entry_price"] + new_sl_dist * RISK_CONFIG["take_profit_rr"] * 2, 2)
 
                         # Gate 8: aggregate risk cap
                         agg_risk, agg_warn = _calc_aggregate_risk(
@@ -510,7 +525,7 @@ def run_cycle():
                         else:
                             pid = open_paper_position(spot_signal, mode="spot", pyramid_entry=entry_number, size_factor=size_factor)
                             size_note = f" (size {size_factor * 100:.0f}% of base)" if size_factor < 1.0 else ""
-                            sl_note = f" [SL ×{sl_mult:.2f}]" if sl_mult < 1.0 else ""
+                            sl_note = f" [SL {new_atr_mult:.2f}×ATR]" if new_atr_mult < base_atr_mult else ""
                             msg = f"SPOT {spot_signal['type']} pyramid entry #{entry_number} opened (#{pid}) @ ${spot_signal['entry_price']:,.0f}{size_note}{sl_note}"
                             logger.info(msg)
                             phase3_actions.append(f"🧩 {msg}")

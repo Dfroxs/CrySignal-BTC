@@ -30,13 +30,15 @@ _spot_cache = {"timestamp": 0, "signal": None}
 
 
 def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
-    """Full 4H spot pipeline: 15 conditions (no funding/L/S/OI/basis)."""
+    """Full 4H spot pipeline: 15 core conditions + funding/L/S futures sentiment at ½-weight (OI/basis skipped)."""
     import time as _time
     candle_ts = int(_time.time() // (4 * 3600))  # current 4H candle ID
 
     if _spot_cache["timestamp"] == candle_ts and _spot_cache["signal"] is not None:
         logger.info("[SPOT] Cache hit — reusing 4H candle %d result", candle_ts)
-        return _spot_cache["signal"]
+        sig = dict(_spot_cache["signal"])   # copy top-level keys (type/SL/TP mutations in run_bot won't corrupt cache)
+        sig["reasons"] = list(sig["reasons"])  # copy reasons list so appends don't accumulate across cycles
+        return sig
 
     logger.info("[SPOT] Analyzing %s (4H)...", symbol)
     try:

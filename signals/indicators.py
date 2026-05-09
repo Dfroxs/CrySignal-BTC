@@ -114,17 +114,20 @@ def detect_rsi_divergence(df, pivot_window=3, lookback=50):
         if highs[i] == max(highs[i - pivot_window:i + pivot_window + 1]):
             swing_highs.append((i, closes[i], rsis[i]))
 
+    # Dynamic threshold: ATR% of price (floor 0.2%) — scales with volatility
+    atr_val = df['ATR_14'].iloc[-1] if 'ATR_14' in df.columns else 0
+    price_val = df['close'].iloc[-1]
+    threshold = max(0.002, atr_val / price_val) if price_val > 0 else 0.002
+
     if len(swing_lows) >= 2:
         i1, c1, r1 = swing_lows[-2]
         i2, c2, r2 = swing_lows[-1]
-        threshold = 0.002
         if c2 < c1 * (1 - threshold) and r2 > r1:
             return 'BULLISH'
 
     if len(swing_highs) >= 2:
         i1, c1, r1 = swing_highs[-2]
         i2, c2, r2 = swing_highs[-1]
-        threshold = 0.002
         if c2 > c1 * (1 + threshold) and r2 < r1:
             return 'BEARISH'
 
@@ -132,36 +135,118 @@ def detect_rsi_divergence(df, pivot_window=3, lookback=50):
 
 
 def detect_support_resistance(df, lookback=50, tolerance=0.005):
-    """Find nearest support/resistance from swing highs & lows."""
-    window = df.tail(lookback)
+    """Find nearest support/resistance from swing highs & lows.
+
+    Returns nearest level above/below close. Among pivots within the same
+    ATR-width band, the most recent pivot takes precedence.
+    """
+    window = df.tail(lookback).reset_index(drop=True)
     close = window['close'].iloc[-1]
+    atr = window['ATR_14'].iloc[-1] if 'ATR_14' in window.columns else close * 0.005
 
     pivot_window = max(3, len(window) // 10)
     n = len(window)
     highs = window['high'].values
-    lows = window['low'].values
+    lows  = window['low'].values
 
+    # Collect (level, candle_index) — index is recency proxy (higher = more recent)
     swing_highs = []
     for i in range(pivot_window, n - pivot_window):
         if highs[i] == max(highs[i - pivot_window:i + pivot_window + 1]):
-            swing_highs.append(highs[i])
+            swing_highs.append((highs[i], i))
 
     swing_lows = []
     for i in range(pivot_window, n - pivot_window):
         if lows[i] == min(lows[i - pivot_window:i + pivot_window + 1]):
-            swing_lows.append(lows[i])
+            swing_lows.append((lows[i], i))
 
     result = {'support': None, 'resistance': None}
 
-    resistance_levels = sorted([h for h in swing_highs if h > close * (1 + tolerance)], reverse=True)
-    if resistance_levels:
-        result['resistance'] = resistance_levels[0]
+    # Resistance: levels above close, sorted ascending → nearest first
+    r_candidates = [(h, idx) for h, idx in swing_highs if h > close * (1 + tolerance)]
+    if r_candidates:
+        r_candidates.sort(key=lambda x: x[0])   # nearest first
+        nearest_r = r_candidates[0][0]
+        # Prefer most recent pivot within 1 ATR band of the nearest level
+        band = [(h, idx) for h, idx in r_candidates if h <= nearest_r + atr]
+        result['resistance'] = max(band, key=lambda x: x[1])[0]  # most recent in band
 
-    support_levels = sorted([l for l in swing_lows if l < close * (1 - tolerance)])
-    if support_levels:
-        result['support'] = support_levels[-1]
+    # Support: levels below close, sorted descending → nearest first
+    s_candidates = [(l, idx) for l, idx in swing_lows if l < close * (1 - tolerance)]
+    if s_candidates:
+        s_candidates.sort(key=lambda x: x[0], reverse=True)   # nearest first
+        nearest_s = s_candidates[0][0]
+        band = [(l, idx) for l, idx in s_candidates if l >= nearest_s - atr]
+        result['support'] = max(band, key=lambda x: x[1])[0]  # most recent in band
 
     return result
+
+
+def detect_candlestick_pattern(df):
+    """Detect bullish/bearish candlestick reversal patterns.
+
+    Returns dict with 'bullish' and 'bearish' keys (string pattern name or None).
+    Only the highest-weight pattern per direction is returned — no stacking.
+    Priority: ENGULFING > MORNING/EVENING_STAR > HAMMER/SHOOTING_STAR > HARAMI.
+    """
+    if len(df) < 3:
+        return {'bullish': None, 'bearish': None}
+
+    c0 = df.iloc[-1]
+    c1 = df.iloc[-2]
+    c2 = df.iloc[-3]
+
+    def _body(c):  return abs(c['close'] - c['open'])
+    def _range(c): return (c['high'] - c['low']) or 0.0001
+    def _upper(c): return c['high'] - max(c['open'], c['close'])
+    def _lower(c): return min(c['open'], c['close']) - c['low']
+    def _bull(c):  return c['close'] > c['open']
+    def _bear(c):  return c['close'] < c['open']
+
+    bullish = None
+    bearish = None
+
+    # ── Bullish patterns ──
+    if (_bear(c1) and _bull(c0) and
+            c0['open'] <= c1['close'] and c0['close'] >= c1['open'] and
+            _body(c0) > _body(c1)):
+        bullish = 'ENGULFING'
+    elif (_bear(c2) and _body(c2) >= 0.6 * _range(c2) and
+          _body(c1) <= 0.3 * _range(c1) and
+          _bull(c0) and _body(c0) >= 0.6 * _range(c0) and
+          c0['close'] > (c2['open'] + c2['close']) / 2):
+        bullish = 'MORNING_STAR'
+    elif (_lower(c0) >= 2 * _body(c0) and
+          _upper(c0) <= 0.1 * _range(c0) and
+          0 < _body(c0) < 0.3 * _range(c0)):
+        bullish = 'HAMMER'
+    elif (_bear(c1) and _body(c1) >= 0.6 * _range(c1) and
+          _bull(c0) and
+          c0['open'] >= c1['close'] and c0['close'] <= c1['open'] and
+          _body(c0) < 0.5 * _body(c1)):
+        bullish = 'HARAMI'
+
+    # ── Bearish patterns ──
+    if (_bull(c1) and _bear(c0) and
+            c0['open'] >= c1['close'] and c0['close'] <= c1['open'] and
+            _body(c0) > _body(c1)):
+        bearish = 'ENGULFING'
+    elif (_bull(c2) and _body(c2) >= 0.6 * _range(c2) and
+          _body(c1) <= 0.3 * _range(c1) and
+          _bear(c0) and _body(c0) >= 0.6 * _range(c0) and
+          c0['close'] < (c2['open'] + c2['close']) / 2):
+        bearish = 'EVENING_STAR'
+    elif (_upper(c0) >= 2 * _body(c0) and
+          _lower(c0) <= 0.1 * _range(c0) and
+          0 < _body(c0) < 0.3 * _range(c0)):
+        bearish = 'SHOOTING_STAR'
+    elif (_bull(c1) and _body(c1) >= 0.6 * _range(c1) and
+          _bear(c0) and
+          c0['open'] <= c1['close'] and c0['close'] >= c1['open'] and
+          _body(c0) < 0.5 * _body(c1)):
+        bearish = 'HARAMI'
+
+    return {'bullish': bullish, 'bearish': bearish}
 
 
 def compute_atr_percentile(df, lookback=100):
@@ -183,12 +268,12 @@ def calculate_adx(df, period=14):
     low = df['low']
     close = df['close']
 
-    plus_dm = high.diff()
-    minus_dm = low.diff().abs() * -1  # negative for minus direction
+    up_move = high.diff()
+    down_move = -low.diff()  # positive when price moved down
 
-    # True Directional Movement
-    plus_dm = plus_dm.where((plus_dm > 0) & (plus_dm > (low.diff().abs())), 0)
-    minus_dm = (-minus_dm).where((-minus_dm > 0) & ((-minus_dm) > (high.diff())), 0)
+    # True Directional Movement: +DM fires when up_move > down_move and positive
+    plus_dm = up_move.where((up_move > 0) & (up_move > down_move), 0)
+    minus_dm = down_move.where((down_move > 0) & (down_move > up_move), 0)
 
     tr = pd.concat([
         high - low,

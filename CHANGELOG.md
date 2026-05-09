@@ -4,6 +4,150 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-10 — fix: Gold & VIX data sources + Gold risk-on scoring
+
+### Fixed
+
+- **Gold data source** (`signals/market_data.py`): Replaced PAXG (PAX Gold crypto token) with Yahoo Finance `GC=F` (gold futures). PAXG had crypto-market noise independent of actual gold prices.
+- **VIX data source** (`signals/market_data.py`): Replaced `volatility-index-token` (invalid CoinGecko crypto token) with Yahoo Finance `^VIX` (CBOE VIX). Previous implementation returned crypto token price, not the actual equity volatility index.
+
+### Added
+
+- **Gold falling = risk-on buy signal** (`signals/engine.py`): Gold price dropping >0.5% now adds `buy_conditions += 0.25` with reason note. Previously only Gold rising + BTC falling was scored (sell side) — the bullish counterpart was missing.
+
+---
+
+## 2026-05-10 — feat: Condition #19 — Candlestick Pattern Recognition
+
+### Added
+
+- **Candlestick pattern recognition — Condition #19** (`signals/indicators.py`, `signals/engine.py`): New `detect_candlestick_pattern(df)` detects 4 bullish and 4 bearish reversal patterns from the last 3 OHLCV candles. Only the highest-weight pattern per direction is counted (no stacking). Bearish patterns are only scored in futures mode (spot is BUY-only).
+  - Bullish: ENGULFING (+1.0), MORNING_STAR (+1.0), HAMMER (+0.75), HARAMI (+0.5)
+  - Bearish: ENGULFING (+1.0), EVENING_STAR (+1.0), SHOOTING_STAR (+0.75), HARAMI (+0.5)
+- **Max scores updated** (`config.py`): `SPOT_MAX_SCORE` 17.75 → 18.75, `SIGNAL_MAX_SCORE` 21.25 → 22.25
+
+---
+
+## 2026-05-10 — Low Priority Fixes: Backtest Parity, Adaptive Threshold, Wyckoff, S/R Recency
+
+### Changed
+
+- **Backtest trail now matches live paper.py behavior** (`backtest.py`): `_simulate_forward()` reads `trailing_post_tp1_factor` (0.8) and `trailing_advance_min_ratio` (0.5) from `RISK_CONFIG`, applying the same minimum-advance gate and post-TP1 tightening as `paper.py`. Previously backtest trail was always identical to paper.py from before the critical fixes — results were now diverging.
+- **Backtest futures funding exit proxy** (`backtest.py`): Simulates a FUNDING_EXIT when unrealized gain exceeds 12% on a futures position (proxy for crowded funding regime). Historical funding data is unavailable in backtest, but extreme sustained moves strongly correlate with positive funding. Applies to both BUY and SELL directions before partial TP.
+- **Adaptive threshold: 24h fast window added** (`signals/market_data.py`): `_get_adaptive_threshold()` now checks a 24h window first: if ≥4 signals fired AND win rate < 30%, threshold raises +1.0 immediately (vs the slow 72h raise of +0.5/0.75). Addresses lag where a losing streak on day 1-2 wasn't reflected until day 4. 72h standard window unchanged.
+- **Wyckoff Effort vs Result thresholds relaxed** (`signals/engine.py`): Volume climax threshold lowered from `2.0×` → `1.5×` avg and range threshold from `< 0.5×` → `< 0.75×` ATR, making the pattern fire more often. Added directional confirmation: accumulation requires green close (close ≥ open), distribution requires red close. Close position thresholds widened to 0.40/0.60 from 0.35/0.65.
+- **S/R detection returns nearest level (not farthest) + recency preference** (`signals/indicators.py`): Previous code sorted resistance descending and returned the highest (furthest) level — now returns the lowest resistance above close (nearest). Among pivots within one ATR band of the nearest level, the most recent pivot is preferred. Same logic applied to support. This corrects both the direction bug and stale-pivot preference.
+
+---
+
+## 2026-05-10 — Medium Quality Fixes: Daily Limit, HTF Volume, TP2 Resistance, Sentiment Freshness, Divergence ATR
+
+### Fixed
+
+- **Daily loss limit circuit breaker now enforced** (`trading/history.py`, `run_bot.py`): Added `get_daily_pnl()` to history.py (sums closed P&L since UTC midnight). `run_bot.py` now checks `daily_pnl < -daily_loss_limit` (default 5%) alongside the existing drawdown check. Both conditions block new entries and send a Telegram alert. Previously `RISK_LIMITS["daily_loss_limit"]` was defined but never used.
+- **HTF volume trend uses EWM instead of SMA** (`signals/htf.py`): `_htf_indicators()` now computes `vol_ema5` and `vol_ema20` via `ewm(span=…, adjust=False)`. The previous `rolling(20).mean()` and `tail(5).mean()` gave equal weight to candles 20 weeks ago (on 1W) and last week — EWM weights recent volume higher, making trend detection more responsive.
+- **TP2 capped below nearest resistance (BUY) / above support (SELL)** (`signals/engine.py`): If `support_resistance` contains a level between entry and the raw TP2, TP2 is set to `resistance × 0.995` (or `support × 1.005` for shorts). Prevents setting aggressive TP2 targets past a strong structure level that typically absorbs price.
+- **News sentiment ignores articles older than 24h** (`signals/sentiment.py`): CSV is now filtered to rows with `timestamp >= now - 24h` before the `head(7)` selection. If scraper stalled, stale headlines no longer bias the combined sentiment score. Rows are sorted newest-first so the 7 freshest articles are always used.
+- **RSI divergence threshold scales with ATR** (`signals/indicators.py`): Fixed `threshold = 0.002` replaced with `max(0.002, ATR / price)`. At BTC $100k with ATR $200 (0.2%), threshold stays at 0.2%. At high volatility with ATR $500 (0.5%), threshold rises to 0.5% — preventing noise pivots from triggering false divergence signals.
+
+---
+
+## 2026-05-10 — Critical Quality Fixes: Trail Noise, HTF False Positives, Confidence Staleness, Regime Filter
+
+### Fixed
+
+- **Trailing stop no longer ratchets on micro-moves** (`trading/paper.py`, `config.py`): Trail only advances when the new level is at least `ATR × trail_factor × 0.5` above the current trail. Previously, any single-candle close slightly above trail would update it, causing gradual ratcheting in sideways markets and premature stop-outs on normal pullbacks. Added `trailing_advance_min_ratio: 0.5` to `RISK_CONFIG`.
+- **Trailing stop tightens 20% after TP1 hit** (`trading/paper.py`, `config.py`): After the first 50% partial close, the remaining position uses `trail_factor × 0.8` instead of the full factor. At half position size the risk profile is lower, so a tighter trail protects the accumulated gain more aggressively. Added `trailing_post_tp1_factor: 0.8` to `RISK_CONFIG`.
+- **HTF aligned flag no longer false-positive on momentum exhaustion** (`signals/htf.py`): `aligned=True` now requires that the two HTF timeframes are NOT both in an extreme counter-trend RSI zone. Example: 4H BULLISH + 1D BULLISH both overbought → `aligned=False` (impending reversal, not a safe buy setup). Both `get_htf_trend()` (futures) and `get_spot_htf_trend()` (spot) updated via shared `_htf_aligned()` helper.
+- **Confidence recalculated after news integration** (`signals/engine.py`): `integrate_news_with_signal()` now calls `get_signal_confidence()` at the end to reflect post-news strength. Previously a signal that dropped from strength 6.5 → 4.2 after news was still labeled "STRONG", allowing pyramid entries to open on stale confidence.
+- **Regime filter only blocks TRENDING + BEARISH entries** (`run_bot.py`): `_is_bearish_regime()` now requires `regime == "TRENDING"` in addition to `trend_dir == "BEARISH"`. In ranging/transition markets (ADX < 20-25), DI- > DI+ is normal oscillation — blocking spot BUY in these conditions was incorrectly rejecting valid pullback entries.
+
+---
+
+## 2026-05-10 — Strategy Tuning: 10 Parameter Fixes (Vol Exit, Trail, OBV, S&P, VWAP, Funding, Time Exit, EMA Slope, BB Squeeze, Pyramid SL)
+
+### Changed
+
+- **EMA 200 condition now includes slope** (`signals/engine.py`): Condition #1 differentiates between price above a rising EMA (full 1.0 pt) vs price above a flat/falling EMA (0.5 pt). Previously, a bullish position in a months-long uptrend always scored 1.0 regardless of EMA momentum. Uses a 5-candle slope to avoid single-candle noise.
+- **Bollinger Band middle zone replaced with squeeze detection** (`signals/engine.py`): The unconditional ±0.25 "price above/below BB middle" score is replaced with a volatility compression check. Score only awarded when the current BB width is in the bottom 30th percentile of the past 20+ candles (squeeze), combined with price direction vs middle. This was previously firing on almost every non-extreme candle.
+- **Pyramid SL tightening: multiplicative → additive ATR-based** (`run_bot.py`, `config.py`): SL per pyramid level now uses `entry - atr × max(1.0, 1.5 - 0.25 × (n-1))` instead of `sl_dist × 0.8^(n-1)`. Results: Entry #2 = 1.25× ATR (was 0.8×), Entry #3 = 1.0× ATR (was 0.64×). The multiplicative formula compounded to below-wick levels at entry #3; the additive formula has a hard 1.0× ATR floor. Added `tighten_sl_atr_step: 0.25` to pyramid config.
+
+---
+
+## 2026-05-10 — Strategy Tuning: 7 Parameter Fixes (Vol Exit, Futures Trail, OBV, S&P, VWAP, Funding, Time Exit)
+
+### Changed
+
+- **S&P500 weight halved for spot mode** (`signals/engine.py`): S&P500 bias now scores 0.5 (spot) vs 1.0 (futures). BTC-SPX correlation weakens during crypto-driven cycles; 1.0 was equivalent to a MACD crossover — too high for an external macro factor. `SPOT_MAX_SCORE` updated 18.25 → 17.75.
+- **VWAP requires recent crossover** (`signals/engine.py`): Condition #17 now only scores when price crossed the VWAP in the last 5 candles (was below/above within lookback window). Pure "price above VWAP" in a sustained trend no longer awards 0.75 automatically — that was effectively a free score in any uptrend.
+- **Funding exit short threshold symmetric** (`config.py`): `close_short_rate` raised from `-0.05%` → `-0.08%`. The previous asymmetry (long closed at >0.10%, short closed at <-0.05%) was treating shorts as far more sensitive than longs. `-0.08%` is more proportional.
+- **Spot time exit reduced to 48h** (`config.py`, `trading/paper.py`, `backtest.py`): Added `max_position_hours_spot: 48`. BTC 4H signals typically materialize within 12-15 candles (48-60h); holding to 72h locks capital in declining-quality setups. Futures unchanged at 72h. Both paper.py and backtest.py now read mode-aware values.
+
+---
+
+## 2026-05-10 — Strategy Tuning: 3 Parameter Fixes (Vol Exit, Futures Trail, OBV Filter)
+
+### Changed
+
+- **Vol expansion exit threshold tightened** (`config.py`): `vol_expansion_exit_mult` reduced from `2.0` → `1.5`. BTC 4H ATR can spike 1.8-2.0× in a single candle during news events, meaning the 2.0× exit was triggering *after* damage already occurred. 1.5× catches exhaustion earlier while still filtering noise.
+- **Futures trailing stop loosened** (`config.py`): `FUTURES_CONFIG["trailing_atr_factor"]` raised from `0.7` → `0.9`. At 0.7× ATR on 1H candles, normal wicks frequently triggered premature trail exits — the tighter trail was intended to reflect leverage amplification, but 0.7× is below typical wick size on BTC 1H. Spot trail unchanged at 1.0×.
+- **OBV activation threshold tightened** (`signals/engine.py`): OBV signal threshold raised from `obv_rel >= 0.001` → `>= 0.002`. The 0.001 threshold fired on nearly every candle with any volume, making the 0.75-point OBV condition a near-automatic score contribution. 0.002 requires meaningful net OBV flow relative to 5-candle volume.
+
+---
+
+## 2026-05-10 — Pyramid Strategy Review: 2 Bug Fixes (Cache Mutation, P&L Weighting)
+
+### Fixed
+
+- **Spot signal cache no longer mutated by run_bot** (`signals/spot.py`): `analyze_spot_signal()` was returning the cached dict reference directly. `run_bot.py` mutates `spot_signal["type"]`, `stop_loss`, `take_profit`, and `tp2` at multiple points (HOLD forcing, SL tightening for pyramid entries). Subsequent bot cycles within the same 4H candle received a corrupted cached signal — e.g. a forced HOLD would suppress valid signals for the rest of the candle, and pyramid SL tightening would compound on itself each cycle. Fixed by returning `dict(_spot_cache["signal"])` (shallow copy) on cache hit.
+- **Pyramid P&L now weighted by size_factor** (`trading/history.py`): `close_paper_position()` was storing raw `pnl_pct` for all positions regardless of pyramid size. Entry #3 (25% of base size) was reporting the same percentage contribution as Entry #1 (100%), inflating aggregate P&L stats and win-rate calculations. Fixed in `close_paper_position()` by multiplying `pnl_pct` by the position's stored `size_factor` (1.0 for initial entries, 0.5/0.25 for pyramid entries) before storing.
+
+---
+
+## 2026-05-10 — Full Codebase Review: 3 Bug Fixes (Paper Trail Fee, Sizing Threshold, Docstring)
+
+### Fixed
+
+- **`paper.py` trailing stop exits now apply exit fees** (`trading/paper.py`): BUY and SELL trailing stop exits were computing P&L directly (`(trail - entry) / entry`) without fees. All other exit types (MACRO_CLOSE, TIME_EXIT, VOL_EXIT, FUNDING_EXIT) use `_calc_pnl()` which subtracts `(fee + slippage)`. Both trail branches now call `_calc_pnl(pos, trail)` for consistency — trail exits were overstating P&L by ~0.15% (futures) or ~0.30% (spot) per trade.
+- **Spot position sizing ATR percentile thresholds use `>=` consistently** (`signals/sizing.py`): spot used strict `>` while futures used `>=`, causing a one-position edge-case discrepancy at exactly `atr_pct = 0.90` and `0.75`. Both now use `>=`.
+- **`spot.py` docstring updated to match actual behavior** (`signals/spot.py`): docstring claimed "15 conditions (no funding/L/S/OI/basis)" but the pipeline fetches funding rate and L/S ratio, which engine.py uses at ½-weight (0.25 each) for spot. Docstring now accurately describes behavior; OI and basis remain excluded.
+
+---
+
+## 2026-05-10 — Technical Indicator Review: 4 Correctness Fixes (ADX, Backtest HTF)
+
+### Fixed
+
+- **ADX minus DM formula corrected** (`signals/indicators.py`): was using `low.diff().abs()` (always positive) causing false -DM readings on gap-up days. Fixed to `-low.diff()` so -DM only fires when price actually moves down, matching Wilder's canonical definition.
+- **Backtest HTF MACD now uses actual MACD** (`backtest.py`): was comparing `ohlc[-1] > ohlc[-2]` (price direction) instead of EMA12−EMA26 vs signal line EMA9. Now calls `calculate_macd()` from `signals/indicators.py` — same function used by the live engine.
+- **Backtest HTF RSI now uses 5-zone classification** (`backtest.py`): was using 3 zones (oversold/neutral/overbought) while live `htf.py` uses 5 (oversold/low/neutral/elevated/overbought). Unified to match live behavior.
+- **Backtest HTF RSI now uses Wilder's algorithm** (`backtest.py`): was using EWM approximation directly on gain/loss. Now calls `calculate_rsi()` from `signals/indicators.py` — same Wilder's iterative smoothing used by the live engine.
+
+---
+
+## 2026-05-10 — Futures Strategy Review: 3 Bug Fixes (Backtest Double-Bump, OI Asymmetry)
+
+### Fixed
+
+- **Backtest no longer double-applies regime + session threshold bumps** (`backtest.py`): `effective_threshold` was computed as `base + regime_bump + session_bump` before being passed to `generate_signals()`, which then added them again internally (regime from same window = identical value; session from `datetime.now()` = wrong historical time). Backtest now passes just the base adaptive threshold; the engine applies both adjustments exactly once.
+- **OI×Price bear case now symmetric with bull case** (`signals/engine.py`): `OI↑+Price↓` (new shorts opening as price falls = confirmed distribution) was scored `+0.5` sell while the mirror condition `OI↑+Price↑` scored `+0.75` buy. Updated to `+0.75` — equal information strength in opposite directions.
+- **`SIGNAL_MAX_SCORE` comment updated** (`config.py`): replaced stale calculation comment with accurate description (practical max ~21.25 after diminishing-returns penalty; theoretical ceiling ~22).
+
+---
+
+## 2026-05-10 — Spot Strategy Review: 5 Bug Fixes (Scoring, Backtest Fees, Gates)
+
+### Fixed
+
+- **RSI divergence no longer double-inflates scores** (`signals/engine.py`): when bullish divergence fires against an overbought RSI, the OB sell score is now cancelled (−1.5) before adding to buy; previously only the buy side increased, leaving sell inflated. Same fix applied for bearish divergence + oversold RSI.
+- **RSI divergence now immune to diminishing-returns penalty** (`signals/engine.py`): divergence scoring block moved to after the correlated-extremes penalty block. Divergence measures price-RSI momentum — structurally independent from RSI/BB/StochRSI price extremes — so it should not be discounted when 3 extremes cluster. Both old blocks (early scoring + override) replaced with a single consolidated post-penalty block.
+- **Backtest trailing stop exits now deduct exit fees** (`backtest.py`): trailing stop P&L was computed inline without any exit cost. Now applies `(fee_pct + slippage)` to the trail price before computing P&L, consistent with how TP targets are fee-adjusted.
+- **Backtest TIME_EXIT / VOL_EXIT now use mode-aware taker fee** (`backtest.py`): `_calc_backtest_pnl` was applying slippage-only on exit (comment read "fee already in entry"). Updated to apply the correct taker fee per mode (0.10% spot, 0.04% futures) plus slippage on exit, matching the live `trading/paper.py` cost model.
+- **Backtest spot entry gates now include psychology SL check** (`backtest.py`): added gate matching live `run_bot.py` behavior — skips entry if SL is within 0.15% below a $1,000 round number (stop-hunt zone).
+- **`SPOT_MAX_SCORE` comment updated** (`config.py`): updated value to 18.25 and corrected comment; previous value (17.25) was an underestimate from an older condition set.
+
+---
+
 ## 2026-05-09 — Strategy Overhaul: Signal Quality, Risk Gates, Exit Conditions, Formula Fixes
 
 ### Added

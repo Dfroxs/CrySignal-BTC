@@ -33,6 +33,12 @@ def get_combined_sentiment(fng=None):
         if 'category' not in df.columns:
             df['category'] = 'crypto'
 
+        if not df.empty and 'timestamp' in df.columns:
+            df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce', utc=True)
+            cutoff = datetime.now(UTC) - timedelta(hours=24)
+            fresh = df[df['timestamp'] >= cutoff]
+            df = fresh.sort_values('timestamp', ascending=False) if not fresh.empty else df.head(0)
+
         if not df.empty:
             for _, row in df.head(7).iterrows():
                 val = 1 if row['sentiment_label'] == 'BULLISH' else (-1 if row['sentiment_label'] == 'BEARISH' else 0)

@@ -44,7 +44,7 @@ Paper trading is simulated. Past results do not guarantee future performance.
 │  15 conditions              │  19 conditions            │
 │  HTF: 1D + 1W EMA200        │  HTF: 4H + 1D EMA200      │
 │  Threshold: 4.3 (adaptive)  │  Threshold: 5.2 (adaptive)│
-│  Max score: 15.5            │  Max score: 19.25         │
+│  Max score: 18.75           │  Max score: 22.25         │
 │  No funding/LS/OI/basis     │  Full market structure    │
 └──────────────────────┬──────────────────────────────────┘
                        ▼
@@ -73,35 +73,37 @@ Paper trading is simulated. Past results do not guarantee future performance.
 
 ---
 
-## 18 Signal Conditions
+## 19 Signal Conditions
 
 | # | Condition | Max Buy | Max Sell | Notes |
 |---|---|---|---|---|
-| 1 | EMA 200 trend | 1.00 | 1.00 | Price above/below 200 EMA |
+| 1 | EMA 200 trend | 1.00 | 1.00 | Price above/below 200 EMA + slope (flat = 0.5) |
 | 2 | RSI zones | 1.50 | 1.50 | <30 OS = +1.5 buy; >70 OB = +1.5 sell; elevated >55 = +0.5 sell |
 | 3 | MACD crossover / position | 1.50 | 1.50 | Crossover = +1.5; above/below signal = +0.5 |
 | 4a | Volume confirmation | 1.00 | 1.00 | >1.3× avg + direction; <0.7× = weak conviction warning |
-| 4b | Volume climax (Wyckoff) | 0.75 | 0.75 | Vol >2× + narrow range (<50% ATR) → accumulation/distribution |
-| 5 | Bollinger Bands | 1.25 | 1.25 | At lower/upper band; above/below middle |
-| 6 | HTF Alignment (enhanced) | 2.00 | 2.00 | RSI + MACD + volume confirmation per HTF; extreme RSI reversal signals |
-| 7 | RSI Divergence (pivot-based) | 2.00 | 2.00 | Swing pivots over 50 candles, >0.2% threshold |
-| 8 | OBV 5-candle slope | 0.75 | 0.75 | Only scored if |OBV| / volume ≥ 0.001 |
+| 4b | Volume climax (Wyckoff) | 0.75 | 0.75 | Vol >1.5× + narrow range (<75% ATR) + directional close |
+| 5 | Bollinger Bands | 1.25 | 1.25 | At lower/upper band; squeeze detection (no auto middle score) |
+| 6 | HTF Alignment (enhanced) | 2.00 | 2.00 | RSI + MACD + volume per HTF; blocks when both TFs at extreme counter-trend RSI |
+| 7 | RSI Divergence (pivot-based) | 2.00 | 2.00 | Swing pivots over 50 candles, ATR-scaled threshold |
+| 8 | OBV 5-candle slope | 0.75 | 0.75 | Only scored if \|OBV change\| / volume ≥ 0.002 |
 | 9 | Funding rate | 0.50 | 1.00 | Negative = shorts pay = bullish; VERY HIGH = bearish † |
 | 9b | L/S Ratio | 0.75 | 0.75 | <0.8 = shorts crowded (squeeze); >2.0 = longs crowded † |
 | 9c | DXY (USD index) | 0.50 | 0.50 | Falling USD = risk-on = buy |
-| 10 | S&P 500 trend | 1.00 | 1.00 | >0.5% change = risk-on/off bias |
+| 10 | S&P 500 trend | 1.00 | 0.50 | >0.5% change = risk-on/off bias (spot weight halved) |
 | 11 | Stablecoin supply | 0.75 | 0.75 | >0.5% change = dry powder entering/leaving |
 | 12 | BTC Dominance | 0.75 | 0.75 | >0.5% change = capital rotating in/out |
-| 13 | Open Interest | 0.50 | 0.50 | >1% change confirms/contradicts trend † |
+| 13 | Open Interest | 0.75 | 0.75 | OI × price direction analysis (4 scenarios) † |
 | 14 | Futures Basis | 0.50 | 0.50 | Premium >0.1% = long demand; discount <-0.1% = weak † |
-| 15 | Stochastic RSI | 1.25 | 1.25 | Crossover in extreme zone; RSI confirmation bonus |
-| 16 | Support/Resistance | 0.75 | 0.75 | Bounce/rejection within 0.3% of swing levels |
-| 17 | VWAP position | 0.75 | 0.75 | Price above/below rolling VWAP |
+| 15 | Stochastic RSI | 1.25 | 1.25 | Crossover in extreme zone; RSI zone confirmation bonus |
+| 16 | Support/Resistance | 0.75 | 0.75 | Bounce/rejection within ATR of nearest swing level |
+| 17 | VWAP position | 0.75 | 0.75 | Crossover in last 5 candles (not just position) |
+| 18 | ADX trend strength | 1.25 | 1.25 | ADX >25 trending; DI+/DI- crossover + confirmation bonus |
+| 19 | Candlestick patterns | 1.00 | 1.00 | Engulfing/Morning/Evening Star (+1.0), Hammer/Shooting Star (+0.75), Harami (+0.5); bearish futures-only |
 
 † = futures-only conditions (skipped in SPOT pipeline)
 
-**FUTURES max: 19.25** (all 18 conditions)  
-**SPOT max: 15.5** (conditions 1-8, 9c-12, 15-17)
+**FUTURES max: 22.25** (all 19 conditions)  
+**SPOT max: 18.75** (conditions 1-8, 9c-12, 15-19; no funding/L/S/OI/basis)
 
 ---
 
@@ -159,7 +161,7 @@ Entry ─┬─ TP1 (50%) → partial exit + trail moves to breakeven
        │
        └─ Trail hit → full close = WIN (if trail ≥ entry) or LOSS
 ```
-- Trailing stop: `price ± ATR × 1.0` (tighter than entry SL at 1.5× ATR)
+- Trailing stop: `price ± ATR × 1.0` (spot) / `ATR × 0.9` (futures); tightens to `× 0.8` post-TP1
 - P&L blended: `partial_pnl × 0.5 + exit_pnl × 0.5`
 
 ### Safety
