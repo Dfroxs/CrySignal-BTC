@@ -146,7 +146,7 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
             })
             logger.info(
                 "Paper %s %s → VOL_EXIT (ATR %.0f > %.0f ×%.1f, %.2f%%)",
-                pos["type"], pos_id, _CURRENT_ATR, entry_atr, vol_mult, exit_pnl,
+                pos["type"], pos_id, current_atr, entry_atr, vol_mult, exit_pnl,
             )
             continue
 

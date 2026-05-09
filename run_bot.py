@@ -524,7 +524,7 @@ def run_cycle():
 
         current_atr = (spot_signal or futures_signal or {}).get("atr", 0)
         if current_atr > 0:
-            _last_atr = current_atr  # cache for mid-cycle
+            global _last_atr; _last_atr = current_atr
         fut_funding = 0
         if futures_signal and futures_signal.get("_market"):
             fut_funding = futures_signal["_market"].get("funding", {}).get("rate_pct", 0)

@@ -15,7 +15,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     previous = df.iloc[-2]
 
     atr_stop = current['ATR_14'] * RISK_CONFIG['atr_multiplier']
-    threshold = threshold_override
+    threshold = threshold_override if threshold_override is not None else 0
 
     signal = {
         'type': 'HOLD',
