@@ -114,17 +114,20 @@ def detect_rsi_divergence(df, pivot_window=3, lookback=50):
         if highs[i] == max(highs[i - pivot_window:i + pivot_window + 1]):
             swing_highs.append((i, closes[i], rsis[i]))
 
+    # Dynamic threshold: ATR% of price (floor 0.2%) — scales with volatility
+    atr_val = df['ATR_14'].iloc[-1] if 'ATR_14' in df.columns else 0
+    price_val = df['close'].iloc[-1]
+    threshold = max(0.002, atr_val / price_val) if price_val > 0 else 0.002
+
     if len(swing_lows) >= 2:
         i1, c1, r1 = swing_lows[-2]
         i2, c2, r2 = swing_lows[-1]
-        threshold = 0.002
         if c2 < c1 * (1 - threshold) and r2 > r1:
             return 'BULLISH'
 
     if len(swing_highs) >= 2:
         i1, c1, r1 = swing_highs[-2]
         i2, c2, r2 = swing_highs[-1]
-        threshold = 0.002
         if c2 > c1 * (1 + threshold) and r2 < r1:
             return 'BEARISH'
 

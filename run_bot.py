@@ -298,11 +298,24 @@ def run_cycle():
     max_dd = RISK_LIMITS.get("max_drawdown_pct", 15.0)
     min_eq = RISK_LIMITS.get("min_equity_pct", 50.0)
 
-    if total_dd > max_dd:
-        msg = f"⛔ DRAWDOWN {total_dd:.1f}% > {max_dd}% — blocking new entries"
+    daily_pnl = _h.get_daily_pnl()
+    daily_limit = RISK_LIMITS.get("daily_loss_limit", 5.0)
+    daily_breaker = daily_pnl < -daily_limit
+
+    if total_dd > max_dd or daily_breaker:
+        if daily_breaker:
+            msg = f"⛔ DAILY LOSS {daily_pnl:.1f}% > -{daily_limit}% limit — blocking new entries for today"
+        else:
+            msg = f"⛔ DRAWDOWN {total_dd:.1f}% > {max_dd}% — blocking new entries"
         logger.warning(msg)
         phase3_actions.append(msg)
-        pending_tg.append((f"⛔ <b>Circuit Breaker</b>\nDrawdown <b>{total_dd:.1f}%</b> > {max_dd}% limit\nAll new entries blocked.", "circuit-breaker"))
+        pending_tg.append((
+            f"⛔ <b>Circuit Breaker</b>\n"
+            f"{'Daily loss' if daily_breaker else 'Drawdown'} "
+            f"<b>{abs(daily_pnl if daily_breaker else total_dd):.1f}%</b> > limit\n"
+            f"All new entries blocked.",
+            "circuit-breaker",
+        ))
         # Skip Phase 3 entirely — just run position checks (close existing)
         if spot_signal:
             spot_signal["type"] = "HOLD"

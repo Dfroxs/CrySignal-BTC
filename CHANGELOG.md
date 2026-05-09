@@ -4,6 +4,18 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-10 — Medium Quality Fixes: Daily Limit, HTF Volume, TP2 Resistance, Sentiment Freshness, Divergence ATR
+
+### Fixed
+
+- **Daily loss limit circuit breaker now enforced** (`trading/history.py`, `run_bot.py`): Added `get_daily_pnl()` to history.py (sums closed P&L since UTC midnight). `run_bot.py` now checks `daily_pnl < -daily_loss_limit` (default 5%) alongside the existing drawdown check. Both conditions block new entries and send a Telegram alert. Previously `RISK_LIMITS["daily_loss_limit"]` was defined but never used.
+- **HTF volume trend uses EWM instead of SMA** (`signals/htf.py`): `_htf_indicators()` now computes `vol_ema5` and `vol_ema20` via `ewm(span=…, adjust=False)`. The previous `rolling(20).mean()` and `tail(5).mean()` gave equal weight to candles 20 weeks ago (on 1W) and last week — EWM weights recent volume higher, making trend detection more responsive.
+- **TP2 capped below nearest resistance (BUY) / above support (SELL)** (`signals/engine.py`): If `support_resistance` contains a level between entry and the raw TP2, TP2 is set to `resistance × 0.995` (or `support × 1.005` for shorts). Prevents setting aggressive TP2 targets past a strong structure level that typically absorbs price.
+- **News sentiment ignores articles older than 24h** (`signals/sentiment.py`): CSV is now filtered to rows with `timestamp >= now - 24h` before the `head(7)` selection. If scraper stalled, stale headlines no longer bias the combined sentiment score. Rows are sorted newest-first so the 7 freshest articles are always used.
+- **RSI divergence threshold scales with ATR** (`signals/indicators.py`): Fixed `threshold = 0.002` replaced with `max(0.002, ATR / price)`. At BTC $100k with ATR $200 (0.2%), threshold stays at 0.2%. At high volatility with ATR $500 (0.5%), threshold rises to 0.5% — preventing noise pivots from triggering false divergence signals.
+
+---
+
 ## 2026-05-10 — Critical Quality Fixes: Trail Noise, HTF False Positives, Confidence Staleness, Regime Filter
 
 ### Fixed

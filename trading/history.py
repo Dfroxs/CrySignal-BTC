@@ -553,6 +553,19 @@ def get_profit_factor(mode=None):
     return wins / losses
 
 
+def get_daily_pnl(mode=None):
+    """Sum of pnl_pct for positions closed today (UTC). Used for daily loss limit."""
+    c = _conn()
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
+    mf, mp = ("AND mode = ?", [mode]) if mode else ("", [])
+    rows = c.execute(
+        f"SELECT pnl_pct FROM paper_positions "
+        f"WHERE pnl_pct IS NOT NULL AND closed_at >= ? {mf}",
+        [today + " 00:00:00"] + (mp if isinstance(mp, list) else [mp] if mp else []),
+    ).fetchall()
+    return sum(r["pnl_pct"] for r in rows) if rows else 0.0
+
+
 def get_closed_pnl(mode=None):
     """Return (total_pnl_pct, total_trades, avg_pnl_pct) for paper positions."""
     c = _conn()

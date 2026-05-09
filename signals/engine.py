@@ -524,13 +524,22 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     signal['atr'] = current['ATR_14']
     signal['_threshold'] = threshold
 
-    # TP2 = 2× the TP1 distance
+    # TP2 = 2× the TP1 distance, capped below nearest resistance (BUY) or above support (SELL)
     if signal['type'] != 'HOLD' and signal['take_profit'] is not None:
         tp1_dist = abs(signal['take_profit'] - signal['entry_price'])
+        sr_levels = signal.get('support_resistance') or {}
         if signal['type'] == 'BUY':
-            signal['tp2'] = signal['entry_price'] + tp1_dist * 2
+            tp2_raw = signal['entry_price'] + tp1_dist * 2
+            resistance = sr_levels.get('resistance')
+            if resistance and signal['entry_price'] < resistance < tp2_raw:
+                tp2_raw = resistance * 0.995  # 0.5% buffer below resistance
+            signal['tp2'] = round(tp2_raw, 2)
         else:
-            signal['tp2'] = signal['entry_price'] - tp1_dist * 2
+            tp2_raw = signal['entry_price'] - tp1_dist * 2
+            support = sr_levels.get('support')
+            if support and signal['entry_price'] > support > tp2_raw:
+                tp2_raw = support * 1.005  # 0.5% buffer above support
+            signal['tp2'] = round(tp2_raw, 2)
 
     if signal['type'] != 'HOLD':
         signal['confidence'] = get_signal_confidence(signal['strength'], threshold)

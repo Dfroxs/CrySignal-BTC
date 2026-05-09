@@ -38,11 +38,11 @@ def _htf_indicators(df):
 
     macd_bias = 'BULLISH' if macd.iloc[-1] > macd_sig.iloc[-1] else 'BEARISH'
 
-    vol_avg = df['volume'].rolling(20).mean().iloc[-1]
-    vol_last = df['volume'].tail(5).mean()
-    if vol_last > vol_avg * 1.3:
+    vol_ema20 = df['volume'].ewm(span=20, adjust=False).mean().iloc[-1]
+    vol_ema5  = df['volume'].ewm(span=5,  adjust=False).mean().iloc[-1]
+    if vol_ema5 > vol_ema20 * 1.3:
         vol_trend = 'RISING'
-    elif vol_last < vol_avg * 0.7:
+    elif vol_ema5 < vol_ema20 * 0.7:
         vol_trend = 'FALLING'
     else:
         vol_trend = 'FLAT'
