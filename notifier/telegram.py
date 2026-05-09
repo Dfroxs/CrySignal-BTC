@@ -464,14 +464,14 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
         regime = sig.get("regime", "")
         adx_v  = sig.get("adx")
 
-        rsi_tag   = " 🔴OB" if rsi_v > 70 else (" 🟢OS" if rsi_v < 30 else "")
+        rsi_tag   = "  <b>OB</b>" if rsi_v > 70 else ("  <b>OS</b>" if rsi_v < 30 else "")
         macd_dir  = _UP if macd > msig_v else _DOWN
         obv_dir   = _UP if obv > 0 else _DOWN
 
         lines.append(f"RSI       <code>{rsi_v:.1f}</code>{rsi_tag}")
         lines.append(f"MACD      <code>{macd:.0f}</code>  {macd_dir}  sig <code>{msig_v:.0f}</code>")
         if sk is not None and sd is not None:
-            sk_tag = " 🔴OB" if sk > 80 else (" 🟢OS" if sk < 20 else "")
+            sk_tag = "  <b>OB</b>" if sk > 80 else ("  <b>OS</b>" if sk < 20 else "")
             lines.append(f"StochRSI  <code>{sk:.0f}/{sd:.0f}</code>{sk_tag}")
         if vwap:
             vwap_dir = _UP if price > vwap else _DOWN
@@ -537,30 +537,34 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
         lines.append("")
 
     # ── Performance ────────────────────────────────────────────
+    lines.append("<b>━━━ 📈 PERFORMANCE ━━━</b>")
     try:
         spot_pnl, spot_cnt, _ = _sh.get_closed_pnl("spot")
         fut_pnl, fut_cnt, _   = _sh.get_closed_pnl("futures")
         total_trades = spot_cnt + fut_cnt
 
         if total_trades > 0:
-            # Per-mode breakdown
             sp_bd = _sh.get_outcome_breakdown("spot") if spot_cnt > 0 else {}
-            fu_bd = _sh.get_outcome_breakdown("futures") if fu_cnt > 0 else {}
+            fu_bd = _sh.get_outcome_breakdown("futures") if fut_cnt > 0 else {}
             sp_w = sp_bd.get("WIN", 0); sp_l = sp_bd.get("LOSS", 0)
             fu_w = fu_bd.get("WIN", 0); fu_l = fu_bd.get("LOSS", 0)
 
             if spot_cnt > 0:
-                sp_wr = f"WR {sp_w/(sp_w+sp_l)*100:.0f}%" if (sp_w + sp_l) > 0 else ""
-                lines.append(f"SPOT     {spot_cnt} trades  {sp_w}W {sp_l}L {sp_wr}  <b>{spot_pnl:+.2f}%</b>")
+                sp_wr = f"  WR {sp_w/(sp_w+sp_l)*100:.0f}%" if (sp_w + sp_l) > 0 else ""
+                lines.append(f"SPOT     <code>{spot_cnt}</code> trades  {sp_w}W {sp_l}L{sp_wr}  <b>{spot_pnl:+.2f}%</b>")
             if fut_cnt > 0:
-                fu_wr = f"WR {fu_w/(fu_w+fu_l)*100:.0f}%" if (fu_w + fu_l) > 0 else ""
-                lines.append(f"FUTURES  {fut_cnt} trades  {fu_w}W {fu_l}L {fu_wr}  <b>{fut_pnl:+.2f}%</b>")
+                fu_wr = f"  WR {fu_w/(fu_w+fu_l)*100:.0f}%" if (fu_w + fu_l) > 0 else ""
+                lines.append(f"FUTURES  <code>{fut_cnt}</code> trades  {fu_w}W {fu_l}L{fu_wr}  <b>{fut_pnl:+.2f}%</b>")
             if spot_cnt > 0 and fut_cnt > 0:
                 total_pnl = spot_pnl + fut_pnl
-                tot_col = "+" if total_pnl >= 0 else ""
-                lines.append(f"Total    {total_trades} trades  {sp_w+fu_w}W {sp_l+fu_l}L  <b>{tot_col}{total_pnl:.2f}%</b>")
+                lines.append(f"Total    <code>{total_trades}</code> trades  {sp_w+fu_w}W {sp_l+fu_l}L  <b>{total_pnl:+.2f}%</b>")
+            else:
+                lines.append("No closed trades yet")
+        else:
+            lines.append("No closed trades yet")
     except Exception:
-        pass
+        lines.append("—")
+    lines.append("")
 
     # ── Position Sizing ────────────────────────────────────────
     lines.append("<b>━━━ 📊 POSITION SIZING ━━━</b>")
@@ -773,15 +777,15 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
         if reasons:
             for r in reasons[:12]:
                 if r.startswith("✓"):
-                    sym, body = "✅", r[2:].strip()
+                    sym, body = "✓", r[2:].strip()
                 elif r.startswith("✗"):
-                    sym, body = "❌", r[2:].strip()
+                    sym, body = "✗", r[2:].strip()
                 elif r.startswith("⚠"):
-                    sym, body = "⚠️", r[2:].strip()
+                    sym, body = "⚠", r[2:].strip()
                 elif r.startswith("📊"):
-                    sym, body = "📊", r[2:].strip()
+                    sym, body = "·", r[2:].strip()
                 else:
-                    sym, body = "•", r.strip()
+                    sym, body = "·", r.strip()
                 lines.append(f"  {sym} {_esc(body[:80])}")
         lines.append("")
 
