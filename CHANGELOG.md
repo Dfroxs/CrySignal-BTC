@@ -4,6 +4,19 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-10 — Spot Strategy Review: 5 Bug Fixes (Scoring, Backtest Fees, Gates)
+
+### Fixed
+
+- **RSI divergence no longer double-inflates scores** (`signals/engine.py`): when bullish divergence fires against an overbought RSI, the OB sell score is now cancelled (−1.5) before adding to buy; previously only the buy side increased, leaving sell inflated. Same fix applied for bearish divergence + oversold RSI.
+- **RSI divergence now immune to diminishing-returns penalty** (`signals/engine.py`): divergence scoring block moved to after the correlated-extremes penalty block. Divergence measures price-RSI momentum — structurally independent from RSI/BB/StochRSI price extremes — so it should not be discounted when 3 extremes cluster. Both old blocks (early scoring + override) replaced with a single consolidated post-penalty block.
+- **Backtest trailing stop exits now deduct exit fees** (`backtest.py`): trailing stop P&L was computed inline without any exit cost. Now applies `(fee_pct + slippage)` to the trail price before computing P&L, consistent with how TP targets are fee-adjusted.
+- **Backtest TIME_EXIT / VOL_EXIT now use mode-aware taker fee** (`backtest.py`): `_calc_backtest_pnl` was applying slippage-only on exit (comment read "fee already in entry"). Updated to apply the correct taker fee per mode (0.10% spot, 0.04% futures) plus slippage on exit, matching the live `trading/paper.py` cost model.
+- **Backtest spot entry gates now include psychology SL check** (`backtest.py`): added gate matching live `run_bot.py` behavior — skips entry if SL is within 0.15% below a $1,000 round number (stop-hunt zone).
+- **`SPOT_MAX_SCORE` comment updated** (`config.py`): updated value to 18.25 and corrected comment; previous value (17.25) was an underestimate from an older condition set.
+
+---
+
 ## 2026-05-09 — Strategy Overhaul: Signal Quality, Risk Gates, Exit Conditions, Formula Fixes
 
 ### Added

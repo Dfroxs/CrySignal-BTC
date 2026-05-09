@@ -169,6 +169,14 @@ def _passes_entry_gates(signal, mode, window):
         if atr and vwap and sr_entry > vwap + atr:
             return False  # FOMO entry
 
+        # Gate: psychology SL vulnerability — SL within 0.15% below a $1k round number
+        sl = signal.get("stop_loss", 0)
+        if sl > 0:
+            step = 1000
+            next_round = (int(sl // step) + 1) * step
+            if (next_round - sl) / sl * 100 <= 0.15:
+                return False
+
     return True
 
 
@@ -205,6 +213,8 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
     trail_factor = FUTURES_CONFIG.get("trailing_atr_factor", 0.7) if mode == "futures" else 1.0
     partial_closed = False
     partial_pnl = 0
+    exit_fee_pct = ec["futures_fee_pct"] if mode == "futures" else ec["spot_fee_pct"]
+    exit_cost = (exit_fee_pct + slip) / 100
 
     for j in range(entry_idx + 1, min(entry_idx + 1 + max_hold, len(df))):
         c = df.iloc[j]
@@ -216,13 +226,13 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
         max_hours = RISK_CONFIG.get("max_position_hours", 72)
         if age * (4 if timeframe == "4h" else 1) > max_hours:
             exit_px = c["close"]
-            exit_pnl = _calc_backtest_pnl(stype, entry, exit_px, partial_closed, partial_pnl)
+            exit_pnl = _calc_backtest_pnl(stype, entry, exit_px, partial_closed, partial_pnl, mode)
             return _make_trade(df, entry_idx, j, signal, "TIME_EXIT", entry, exit_px, exit_pnl)
 
         # Vol exit
         if atr_entry > 0 and atr_now > atr_entry * RISK_CONFIG.get("vol_expansion_exit_mult", 2.0):
             exit_px = c["close"]
-            exit_pnl = _calc_backtest_pnl(stype, entry, exit_px, partial_closed, partial_pnl)
+            exit_pnl = _calc_backtest_pnl(stype, entry, exit_px, partial_closed, partial_pnl, mode)
             return _make_trade(df, entry_idx, j, signal, "VOL_EXIT", entry, exit_px, exit_pnl)
 
         if stype == "BUY":
@@ -246,11 +256,11 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
 
             # Trailing stop hit
             if low <= trail:
-                exit_px = trail
-                remaining = (trail - entry) / entry * 100
+                net_exit = trail * (1 - exit_cost)
+                remaining = (net_exit - entry) / entry * 100
                 exit_pnl = partial_pnl * 0.5 + remaining * 0.5 if partial_closed else remaining
-                outcome = "WIN" if trail >= entry else "LOSS"
-                return _make_trade(df, entry_idx, j, signal, outcome, entry, exit_px, exit_pnl)
+                outcome = "WIN" if net_exit >= entry else "LOSS"
+                return _make_trade(df, entry_idx, j, signal, outcome, entry, trail, exit_pnl)
 
         else:  # SELL
             if atr_now > 0:
@@ -269,11 +279,11 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
                 return _make_trade(df, entry_idx, j, signal, "WIN", entry, tp2, exit_pnl)
 
             if high >= trail:
-                exit_px = trail
-                remaining = (entry - trail) / entry * 100
+                net_exit = trail * (1 + exit_cost)
+                remaining = (entry - net_exit) / entry * 100
                 exit_pnl = partial_pnl * 0.5 + remaining * 0.5 if partial_closed else remaining
-                outcome = "WIN" if trail <= entry else "LOSS"
-                return _make_trade(df, entry_idx, j, signal, outcome, entry, exit_px, exit_pnl)
+                outcome = "WIN" if net_exit <= entry else "LOSS"
+                return _make_trade(df, entry_idx, j, signal, outcome, entry, trail, exit_pnl)
 
     # Ran out of candles — still open
     return _make_trade(df, entry_idx, entry_idx + max_hold, signal, "OPEN",
@@ -284,10 +294,11 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _calc_backtest_pnl(stype, entry, exit_px, partial_closed, partial_pnl):
+def _calc_backtest_pnl(stype, entry, exit_px, partial_closed, partial_pnl, mode="futures"):
     """Calculate blended P&L including exit fee."""
     ec = EXECUTION_CONFIG
-    exit_cost = (ec.get("slippage_pct", 0.05)) / 100  # slippage only on exit (fee already in entry)
+    fee_pct = ec["futures_fee_pct"] if mode == "futures" else ec["spot_fee_pct"]
+    exit_cost = (fee_pct + ec.get("slippage_pct", 0.05)) / 100
     if stype == "BUY":
         gross = (exit_px * (1 - exit_cost) - entry) / entry * 100
     else:

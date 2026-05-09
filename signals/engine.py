@@ -178,16 +178,6 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         else:
             signal['reasons'].append(f"⚠️  HTF Disagreement ({htf_label}) — caution")
 
-    # 7 — RSI Divergence
-    divergence = detect_rsi_divergence(df)
-    signal['rsi_divergence'] = divergence
-    if divergence == 'BULLISH':
-        buy_conditions += 2.0
-        signal['reasons'].append("✓ RSI BULLISH DIVERGENCE — price lower low, RSI higher low")
-    elif divergence == 'BEARISH':
-        sell_conditions += 2.0
-        signal['reasons'].append("✗ RSI BEARISH DIVERGENCE — price higher high, RSI lower high")
-
     # 8 — OBV slope (5-candle)
     obv_slope = df['OBV'].iloc[-1] - df['OBV'].iloc[-5]
     obv_denom = df['volume'].iloc[-5:].sum()
@@ -456,14 +446,23 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         sell_conditions -= penalty
         signal['reasons'].append(f"⚠️  {sell_extremes} overbought conditions clustered — diminishing returns applied (-{penalty:.2f})")
 
-    # ── RSI divergence overrides RSI zone (they contradict) ──
+    # 7 — RSI Divergence (scored after diminishing-returns penalty — structurally independent)
+    divergence = detect_rsi_divergence(df)
+    signal['rsi_divergence'] = divergence
     if divergence == 'BULLISH' and _rsi_ob:
-        # Bullish divergence + overbought RSI: divergence wins, suppress OB score
-        buy_conditions += 1.5   # was already suppressed by OB; restore divergence advantage
-        signal['reasons'].append("⚠️  RSI OB suppressed by BULLISH divergence — divergence stronger signal")
+        sell_conditions -= 1.5  # cancel OB sell score
+        buy_conditions += 1.5   # restore divergence advantage
+        signal['reasons'].append("⚠️  RSI OB cancelled by BULLISH divergence — divergence takes precedence")
     elif divergence == 'BEARISH' and _rsi_os:
+        buy_conditions -= 1.5   # cancel OS buy score
         sell_conditions += 1.5
-        signal['reasons'].append("⚠️  RSI OS suppressed by BEARISH divergence — divergence stronger signal")
+        signal['reasons'].append("⚠️  RSI OS cancelled by BEARISH divergence — divergence takes precedence")
+    elif divergence == 'BULLISH':
+        buy_conditions += 2.0
+        signal['reasons'].append("✓ RSI BULLISH DIVERGENCE — price lower low, RSI higher low")
+    elif divergence == 'BEARISH':
+        sell_conditions += 2.0
+        signal['reasons'].append("✗ RSI BEARISH DIVERGENCE — price higher high, RSI lower high")
 
     # Determine final signal
     if buy_conditions >= threshold and buy_conditions > sell_conditions:
