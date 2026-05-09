@@ -469,7 +469,7 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
         obv_dir   = _UP if obv > 0 else _DOWN
 
         lines.append(f"RSI       <code>{rsi_v:.1f}</code>{rsi_tag}")
-        lines.append(f"MACD      <code>{macd:.0f}</code>  {macd_dir}  sig <code>{msig_v:.0f}</code>")
+        lines.append(f"MACD      <code>{macd:+.0f}</code>  {macd_dir}  sig <code>{msig_v:+.0f}</code>")
         if sk is not None and sd is not None:
             sk_tag = "  <b>OB</b>" if sk > 80 else ("  <b>OS</b>" if sk < 20 else "")
             lines.append(f"StochRSI  <code>{sk:.0f}/{sd:.0f}</code>{sk_tag}")
