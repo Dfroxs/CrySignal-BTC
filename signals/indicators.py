@@ -13,11 +13,28 @@ def calculate_ema(data, period):
 
 
 def calculate_rsi(data, period=14):
+    """Wilder's RSI — exponential smoothing of avg gain/loss."""
     delta = data.diff()
-    gain = delta.where(delta > 0, 0).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    rs = gain / loss
-    return 100 - (100 / (1 + rs))
+    gain = delta.where(delta > 0, 0)
+    loss = (-delta.where(delta < 0, 0))
+
+    # Initial values: simple average of first `period` bars
+    avg_gain = gain.iloc[:period].mean()
+    avg_loss = loss.iloc[:period].mean()
+    result = pd.Series(index=data.index, dtype=float)
+
+    # Wilder's smoothing: avg = (prev_avg * (period-1) + current) / period
+    for i in range(len(data)):
+        if i < period:
+            result.iloc[i] = float('nan')
+        elif i == period:
+            result.iloc[i] = 100 - (100 / (1 + avg_gain / avg_loss)) if avg_loss > 0 else 100
+        else:
+            avg_gain = (avg_gain * (period - 1) + gain.iloc[i]) / period
+            avg_loss = (avg_loss * (period - 1) + loss.iloc[i]) / period
+            result.iloc[i] = 100 - (100 / (1 + avg_gain / avg_loss)) if avg_loss > 0 else 100
+
+    return result
 
 
 def calculate_macd(data, fast=12, slow=26, signal=9):
@@ -35,11 +52,13 @@ def calculate_bollinger_bands(data, period=20, std_dev=2):
 
 
 def calculate_atr(df, period=14):
+    """Wilder's ATR — exponential smoothing of True Range."""
     high_low = df['high'] - df['low']
     high_close = (df['high'] - df['close'].shift()).abs()
     low_close = (df['low'] - df['close'].shift()).abs()
     true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    return true_range.rolling(window=period).mean()
+    # Wilder's smoothing (same as RSI): alpha = 1/period
+    return true_range.ewm(alpha=1 / period, adjust=False).mean()
 
 
 def calculate_obv(df):
