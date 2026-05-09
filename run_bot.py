@@ -18,7 +18,8 @@ from news_scraper import scrape_and_export
 from notifier import _format_close_notification, _format_open_notification, _send_telegram_message, send_signal_alert
 from trading.paper import check_and_close_positions, print_open_status, print_paper_summary
 from config import RISK_CONFIG, FUTURES_CONFIG
-from trading.history import close as close_db, close_paper_position, get_open_positions, has_open_position_same_direction, open_paper_position
+from signals.sizing import calculate_position_size, get_pyramid_size_factor
+from trading.history import close as close_db, close_paper_position, get_open_position_count_by_direction, get_open_positions, has_open_position_same_direction, open_paper_position
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,6 +32,114 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 atexit.register(close_db)
+
+_CONFIDENCE_LEVEL = {"WEAK": 0, "NORMAL": 1, "STRONG": 2}
+
+
+def _confidence_at_least(actual, minimum):
+    """Return True if actual confidence meets or exceeds the minimum level."""
+    return _CONFIDENCE_LEVEL.get(actual, -1) >= _CONFIDENCE_LEVEL.get(minimum, 0)
+
+
+def _get_entry_prices_by_direction(direction, mode):
+    """Return list of entry prices for open positions in the given direction, ordered by opened_at."""
+    from trading.history import _conn as history_conn
+    c = history_conn()
+    rows = c.execute(
+        "SELECT entry_price FROM paper_positions WHERE outcome IS NULL AND type = ? AND mode = ? ORDER BY opened_at ASC",
+        (direction, mode),
+    ).fetchall()
+    return [r["entry_price"] for r in rows]
+
+
+def _get_psychology_levels(price, step=1000):
+    """Return nearest round-number levels below and above price."""
+    base = int(price // step) * step
+    return base, base + step
+
+
+def _check_psychology_sl_risk(entry, sl, step, buffer_pct):
+    """Return warning if SL is too close to a psychology level (stop-hunt target).
+
+    Checks distance from SL to the nearest round number ABOVE it —
+    the level that price must break to hit the stop.
+    """
+    sl_below, sl_above = _get_psychology_levels(sl, step)
+    # Distance from SL up to the next round thousand (the level above)
+    dist_to_above = (sl_above - sl) / sl * 100
+    if dist_to_above <= buffer_pct:
+        return f"SL ${sl:,.0f} sits {dist_to_above:.2f}% below psychology ${sl_above:,.0f} — vulnerable to stop hunt"
+    return None
+
+
+def _check_psychology_entry_risk(entry, step, buffer_pct):
+    """Return warning if entry is just above a psychology level (false breakout risk)."""
+    entry_below, entry_above = _get_psychology_levels(entry, step)
+    dist = (entry - entry_below) / entry * 100
+    if dist <= buffer_pct:
+        return f"Entry ${entry:,.0f} only {dist:.2f}% above psychology ${entry_below:,.0f} — false breakout risk"
+    return None
+
+
+def _check_sr_entry_risk(entry, sr, direction, atr):
+    """Check if entry is near resistance (BUY) or support (SELL) — higher reversal risk."""
+    if not sr or not atr:
+        return None
+    if direction == "BUY" and sr.get("resistance"):
+        dist = sr["resistance"] - entry
+        if 0 < dist <= atr:
+            return f"Entry ${entry:,.0f} within 1× ATR of resistance ${sr['resistance']:,.0f} — rejection risk elevated"
+    elif direction == "SELL" and sr.get("support"):
+        dist = entry - sr["support"]
+        if 0 < dist <= atr:
+            return f"Entry ${entry:,.0f} within 1× ATR of support ${sr['support']:,.0f} — bounce risk elevated"
+    return None
+
+
+def _detect_fakeout_rejection(signal):
+    """Detect potential fake breakout via wick analysis on 24H range.
+
+    A long upper wick with close near the low = possible fake bullish breakout.
+    A long lower wick with close near the high = possible fake bearish breakdown.
+    """
+    last = signal.get("_last", {})
+    hi = last.get("hi24")
+    lo = last.get("lo24")
+    close = last.get("close")
+    if not all([hi, lo, close]) or hi == lo:
+        return None
+
+    range_24h = hi - lo
+    upper_wick_ratio = (hi - close) / range_24h   # > 0.6 = long upper wick
+    lower_wick_ratio = (close - lo) / range_24h    # > 0.6 = long lower wick
+
+    if signal["type"] == "BUY" and upper_wick_ratio > 0.6:
+        return f"Fake bullish breakout: upper wick {(upper_wick_ratio * 100):.0f}% of 24H range — rejection from ${hi:,.0f}"
+    if signal["type"] == "SELL" and lower_wick_ratio > 0.6:
+        return f"Fake bearish breakdown: lower wick {(lower_wick_ratio * 100):.0f}% of 24H range — rejection from ${lo:,.0f}"
+    return None
+
+
+def _calc_aggregate_risk(mode, new_entry_price, new_sl, new_size_factor, pyramid_cfg):
+    """Sum the risk % of all open + new position. Returns (total_risk, warning)."""
+    from trading.history import get_open_positions
+    max_risk = pyramid_cfg.get("max_aggregate_risk_pct", 5.0)
+    total_risk = 0.0
+
+    for pos in get_open_positions(mode):
+        entry = pos["entry_price"]
+        sl = pos.get("stop_loss") or entry
+        sf = pos.get("size_factor") or 1.0
+        risk = abs(entry - sl) / entry * 100
+        total_risk += risk * sf
+
+    # Add the new entry
+    new_risk = abs(new_entry_price - new_sl) / new_entry_price * 100
+    total_risk += new_risk * new_size_factor
+
+    if total_risk > max_risk:
+        return total_risk, f"Aggregate risk {total_risk:.1f}% exceeds max {max_risk:.1f}% — skip to protect account"
+    return total_risk, None
 
 
 # ---------------------------------------------------------------------------
@@ -72,21 +181,133 @@ def run_cycle():
     try:
         # Spot positions — BUY-only (no short selling on spot)
         if spot_signal and spot_signal["type"] != "HOLD":
-            spot_open = len(get_open_positions("spot"))
-            if spot_open >= RISK_CONFIG["max_positions"]:
-                msg = f"Spot max {RISK_CONFIG['max_positions']} positions — skipping {spot_signal['type']}"
-                logger.info(msg)
-                phase3_actions.append(f"⏭ SPOT  {msg}")
-            elif has_open_position_same_direction(spot_signal["type"], "spot"):
-                msg = f"Already have open {spot_signal['type']} spot — skipping"
-                logger.info(msg)
-                phase3_actions.append(f"⏭ SPOT  {msg}")
-            else:
-                pid = open_paper_position(spot_signal, mode="spot")
+            pyramid_cfg = RISK_CONFIG.get("pyramid", {})
+            existing_count = get_open_position_count_by_direction(spot_signal["type"], "spot")
+
+            if existing_count == 0:
+                # First position — normal open
+                pid = open_paper_position(spot_signal, mode="spot", pyramid_entry=1, size_factor=1.0)
                 msg = f"SPOT {spot_signal['type']} opened (#{pid}) @ ${spot_signal['entry_price']:,.0f}"
                 logger.info(msg)
                 phase3_actions.append(f"🚀 {msg}")
                 pending_tg.append((_format_open_notification(spot_signal, pid, "spot"), "position-open"))
+
+            elif pyramid_cfg.get("enabled", False):
+                max_entries = pyramid_cfg.get("max_entries", 3)
+                min_conf   = pyramid_cfg.get("min_confidence", "STRONG")
+                actual_conf = spot_signal.get("confidence")
+                entry_prices = _get_entry_prices_by_direction(spot_signal["type"], "spot")
+                first_entry  = entry_prices[0]
+                last_entry   = entry_prices[-1]
+                atr          = spot_signal.get("atr", 0)
+
+                # Gate 1: max entries
+                if existing_count >= max_entries:
+                    msg = f"Spot {spot_signal['type']} pyramid max {max_entries} reached ({existing_count} open) — skipping"
+                    logger.info(msg)
+                    phase3_actions.append(f"⏭ SPOT  {msg}")
+
+                # Gate 2: confidence (ordinal — STRONG > NORMAL > WEAK)
+                elif not _confidence_at_least(actual_conf, min_conf):
+                    msg = f"Spot {spot_signal['type']} pyramid requires ≥{min_conf} confidence (got {actual_conf}) — skipping"
+                    logger.info(msg)
+                    phase3_actions.append(f"⏭ SPOT  {msg}")
+
+                # Gate 3: min distance from last entry (prevent doubling down)
+                elif atr > 0 and abs(spot_signal["entry_price"] - last_entry) / atr < pyramid_cfg.get("min_entry_distance_atr", 0.5):
+                    dist_pct = abs(spot_signal["entry_price"] - last_entry) / last_entry * 100
+                    msg = f"Spot {spot_signal['type']} pyramid distance {dist_pct:.2f}% (< {pyramid_cfg['min_entry_distance_atr']}× ATR) — skipping"
+                    logger.info(msg)
+                    phase3_actions.append(f"⏭ SPOT  {msg}")
+
+                # Gate 4: max distance from first entry (risk/reward degraded)
+                elif abs(spot_signal["entry_price"] - first_entry) / first_entry * 100 > pyramid_cfg.get("max_entry_distance_pct", 6.0):
+                    dist_pct = abs(spot_signal["entry_price"] - first_entry) / first_entry * 100
+                    msg = f"Spot {spot_signal['type']} pyramid distance from 1st {dist_pct:.1f}% (> {pyramid_cfg['max_entry_distance_pct']}%) — skipping"
+                    logger.info(msg)
+                    phase3_actions.append(f"⏭ SPOT  {msg}")
+
+                # Gate 5a: psychology-level SL vulnerability (stop-hunt risk)
+                elif (psy_warn := _check_psychology_sl_risk(
+                    spot_signal["entry_price"], spot_signal["stop_loss"],
+                    pyramid_cfg.get("psychology_level_step", 1000),
+                    pyramid_cfg.get("psychology_buffer_pct", 0.15),
+                )):
+                    logger.info("Spot %s — %s — skipping", spot_signal['type'], psy_warn)
+                    phase3_actions.append(f"⏭ SPOT  {psy_warn}")
+
+                # Gate 5b: entry just above psychology level (false breakout risk)
+                elif (psy_entry_warn := _check_psychology_entry_risk(
+                    spot_signal["entry_price"],
+                    pyramid_cfg.get("psychology_level_step", 1000),
+                    pyramid_cfg.get("psychology_buffer_pct", 0.15),
+                )):
+                    logger.info("Spot %s — %s — skipping", spot_signal['type'], psy_entry_warn)
+                    phase3_actions.append(f"⏭ SPOT  {psy_entry_warn}")
+
+                # Gate 6: S/R entry risk (entry too close to resistance for BUY)
+                elif (sr_warn := _check_sr_entry_risk(
+                    spot_signal["entry_price"],
+                    spot_signal.get("support_resistance", {}),
+                    spot_signal["type"], atr,
+                )):
+                    logger.info("Spot %s — %s — skipping", spot_signal['type'], sr_warn)
+                    phase3_actions.append(f"⏭ SPOT  {sr_warn}")
+
+                # Gate 7: fakeout / rejection pattern
+                elif (fakeout_warn := _detect_fakeout_rejection(spot_signal)):
+                    logger.info("Spot %s — %s — skipping", spot_signal['type'], fakeout_warn)
+                    phase3_actions.append(f"⏭ SPOT  {fakeout_warn}")
+
+                else:
+                    entry_number = existing_count + 1
+                    size_factor = get_pyramid_size_factor(entry_number, pyramid_cfg)
+                    min_size = pyramid_cfg.get("min_size_usdt", 10.0)
+                    base_size = calculate_position_size(spot_signal)["usdt_amount"]
+
+                    if base_size * size_factor < min_size:
+                        msg = f"Spot {spot_signal['type']} pyramid #{entry_number} size ${base_size * size_factor:.2f} < ${min_size:.2f} min — skipping"
+                        logger.info(msg)
+                        phase3_actions.append(f"⏭ SPOT  {msg}")
+                    else:
+                        # Tighten SL for pyramid entries
+                        tighten = pyramid_cfg.get("tighten_sl_factor", 0.8)
+                        sl_mult = tighten ** (entry_number - 1)  # 1.0 → 0.8 → 0.64
+                        if atr > 0 and sl_mult < 1.0:
+                            orig_sl = spot_signal["stop_loss"]
+                            sl_dist = abs(spot_signal["entry_price"] - orig_sl)
+                            new_sl = spot_signal["entry_price"] - sl_dist * sl_mult
+                            spot_signal["stop_loss"] = round(new_sl, 2)
+                            # Recalculate TP1 with same R:R from tighter SL
+                            new_atr_stop = sl_dist * sl_mult
+                            spot_signal["take_profit"] = round(spot_signal["entry_price"] + new_atr_stop * RISK_CONFIG["take_profit_rr"], 2)
+                            spot_signal["tp2"] = round(spot_signal["entry_price"] + new_atr_stop * RISK_CONFIG["take_profit_rr"] * 2, 2)
+
+                        # Gate 8: aggregate risk cap
+                        agg_risk, agg_warn = _calc_aggregate_risk(
+                            "spot", spot_signal["entry_price"],
+                            spot_signal["stop_loss"], size_factor, pyramid_cfg,
+                        )
+                        if agg_warn:
+                            msg = f"Spot {spot_signal['type']} pyramid #{entry_number} — {agg_warn}"
+                            logger.info(msg)
+                            phase3_actions.append(f"⏭ SPOT  {msg}")
+                        else:
+                            pid = open_paper_position(spot_signal, mode="spot", pyramid_entry=entry_number, size_factor=size_factor)
+                            size_note = f" (size {size_factor * 100:.0f}% of base)" if size_factor < 1.0 else ""
+                            sl_note = f" [SL ×{sl_mult:.2f}]" if sl_mult < 1.0 else ""
+                            msg = f"SPOT {spot_signal['type']} pyramid entry #{entry_number} opened (#{pid}) @ ${spot_signal['entry_price']:,.0f}{size_note}{sl_note}"
+                            logger.info(msg)
+                            phase3_actions.append(f"🧩 {msg}")
+                            pending_tg.append((
+                                _format_open_notification(spot_signal, pid, "spot", pyramid_entry=entry_number),
+                                "position-open",
+                            ))
+            else:
+                # Pyramid disabled — preserve existing skip behaviour
+                msg = f"Already have open {spot_signal['type']} spot — skipping"
+                logger.info(msg)
+                phase3_actions.append(f"⏭ SPOT  {msg}")
 
         # Futures positions — close-and-flip on opposite signal
         if futures_signal and futures_signal["type"] != "HOLD":

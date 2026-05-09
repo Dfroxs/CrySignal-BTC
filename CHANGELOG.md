@@ -8,12 +8,22 @@ All notable changes to the SpotSignal project.
 
 ### Added
 
+- **Spot pyramiding** (`run_bot.py`, `config.py`, `signals/sizing.py`, `trading/history.py`, `trading/paper.py`, `notifier/telegram.py`) — when a spot BUY signal fires with STRONG confidence and a BUY position is already open, opens an additional pyramid entry instead of skipping. **8 safety gates**: (1) max entries, (2) ordinal confidence ≥STRONG, (3) min ATR distance from last entry, (4) max % distance from 1st entry, (5a) SL near psychology level, (5b) entry just above round number, (6) entry near S/R, (7) fakeout/rejection wick, (8) aggregate risk cap. Each pyramid entry gets progressively tighter SL (0.8× per level) and its own TP/trailing stop. DB columns `pyramid_entry` + `size_factor`. Terminal shows `[pyramid #N ×50%]` tag; Telegram uses 🧩 icon.
+- **`get_open_position_count_by_direction()`** (`trading/history.py`) — returns count of open positions for a given direction and mode.
+- **`get_pyramid_size_factor()`** (`signals/sizing.py`) — returns exponential size multiplier for pyramid entry N (1.0 → 0.5 → 0.25 → …).
+- **`_get_entry_prices_by_direction()`** (`run_bot.py`) — returns ordered entry prices for open positions, used by distance guards.
+- **TA-based pyramid risk gates** (`run_bot.py`) — five new risk checks before pyramiding: (5a) SL near psychology number → stop-hunt risk, (5b) entry just above psychology level → false breakout risk, (6) entry within 1× ATR of resistance (BUY) / support (SELL) → rejection risk, (7) fakeout detection via 24H wick ratio > 60% → reversal signal, (8) aggregate risk cap across all entries (default 5% of account).
+- **`_check_psychology_sl_risk()` / `_check_psychology_entry_risk()`** — round-thousand proximity checks.
+- **`_check_sr_entry_risk()`** — S/R proximity risk scoring (within 1× ATR = elevated rejection risk).
+- **`_detect_fakeout_rejection()`** — 24H wick analysis: if upper wick > 60% of range for BUY, flags fake bullish breakout.
+- **`_calc_aggregate_risk()`** — sums risk % weighted by size_factor across all open + new positions.
 - **Conviction-based dynamic leverage** (`signals/sizing.py`) — 6-factor model replaces static leverage formula. Leverage now scales with signal confidence: strength ratio vs threshold, HTF alignment, RSI zone confirmation, funding rate, Fear & Greed contrarian, and volatility regime. `_compute_confidence()` returns 0.25–1.5 multiplier. ATR percentile caps max leverage in high-vol regimes (0.33x–1.0x). Effective risk = base_risk × confidence × vol_cap. Tier labels: CONSERVATIVE (≤3x), MODERATE (≤6x), AGGRESSIVE (≤10x).
 - **ATR percentile** (`signals/indicators.py`) — `compute_atr_percentile()` ranks current ATR in 100-period history. Used by dynamic leverage.
 - **LEVERAGE_CONFIG** (`config.py`) — new config dict for base_max_leverage, atr_lookback, fractional_kelly, confidence bounds.
 
 ### Fixed
 
+- **Pyramid confidence check used exact match** (`run_bot.py`) — `!=` comparison meant `min_confidence: "NORMAL"` would skip STRONG signals. Replaced with ordinal ranking (`_CONFIDENCE_LEVEL` + `_confidence_at_least()`): STRONG > NORMAL > WEAK.
 - **Post-news strength below threshold still fired** (`signals/engine.py`) — `integrate_news_with_signal()` drains strength (macro -2.0, contradictory news -0.5) but never re-validated against threshold. Now stores `_threshold` in `generate_signals()` and downgrades to HOLD if post-news `strength < threshold`.
 - **Futures leverage always 1x** (`signals/sizing.py`) — broken formula `int(1 / (sl_pct * 100))` always returned 0 for realistic stops (>0.5%), clamped to 1x. Replaced with risk-based calculation: `needed_position = risk_amount / sl_distance_pct`.
 - **Backtest crash** (`backtest.py`) — `generate_signals()` called without `threshold_override=None`, causing `float >= None` TypeError. Now passes `SIGNAL_THRESHOLD`.

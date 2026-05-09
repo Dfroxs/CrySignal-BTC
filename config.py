@@ -38,6 +38,21 @@ RISK_CONFIG = {
     "take_profit_rr":        2.5,
     "trailing_atr_factor":   1.0,   # trail distance = ATR × this (tighter than entry SL)
     "max_positions":         2,     # max 1 BUY + 1 SELL (one per direction)
+    "pyramid": {
+        "enabled":                 True,       # allow adding to existing position on STRONG signals
+        "max_entries":             3,          # 1 initial + 2 pyramid entries max
+        "min_confidence":          "STRONG",   # signal confidence required to pyramid
+        "size_reduction":          0.5,        # each subsequent entry = prev * this multiplier
+        "min_size_usdt":           10.0,       # skip pyramid entry if calculated size < this
+        "min_entry_distance_atr":  0.5,        # minimum ATR-multiple distance from previous entry
+        "max_entry_distance_pct":  6.0,        # max % distance from first entry to allow pyramid
+        "tighten_sl_factor":       0.8,        # multiply SL distance by this per pyramid level
+        "max_aggregate_risk_pct":  5.0,        # max total risk % of account across all entries
+        "psychology_level_step":   1000,       # round numbers at this interval ($80k, $81k, …)
+        "psychology_buffer_pct":   0.15,       # % distance considered "near" psychology level
+        "sr_entry_risk_atr":       1.0,        # flag if entry within N× ATR of resistance (BUY)
+        "fakeout_wick_ratio":      0.60,       # (hi24-close)/(hi24-lo24) > this → rejection wick
+    },
 }
 
 FUTURES_CONFIG = {

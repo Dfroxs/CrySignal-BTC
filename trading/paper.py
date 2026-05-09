@@ -253,6 +253,10 @@ def print_open_status(mode=None):
         tp2     = pos.get("tp2")
         partial = pos.get("partial_closed", 0)
         tag     = "  [½ taken]" if partial else ""
+        pyramid = pos.get("pyramid_entry")
+        if pyramid:
+            sf = pos.get("size_factor", 1.0)
+            tag += f" [pyramid #{pyramid} ×{sf:.0%}]"
         opened  = pos.get("opened_at", "")[:16]
 
         print(f"  {icon} {pos['type']}{tag}  #{pid}  @ ${entry:,.0f}")

@@ -189,3 +189,18 @@ def _compute_confidence(signal):
 
     return max(LEVERAGE_CONFIG["confidence_mult_min"],
                min(mult, LEVERAGE_CONFIG["confidence_mult_max"]))
+
+
+def get_pyramid_size_factor(entry_number, pyramid_config=None):
+    """Return position size multiplier for a pyramid entry (1-indexed).
+
+    Entry #1 (initial) always returns 1.0.
+    Entry #2 returns size_reduction^1, entry #3 returns size_reduction^2, etc.
+    """
+    if pyramid_config is None:
+        from config import RISK_CONFIG
+        pyramid_config = RISK_CONFIG.get("pyramid", {})
+    if entry_number <= 1:
+        return 1.0
+    reduction = pyramid_config.get("size_reduction", 0.5)
+    return max(0.01, reduction ** (entry_number - 1))
