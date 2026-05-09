@@ -13,11 +13,28 @@ def calculate_ema(data, period):
 
 
 def calculate_rsi(data, period=14):
+    """Wilder's RSI — exponential smoothing of avg gain/loss."""
     delta = data.diff()
-    gain = delta.where(delta > 0, 0).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    rs = gain / loss
-    return 100 - (100 / (1 + rs))
+    gain = delta.where(delta > 0, 0)
+    loss = (-delta.where(delta < 0, 0))
+
+    # Initial values: simple average of first `period` bars
+    avg_gain = gain.iloc[:period].mean()
+    avg_loss = loss.iloc[:period].mean()
+    result = pd.Series(index=data.index, dtype=float)
+
+    # Wilder's smoothing: avg = (prev_avg * (period-1) + current) / period
+    for i in range(len(data)):
+        if i < period:
+            result.iloc[i] = float('nan')
+        elif i == period:
+            result.iloc[i] = 100 - (100 / (1 + avg_gain / avg_loss)) if avg_loss > 0 else 100
+        else:
+            avg_gain = (avg_gain * (period - 1) + gain.iloc[i]) / period
+            avg_loss = (avg_loss * (period - 1) + loss.iloc[i]) / period
+            result.iloc[i] = 100 - (100 / (1 + avg_gain / avg_loss)) if avg_loss > 0 else 100
+
+    return result
 
 
 def calculate_macd(data, fast=12, slow=26, signal=9):
@@ -35,11 +52,13 @@ def calculate_bollinger_bands(data, period=20, std_dev=2):
 
 
 def calculate_atr(df, period=14):
+    """Wilder's ATR — exponential smoothing of True Range."""
     high_low = df['high'] - df['low']
     high_close = (df['high'] - df['close'].shift()).abs()
     low_close = (df['low'] - df['close'].shift()).abs()
     true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    return true_range.rolling(window=period).mean()
+    # Wilder's smoothing (same as RSI): alpha = 1/period
+    return true_range.ewm(alpha=1 / period, adjust=False).mean()
 
 
 def calculate_obv(df):
@@ -152,3 +171,83 @@ def compute_atr_percentile(df, lookback=100):
     current = df['ATR_14'].iloc[-1]
     history = df['ATR_14'].iloc[-lookback:-1]
     return (history < current).sum() / len(history)
+
+
+def calculate_adx(df, period=14):
+    """Average Directional Index — trend strength on 0-100 scale.
+
+    Returns DataFrame with ADX, DI+, DI- columns.
+    ADX > 25 = trending, ADX < 20 = ranging, ADX 20-25 = transition.
+    """
+    high = df['high']
+    low = df['low']
+    close = df['close']
+
+    plus_dm = high.diff()
+    minus_dm = low.diff().abs() * -1  # negative for minus direction
+
+    # True Directional Movement
+    plus_dm = plus_dm.where((plus_dm > 0) & (plus_dm > (low.diff().abs())), 0)
+    minus_dm = (-minus_dm).where((-minus_dm > 0) & ((-minus_dm) > (high.diff())), 0)
+
+    tr = pd.concat([
+        high - low,
+        (high - close.shift()).abs(),
+        (low - close.shift()).abs(),
+    ], axis=1).max(axis=1)
+
+    atr_tr = tr.ewm(alpha=1 / period, adjust=False).mean()
+    plus_di = 100 * (plus_dm.ewm(alpha=1 / period, adjust=False).mean() / atr_tr)
+    minus_di = 100 * (minus_dm.ewm(alpha=1 / period, adjust=False).mean() / atr_tr)
+    dx = (abs(plus_di - minus_di) / (plus_di + minus_di).replace(0, 1)) * 100
+    adx = dx.ewm(alpha=1 / period, adjust=False).mean()
+
+    return pd.DataFrame({'ADX': adx, 'DI+': plus_di, 'DI-': minus_di}, index=df.index)
+
+
+def classify_regime(df, adx_df=None):
+    """Classify market regime: TRENDING, RANGING, or VOLATILE.
+
+    Returns dict with regime label and adjustments.
+    """
+    if adx_df is None:
+        adx_df = calculate_adx(df)
+    adx = adx_df['ADX'].iloc[-1]
+    di_plus = adx_df['DI+'].iloc[-1]
+    di_minus = adx_df['DI-'].iloc[-1]
+    atr_pct = compute_atr_percentile(df)
+
+    if atr_pct > 0.90:
+        regime = "VOLATILE"
+        threshold_bump = 0.25   # slightly higher bar in extreme vol
+        size_adj = 0.75
+    elif adx > 25:
+        regime = "TRENDING"
+        threshold_bump = -0.25  # lower bar — trend-follow
+        size_adj = 1.0
+    elif adx < 20:
+        regime = "RANGING"
+        threshold_bump = 0.5    # raise bar — avoid whipsaws
+        size_adj = 0.75
+    else:
+        regime = "TRANSITION"
+        threshold_bump = 0.0
+        size_adj = 1.0
+
+    # Trend direction from DI+/DI-
+    if di_plus > di_minus:
+        trend_dir = "BULLISH"
+    elif di_minus > di_plus:
+        trend_dir = "BEARISH"
+    else:
+        trend_dir = "NEUTRAL"
+
+    return {
+        "regime": regime,
+        "adx": round(adx, 1),
+        "di_plus": round(di_plus, 1),
+        "di_minus": round(di_minus, 1),
+        "trend_dir": trend_dir,
+        "threshold_bump": threshold_bump,
+        "size_adj": size_adj,
+    }

@@ -14,6 +14,8 @@ from signals.market_data import (
     fetch_btc_dominance,
     fetch_dxy_trend,
     fetch_fear_and_greed,
+    fetch_funding_rate,
+    fetch_long_short_ratio,
     fetch_sp500_trend,
     fetch_stablecoin_supply,
     get_spot_adaptive_threshold,
@@ -23,9 +25,19 @@ from signals.terminal import display_analysis
 
 logger = logging.getLogger(__name__)
 
+# Cache per 4H candle — avoids re-running identical analysis 3× between 4H closes
+_spot_cache = {"timestamp": 0, "signal": None}
+
 
 def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
     """Full 4H spot pipeline: 15 conditions (no funding/L/S/OI/basis)."""
+    import time as _time
+    candle_ts = int(_time.time() // (4 * 3600))  # current 4H candle ID
+
+    if _spot_cache["timestamp"] == candle_ts and _spot_cache["signal"] is not None:
+        logger.info("[SPOT] Cache hit — reusing 4H candle %d result", candle_ts)
+        return _spot_cache["signal"]
+
     logger.info("[SPOT] Analyzing %s (4H)...", symbol)
     try:
         # 6 x 4H candles = 1 trading day
@@ -34,12 +46,14 @@ def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
 
         logger.info("Fetching spot market data in parallel...")
         fmap = {}
-        with ThreadPoolExecutor(max_workers=7) as pool:
+        with ThreadPoolExecutor(max_workers=9) as pool:
             fmap['htf'] = pool.submit(get_spot_htf_trend)
             fmap['dxy'] = pool.submit(fetch_dxy_trend)
             fmap['sp500'] = pool.submit(fetch_sp500_trend)
             fmap['stablecoin'] = pool.submit(fetch_stablecoin_supply)
             fmap['btc_dom'] = pool.submit(fetch_btc_dominance)
+            fmap['funding'] = pool.submit(fetch_funding_rate)
+            fmap['ls'] = pool.submit(fetch_long_short_ratio)
             if include_news:
                 fmap['fng'] = pool.submit(fetch_fear_and_greed)
 
@@ -49,6 +63,8 @@ def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
                 'sp500': fmap['sp500'].result(),
                 'stablecoin': fmap['stablecoin'].result(),
                 'btc_dom': fmap['btc_dom'].result(),
+                'funding': fmap['funding'].result(),
+                'long_short': fmap['ls'].result(),
             }
             fng = fmap['fng'].result() if include_news else None
 
@@ -69,6 +85,8 @@ def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
         signal['mode'] = 'spot'
         signal['_threshold'] = threshold
         log_cycle(signal, df, market_structure, htf, 'spot')
+        from signals.indicators import compute_atr_percentile
+        signal['_atr_percentile'] = round(compute_atr_percentile(df), 3)
         signal['_htf'] = htf
         signal['_market'] = market_structure
         signal['_news_data'] = news_data
@@ -89,6 +107,8 @@ def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
             'hi24': df['high'].tail(6).max(),
             'lo24': df['low'].tail(6).min(),
         }
+        _spot_cache["timestamp"] = candle_ts
+        _spot_cache["signal"] = signal
         return signal
 
     except Exception as e:

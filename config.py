@@ -37,7 +37,25 @@ RISK_CONFIG = {
     "atr_multiplier":        1.5,
     "take_profit_rr":        2.5,
     "trailing_atr_factor":   1.0,   # trail distance = ATR × this (tighter than entry SL)
+    "max_position_hours":     72,    # force-close position if open longer than this
+    "vol_expansion_exit_mult": 2.0,  # close if current ATR > entry ATR × this
     "max_positions":         2,     # max 1 BUY + 1 SELL (one per direction)
+    "pyramid": {
+        "enabled":                 True,       # allow adding to existing position on STRONG signals
+        "max_entries":             3,          # 1 initial + 2 pyramid entries max
+        "min_initial_confidence":  "NORMAL",   # minimum confidence to open FIRST position
+        "min_confidence":          "STRONG",   # signal confidence required to pyramid
+        "size_reduction":          0.5,        # each subsequent entry = prev * this multiplier
+        "min_size_usdt":           10.0,       # skip pyramid entry if calculated size < this
+        "min_entry_distance_atr":  0.5,        # minimum ATR-multiple distance from previous entry
+        "max_entry_distance_pct":  6.0,        # max % distance from first entry to allow pyramid
+        "tighten_sl_factor":       0.8,        # multiply SL distance by this per pyramid level
+        "max_aggregate_risk_pct":  5.0,        # max total risk % of account across all entries
+        "psychology_level_step":   1000,       # round numbers at this interval ($80k, $81k, …)
+        "psychology_buffer_pct":   0.15,       # % distance considered "near" psychology level
+        "sr_entry_risk_atr":       1.0,        # flag if entry within N× ATR of resistance (BUY)
+        "fakeout_wick_ratio":      0.60,       # (hi24-close)/(hi24-lo24) > this → rejection wick
+    },
 }
 
 FUTURES_CONFIG = {
@@ -47,6 +65,17 @@ FUTURES_CONFIG = {
     "risk_per_trade":        0.03,
     "max_margin_pct":        0.20,
     "max_positions":         2,     # max 1 LONG + 1 SHORT (one per direction)
+    "entry": {
+        "min_confidence":         "NORMAL",   # minimum confidence to open first position
+        "reentry_price_check":    True,       # TA-driven re-entry quality gate
+        "fakeout_wick_ratio":     0.60,       # reject on >60% upper/lower wick
+        "max_aggregate_risk_pct": 8.0,        # max total risk % across all futures positions
+    },
+    "trailing_atr_factor":   0.7,    # tighter than spot (1.0) — leverage amplifies noise
+    "funding_exit": {
+        "close_long_rate":   0.10,   # close LONG if funding > 0.10% (expensive to hold)
+        "close_short_rate": -0.05,   # close SHORT if funding < -0.05% (expensive to short)
+    },
 }
 
 
@@ -74,13 +103,13 @@ SPOT_THRESHOLD_STATE_FILE  = os.path.join(DATA_DIR, "spot_threshold_state.json")
 
 # Futures signal thresholds
 SIGNAL_THRESHOLD = float(os.getenv("SIGNAL_THRESHOLD", 5.2))
-SIGNAL_MAX_SCORE = 19.25
+SIGNAL_MAX_SCORE = 21.25  # 19.25 + ADX(0.5) + DI cross(0.75) + OI×price(0.75)
 THRESHOLD_MIN    = 4.0
 THRESHOLD_MAX    = 8.0
 
-# Spot signal thresholds (4H, 14 conditions — no funding/L/S/OI/basis)
+# Spot signal thresholds (4H, 15 conditions — no funding/L/S/OI/basis)
 SPOT_THRESHOLD    = float(os.getenv("SPOT_THRESHOLD", 4.3))
-SPOT_MAX_SCORE    = 15.5
+SPOT_MAX_SCORE    = 17.25  # 15.5 + ADX(0.5) + DI cross(0.75) + funding(0.25) + LS(0.25)
 SPOT_THRESHOLD_MIN = 3.0
 SPOT_THRESHOLD_MAX = 7.0
 
@@ -104,6 +133,7 @@ LEVERAGE_CONFIG = {
     "fractional_kelly": 0.25,        # 1/4 Kelly as base risk fraction
     "confidence_mult_min": 0.25,     # floor
     "confidence_mult_max": 1.5,      # ceiling
+    "maintenance_margin_rate": 0.005, # Binance: 0.5% at ≤10x, 1.0% at 20x+
 }
 
 

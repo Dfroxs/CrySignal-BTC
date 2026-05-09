@@ -21,6 +21,15 @@ def calculate_position_size(signal, account_balance=None):
     risk_amount = account_balance * risk_pct
     max_position = account_balance * RISK_CONFIG["max_position_size"]
 
+    # Volatility cap — reduce max position in high-vol regimes (like futures)
+    atr_pct = signal.get("_atr_percentile", 0.5)
+    if atr_pct > 0.90:
+        max_position *= 0.33   # extreme vol: reduce to 33% of normal
+    elif atr_pct > 0.75:
+        max_position *= 0.50
+    elif atr_pct > 0.60:
+        max_position *= 0.75
+
     position_size = (risk_amount / price_diff) * entry
     position_size = min(position_size, max_position)
 
@@ -92,11 +101,12 @@ def calculate_futures_position(signal):
     margin = min(risk_amount / (sl_distance_pct * leverage), max_margin)
     position_value = margin * leverage
 
-    liq_safety = 0.95
+    # Maintenance margin rate (Binance: 0.5% at 10x, 1.0% at 20x+)
+    mm_rate = LEVERAGE_CONFIG.get("maintenance_margin_rate", 0.005)
     if direction == "LONG":
-        liquidation_price = entry * (1 - (1 / leverage) * liq_safety)
+        liquidation_price = entry * (1 - (1 - mm_rate) / leverage)
     else:
-        liquidation_price = entry * (1 + (1 / leverage) * liq_safety)
+        liquidation_price = entry * (1 + (1 - mm_rate) / leverage)
 
     if direction == "LONG":
         pnl_at_tp = (tp - entry) / entry * position_value
@@ -173,12 +183,16 @@ def _compute_confidence(signal):
     elif funding.get("bias") == "BEARISH" and stype == "SELL":
         mult += 0.05  # positive funding = longs crowded
 
-    # Factor 5: Fear & Greed contrarian (weight ~10%)
+    # Factor 5: Fear & Greed contrarian (weight ~10%, symmetric)
     fng = signal.get("fear_greed_value", 50)
     if stype == "BUY" and fng <= 20:
         mult += 0.15  # extreme fear = contrarian buy
     elif stype == "BUY" and fng <= 40:
         mult += 0.05  # fear zone
+    elif stype == "SELL" and fng >= 80:
+        mult += 0.15  # extreme greed = contrarian sell
+    elif stype == "SELL" and fng >= 60:
+        mult += 0.05  # greed zone
 
     # Factor 6: Low volatility regime bonus (weight ~10%)
     atr_pct = signal.get("_atr_percentile", 0.5)
@@ -189,3 +203,18 @@ def _compute_confidence(signal):
 
     return max(LEVERAGE_CONFIG["confidence_mult_min"],
                min(mult, LEVERAGE_CONFIG["confidence_mult_max"]))
+
+
+def get_pyramid_size_factor(entry_number, pyramid_config=None):
+    """Return position size multiplier for a pyramid entry (1-indexed).
+
+    Entry #1 (initial) always returns 1.0.
+    Entry #2 returns size_reduction^1, entry #3 returns size_reduction^2, etc.
+    """
+    if pyramid_config is None:
+        from config import RISK_CONFIG
+        pyramid_config = RISK_CONFIG.get("pyramid", {})
+    if entry_number <= 1:
+        return 1.0
+    reduction = pyramid_config.get("size_reduction", 0.5)
+    return max(0.01, reduction ** (entry_number - 1))

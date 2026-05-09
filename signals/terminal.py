@@ -651,6 +651,8 @@ def _combined_box(spot_signal, futures_signal):
                 det += f"  ·  {reasons_n} reasons"
             if conf:
                 det += f"  ·  {conf} conf"
+                if mode == "spot" and conf == "STRONG":
+                    det += "  ·  🧩 pyramid eligible"
             lines.append(det)
 
     if not lines:

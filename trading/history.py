@@ -133,6 +133,8 @@ def _migrate_paper_positions():
         ("partial_closed", "INTEGER DEFAULT 0"),
         ("partial_pnl",    "REAL"),
         ("mode",           "TEXT DEFAULT 'futures'"),
+        ("pyramid_entry",  "INTEGER DEFAULT NULL"),
+        ("size_factor",    "REAL DEFAULT 1.0"),
     ]
     for col, coltype in new_cols:
         try:
@@ -364,7 +366,7 @@ def update_signal_outcome(signal_id, outcome, closed_at=None):
 # Paper position CRUD
 # ---------------------------------------------------------------------------
 
-def open_paper_position(signal, mode='futures'):
+def open_paper_position(signal, mode='futures', pyramid_entry=None, size_factor=1.0):
     """Record a new open paper position from a BUY/SELL signal.
 
     Returns the position row id.
@@ -376,8 +378,8 @@ def open_paper_position(signal, mode='futures'):
     cur = conn.execute(
         """INSERT INTO paper_positions
            (signal_id, type, entry_price, stop_loss, take_profit,
-            opened_at, atr, trailing_stop, tp1, tp2, partial_closed, mode)
-           VALUES (?,?,?,?,?,?,?,?,?,?,0,?)""",
+            opened_at, atr, trailing_stop, tp1, tp2, partial_closed, mode, pyramid_entry, size_factor)
+           VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?,?)""",
         (
             signal.get("db_id"),
             signal["type"],
@@ -390,6 +392,8 @@ def open_paper_position(signal, mode='futures'):
             tp1,
             tp2,
             mode,
+            pyramid_entry,
+            size_factor,
         ),
     )
     conn.commit()
@@ -424,6 +428,22 @@ def has_open_position_same_direction(direction, mode=None):
             (direction,),
         ).fetchone()
     return row[0] > 0
+
+
+def get_open_position_count_by_direction(direction, mode=None):
+    """Return count of open positions with the given direction, optionally filtered by mode."""
+    c = _conn()
+    if mode is not None:
+        row = c.execute(
+            "SELECT COUNT(*) FROM paper_positions WHERE outcome IS NULL AND type = ? AND mode = ?",
+            (direction, mode),
+        ).fetchone()
+    else:
+        row = c.execute(
+            "SELECT COUNT(*) FROM paper_positions WHERE outcome IS NULL AND type = ?",
+            (direction,),
+        ).fetchone()
+    return row[0]
 
 
 def close_paper_position(pos_id, outcome, pnl_pct, closed_at=None):

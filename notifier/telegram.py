@@ -265,7 +265,7 @@ def _format_close_notification(closed):
     return "\n".join(lines)
 
 
-def _format_open_notification(signal, pos_id, mode):
+def _format_open_notification(signal, pos_id, mode, pyramid_entry=None):
     """Dedicated 'Position Opened' Telegram card — separate from main signal."""
     stype     = signal["type"]
     entry     = signal["entry_price"]
@@ -279,8 +279,13 @@ def _format_open_notification(signal, pos_id, mode):
     icon  = "🟢" if stype == "BUY" else "🔴"
     label = "SPOT" if mode == "spot" else "FUTURES"
 
+    if pyramid_entry:
+        header = f"🧩 <b>Pyramid Entry #{pyramid_entry} — {label}</b>"
+    else:
+        header = f"🚀 <b>Position Opened — {label}</b>"
+
     lines = [
-        f"🚀 <b>Position Opened — {label}</b>",
+        header,
         f"{icon} <b>{stype}</b> @ <code>${entry:,.0f}</code>  ·  #{pos_id}",
         f"SL      <code>${sl:,.0f}</code>  (<code>-{sl_pct:.2f}%</code>)",
         f"TP1     <code>${tp1:,.0f}</code>  (<code>+{tp1_pct:.2f}%</code>)",
@@ -661,6 +666,8 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
                 detail.append(f"{reasons_n} reasons")
             if conf:
                 detail.append(f"{conf} conf")
+                if mode == "spot" and conf == "STRONG":
+                    detail.append("🧩 pyramid eligible")
             lines.append("         " + "  ·  ".join(detail))
 
     lines.append("")

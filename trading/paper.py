@@ -8,13 +8,19 @@ Each cycle:
 """
 
 import logging
+from datetime import UTC, datetime, timedelta
 
 import trading.history as sh
-from config import RISK_CONFIG
+from config import FUTURES_CONFIG, RISK_CONFIG
 
 logger = logging.getLogger(__name__)
 
-_TRAIL = RISK_CONFIG["trailing_atr_factor"]
+
+def _trail_factor(mode):
+    """Trailing stop ATR multiplier — tighter for futures (leverage amplifies noise)."""
+    if mode == "futures":
+        return FUTURES_CONFIG.get("trailing_atr_factor", 0.7)
+    return RISK_CONFIG.get("trailing_atr_factor", 1.0)
 
 # Slippage threshold — warn when fill price is this far past the trigger
 _SLIPPAGE_WARN_PCT = 0.01  # 1%
@@ -55,7 +61,7 @@ def _check_slippage(trigger_price, fill_price, pos_id):
 # Position management
 # ---------------------------------------------------------------------------
 
-def check_and_close_positions(current_price, mode=None):
+def check_and_close_positions(current_price, mode=None, current_atr=0, funding_rate=0):
     """Check open paper positions against *current_price*, optionally filtered by mode.
 
     If a HIGH impact USD macro event is within 2 hours, all open positions
@@ -109,10 +115,83 @@ def check_and_close_positions(current_price, mode=None):
         tp2     = pos.get("tp2")
         partial = pos.get("partial_closed", 0)
 
+        # ── Exit 0a: time-based stale position ──
+        max_hours = RISK_CONFIG.get("max_position_hours", 72)
+        opened_str = pos.get("opened_at", "")
+        if opened_str:
+            try:
+                opened_dt = datetime.fromisoformat(opened_str)
+                age_hours = (datetime.now(UTC) - opened_dt).total_seconds() / 3600
+                if age_hours > max_hours:
+                    exit_pnl = _calc_pnl(pos, current_price)
+                    sh.close_paper_position(pos_id, "TIME_EXIT", exit_pnl, closed_at=current_price)
+                    closed.append({
+                        "type": pos["type"], "entry": entry,
+                        "exit": current_price, "pnl": exit_pnl,
+                        "outcome": "TIME_EXIT", "mode": pos.get("mode", "futures"),
+                    })
+                    logger.info(
+                        "Paper %s %s → TIME_EXIT after %.0fh (%.2f%%)",
+                        pos["type"], pos_id, age_hours, exit_pnl,
+                    )
+                    continue  # skip remaining checks for this position
+            except (ValueError, TypeError):
+                pass
+
+        # ── Exit 0b: volatility expansion ──
+        entry_atr = pos.get("atr") or 0
+        vol_mult = RISK_CONFIG.get("vol_expansion_exit_mult", 2.0)
+        if entry_atr > 0 and current_atr > 0 and current_atr > entry_atr * vol_mult:
+            exit_pnl = _calc_pnl(pos, current_price)
+            sh.close_paper_position(pos_id, "VOL_EXIT", exit_pnl, closed_at=current_price)
+            closed.append({
+                "type": pos["type"], "entry": entry,
+                "exit": current_price, "pnl": exit_pnl,
+                "outcome": "VOL_EXIT", "mode": pos.get("mode", "futures"),
+            })
+            logger.info(
+                "Paper %s %s → VOL_EXIT (ATR %.0f > %.0f ×%.1f, %.2f%%)",
+                pos["type"], pos_id, current_atr, entry_atr, vol_mult, exit_pnl,
+            )
+            continue
+
+        # ── Exit 0c: funding-rate exit (futures only) ──
+        if mode == "futures" and funding_rate != 0:
+            from config import FUTURES_CONFIG
+            fe_cfg = FUTURES_CONFIG.get("funding_exit", {})
+            close_long_rate = fe_cfg.get("close_long_rate", 0.10)
+            close_short_rate = fe_cfg.get("close_short_rate", -0.05)
+            if pos["type"] == "BUY" and funding_rate > close_long_rate:
+                exit_pnl = _calc_pnl(pos, current_price)
+                sh.close_paper_position(pos_id, "FUNDING_EXIT", exit_pnl, closed_at=current_price)
+                closed.append({
+                    "type": pos["type"], "entry": entry,
+                    "exit": current_price, "pnl": exit_pnl,
+                    "outcome": "FUNDING_EXIT", "mode": pos.get("mode", "futures"),
+                })
+                logger.info(
+                    "Paper %s %s → FUNDING_EXIT (%.4f%% > %.2f%%, %.2f%%)",
+                    pos["type"], pos_id, funding_rate, close_long_rate, exit_pnl,
+                )
+                continue
+            elif pos["type"] == "SELL" and funding_rate < close_short_rate:
+                exit_pnl = _calc_pnl(pos, current_price)
+                sh.close_paper_position(pos_id, "FUNDING_EXIT", exit_pnl, closed_at=current_price)
+                closed.append({
+                    "type": pos["type"], "entry": entry,
+                    "exit": current_price, "pnl": exit_pnl,
+                    "outcome": "FUNDING_EXIT", "mode": pos.get("mode", "futures"),
+                })
+                logger.info(
+                    "Paper %s %s → FUNDING_EXIT (%.4f%% < %.2f%%, %.2f%%)",
+                    pos["type"], pos_id, funding_rate, close_short_rate, exit_pnl,
+                )
+                continue
+
         if pos["type"] == "BUY":
             # 1 — advance trailing stop
             if atr:
-                new_trail = current_price - atr * _TRAIL
+                new_trail = current_price - atr * _trail_factor(pos.get("mode", "futures"))
                 if new_trail > trail:
                     trail = new_trail
                     sh.update_trailing_stop(pos_id, trail)
@@ -171,7 +250,7 @@ def check_and_close_positions(current_price, mode=None):
         elif pos["type"] == "SELL":
             # 1 — advance trailing stop (moves down for shorts)
             if atr:
-                new_trail = current_price + atr * _TRAIL
+                new_trail = current_price + atr * _trail_factor(pos.get("mode", "futures"))
                 if new_trail < trail:
                     trail = new_trail
                     sh.update_trailing_stop(pos_id, trail)
@@ -253,6 +332,10 @@ def print_open_status(mode=None):
         tp2     = pos.get("tp2")
         partial = pos.get("partial_closed", 0)
         tag     = "  [½ taken]" if partial else ""
+        pyramid = pos.get("pyramid_entry")
+        if pyramid:
+            sf = pos.get("size_factor", 1.0)
+            tag += f" [pyramid #{pyramid} ×{sf:.0%}]"
         opened  = pos.get("opened_at", "")[:16]
 
         print(f"  {icon} {pos['type']}{tag}  #{pid}  @ ${entry:,.0f}")

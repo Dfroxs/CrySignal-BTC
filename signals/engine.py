@@ -5,7 +5,7 @@ integrate_news_with_signal() for macro/sentiment overlay.
 import pandas as pd
 
 from config import RISK_CONFIG
-from signals.indicators import detect_rsi_divergence
+from signals.indicators import calculate_adx, classify_regime, detect_rsi_divergence
 from signals.market_data import get_signal_confidence
 from signals.sentiment import check_upcoming_macro_events
 
@@ -15,7 +15,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     previous = df.iloc[-2]
 
     atr_stop = current['ATR_14'] * RISK_CONFIG['atr_multiplier']
-    threshold = threshold_override
+    threshold = threshold_override if threshold_override is not None else 0
 
     signal = {
         'type': 'HOLD',
@@ -41,14 +41,18 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
 
     # 2 — RSI
     rsi = current['RSI_14']
+    _rsi_os = False  # track for diminishing-returns check later
+    _rsi_ob = False
     if 30 < rsi < 50:
         buy_conditions += 1
         signal['reasons'].append("✓ RSI in buy zone (30–50)")
     elif rsi <= 30:
         buy_conditions += 1.5
+        _rsi_os = True
         signal['reasons'].append("✓ RSI OVERSOLD (<30) — strong buy signal")
     elif rsi > 70:
         sell_conditions += 1.5
+        _rsi_ob = True
         signal['reasons'].append("✗ RSI OVERBOUGHT (>70) — strong sell signal")
     elif rsi > 55:
         sell_conditions += 0.5
@@ -94,11 +98,15 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             signal['reasons'].append(f"✗ Volume climax ({vol_ratio:.1f}x) + narrow range — potential distribution")
 
     # 5 — Bollinger Bands
+    _bb_lower = False
+    _bb_upper = False
     if current['close'] <= current['BB_Lower']:
         buy_conditions += 1
+        _bb_lower = True
         signal['reasons'].append("✓ Price at/below BB Lower — oversold")
     elif current['close'] >= current['BB_Upper']:
         sell_conditions += 1
+        _bb_upper = True
         signal['reasons'].append("✗ Price at/above BB Upper — overbought")
     elif current['close'] > current['BB_Middle']:
         buy_conditions += 0.25
@@ -128,15 +136,16 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
                 if rsi_all_ok:
                     score = 1.5
                 else:
-                    score = 0.75
+                    score = 1.0   # aligned structure > RSI disagreement (was 0.75)
                 if macd_all_ok:
                     score += 0.25
             else:
+                # Diverging: structure is weak, only score if RSI is extreme
                 for ind in indicators:
                     if direction == 'BUY' and ind.get('rsi_zone') == 'oversold':
-                        score += 0.75
+                        score += 0.5  # was 0.75 — diverging deserves less weight
                     elif direction == 'SELL' and ind.get('rsi_zone') == 'overbought':
-                        score += 0.75
+                        score += 0.5
 
             if vol_rising:
                 score += 0.25
@@ -198,22 +207,55 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         dxy = market_structure.get('dxy', {})
 
         if mode == 'futures':
+            _fund_buy = _fund_sell = _ls_buy = _ls_sell = 0
             if funding.get('bias') == 'BULLISH':
-                buy_conditions += 0.5
+                _fund_buy = 0.5
+                buy_conditions += _fund_buy
                 signal['reasons'].append(f"✓ Funding negative ({funding.get('rate_pct', 0):.4f}%) — shorts dominant")
             elif funding.get('bias') == 'BEARISH':
-                sell_conditions += 1.0
+                _fund_sell = 1.0
+                sell_conditions += _fund_sell
                 signal['reasons'].append(f"✗ Funding VERY HIGH ({funding.get('rate_pct', 0):.4f}%) — longs overleveraged")
             elif funding.get('bias') == 'SLIGHTLY_BEARISH':
-                sell_conditions += 0.25
+                _fund_sell = 0.25
+                sell_conditions += _fund_sell
                 signal['reasons'].append(f"✗ Funding elevated ({funding.get('rate_pct', 0):.4f}%)")
 
             if ls.get('bias') == 'BULLISH':
-                buy_conditions += 0.75
+                _ls_buy = 0.75
+                buy_conditions += _ls_buy
                 signal['reasons'].append(f"✓ L/S Ratio {ls.get('ratio', 1):.2f} — shorts crowded, squeeze risk")
             elif ls.get('bias') == 'BEARISH':
-                sell_conditions += 0.75
+                _ls_sell = 0.75
+                sell_conditions += _ls_sell
                 signal['reasons'].append(f"✗ L/S Ratio {ls.get('ratio', 1):.2f} — longs crowded")
+
+            # Tie-breaking: funding vs L/S conflict → net weight to dominant side
+            if (_fund_buy and _ls_sell) or (_fund_sell and _ls_buy):
+                if (_fund_buy + _ls_buy) > (_fund_sell + _ls_sell):
+                    # Buy dominance: remove sell contribution
+                    sell_conditions -= (_fund_sell + _ls_sell)
+                    signal['reasons'].append(f"⚠️  Funding/LS conflict — buying pressure dominates, sell signals removed")
+                elif (_fund_sell + _ls_sell) > (_fund_buy + _ls_buy):
+                    buy_conditions -= (_fund_buy + _ls_buy)
+                    signal['reasons'].append(f"⚠️  Funding/LS conflict — selling pressure dominates, buy signals removed")
+
+        elif mode == 'spot':
+            # Lightweight futures sentiment for spot (informational, half weight)
+            if funding.get('bias') == 'BULLISH':
+                buy_conditions += 0.25
+                signal['reasons'].append(f"✓ Funding negative ({funding.get('rate_pct',0):.4f}%) — bullish futures sentiment")
+            elif funding.get('bias') == 'BEARISH':
+                sell_conditions += 0.25
+                signal['reasons'].append(f"✗ Funding elevated ({funding.get('rate_pct',0):.4f}%) — bearish futures sentiment")
+
+            ls = market_structure.get('long_short', {})
+            if ls.get('bias') == 'BULLISH':
+                buy_conditions += 0.25
+                signal['reasons'].append(f"✓ L/S {ls.get('ratio',1):.2f} — shorts crowded (futures sentiment)")
+            elif ls.get('bias') == 'BEARISH':
+                sell_conditions += 0.25
+                signal['reasons'].append(f"✗ L/S {ls.get('ratio',1):.2f} — longs crowded (futures sentiment)")
 
         if dxy.get('bias') == 'BULLISH':
             buy_conditions += 0.5
@@ -274,15 +316,19 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     sk, sd = current.get('StochRSI_K'), current.get('StochRSI_D')
     psk, psd = previous.get('StochRSI_K'), previous.get('StochRSI_D')
     rsi_now = current.get('RSI_14', 50)
+    _stoch_os_cross = False
+    _stoch_ob_cross = False
     if all(pd.notna(v) for v in [sk, sd, psk, psd]):
         if sk < 20 and sk > sd and psk <= psd:
             weight = 1.25 if rsi_now < 30 else 1.0
             buy_conditions += weight
+            _stoch_os_cross = True
             signal['reasons'].append(f"✓ StochRSI oversold crossover K={sk:.1f} — bullish momentum"
                                      + (" (RSI confirms)" if rsi_now < 30 else ""))
         elif sk > 80 and sk < sd and psk >= psd:
             weight = 1.25 if rsi_now > 70 else 1.0
             sell_conditions += weight
+            _stoch_ob_cross = True
             signal['reasons'].append(f"✗ StochRSI overbought crossover K={sk:.1f} — bearish momentum"
                                      + (" (RSI confirms)" if rsi_now > 70 else ""))
         elif sk < 20:
@@ -296,18 +342,20 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             signal['reasons'].append(f"✗ StochRSI overbought (K={sk:.1f})"
                                      + (" (RSI confirms)" if rsi_now > 70 else ""))
 
-    # 16 — Support/Resistance proximity
+    # 16 — Support/Resistance proximity (ATR-scaled)
     if sr:
         support = sr.get('support')
         resistance = sr.get('resistance')
         price = current['close']
-        prox = 0.003
-        if support and abs(price - support) / price <= prox and current['close'] >= previous['close']:
+        atr = current.get('ATR_14', 0)
+        # Use 0.2× ATR as proximity threshold (~$135 at $80k BTC) instead of hardcoded 0.3%
+        prox_pct = (atr * 0.2) / price if atr > 0 and price > 0 else 0.003
+        if support and abs(price - support) / price <= prox_pct and current['close'] >= previous['close']:
             buy_conditions += 0.75
-            signal['reasons'].append(f"✓ Bouncing off support ${support:,.0f}")
-        elif resistance and abs(price - resistance) / price <= prox and current['close'] <= previous['close']:
+            signal['reasons'].append(f"✓ Bouncing off support ${support:,.0f} (within {prox_pct*100:.2f}%)")
+        elif resistance and abs(price - resistance) / price <= prox_pct and current['close'] <= previous['close']:
             sell_conditions += 0.75
-            signal['reasons'].append(f"✗ Rejected at resistance ${resistance:,.0f}")
+            signal['reasons'].append(f"✗ Rejected at resistance ${resistance:,.0f} (within {prox_pct*100:.2f}%)")
 
     # 17 — VWAP position
     vwap = current.get('VWAP_24')
@@ -318,6 +366,92 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         else:
             sell_conditions += 0.75
             signal['reasons'].append(f"✗ Price below VWAP ${vwap:,.2f} — institutional selling")
+
+    # 18 — ADX trend strength + DI crossover
+    try:
+        adx_df = calculate_adx(df)
+        adx_val = adx_df['ADX'].iloc[-1]
+        di_plus = adx_df['DI+'].iloc[-1]
+        di_minus = adx_df['DI-'].iloc[-1]
+        prev_di_plus = adx_df['DI+'].iloc[-2]
+        prev_di_minus = adx_df['DI-'].iloc[-2]
+
+        if adx_val > 25:
+            if di_plus > di_minus:
+                buy_conditions += 0.5
+                signal['reasons'].append(f"✓ ADX {adx_val:.0f} — trending, DI+/DI- bullish")
+            else:
+                sell_conditions += 0.5
+                signal['reasons'].append(f"✗ ADX {adx_val:.0f} — trending, DI+/DI- bearish")
+
+        # DI crossover (independent trigger)
+        if di_plus > di_minus and prev_di_plus <= prev_di_minus:
+            buy_conditions += 0.75
+            signal['reasons'].append(f"✓ DI+ crossed above DI- — bullish momentum (ADX {adx_val:.0f})")
+        elif di_minus > di_plus and prev_di_minus <= prev_di_plus:
+            sell_conditions += 0.75
+            signal['reasons'].append(f"✗ DI- crossed above DI+ — bearish momentum (ADX {adx_val:.0f})")
+
+        # Regime classifier
+        regime = classify_regime(df, adx_df)
+        signal['regime'] = regime['regime']
+        signal['adx'] = regime['adx']
+        signal['_regime'] = regime
+    except Exception:
+        regime = {"regime": "UNKNOWN", "threshold_bump": 0, "size_adj": 1.0, "trend_dir": "NEUTRAL"}
+        signal['regime'] = "UNKNOWN"
+
+    # ── Session-based threshold adjustment ──
+    from datetime import UTC, datetime
+    utc_hour = datetime.now(UTC).hour
+    if utc_hour < 8:
+        session_bump = 0.5    # Asia session: low liquidity, raise threshold
+    elif 13 <= utc_hour < 22:
+        session_bump = -0.25  # US session: highest volume, lower threshold
+    else:
+        session_bump = 0.0
+    threshold = threshold + regime.get("threshold_bump", 0) + session_bump
+
+    # ── OI × Price directional analysis ──
+    if mode == 'futures' and market_structure:
+        oi = market_structure.get('open_interest', {})
+        oi_change = oi.get('change_pct', 0)
+        price_change = (current['close'] - df['close'].iloc[-5]) / df['close'].iloc[-5] * 100
+        if oi_change > 1 and price_change > 0.5:
+            buy_conditions += 0.75
+            signal['reasons'].append(f"✓ OI↑ ({oi_change:+.1f}%) + Price↑ — healthy uptrend")
+        elif oi_change > 1 and price_change < -0.5:
+            sell_conditions += 0.5
+            signal['reasons'].append(f"✗ OI↑ ({oi_change:+.1f}%) + Price↓ — distribution")
+        elif oi_change < -1 and price_change > 0.5:
+            buy_conditions += 0.25
+            signal['reasons'].append(f"⚠️  OI↓ ({oi_change:+.1f}%) + Price↑ — short squeeze")
+        elif oi_change < -1 and price_change < -0.5:
+            sell_conditions += 0.5
+            signal['reasons'].append(f"✓ OI↓ ({oi_change:+.1f}%) + Price↓ — liquidation cascade")
+
+    # ── Diminishing returns on correlated oversold/overbought conditions ──
+    # RSI OS/OB, BB lower/upper, StochRSI OS/OB crossover all fire from the
+    # same price extreme.  First condition = full weight, second = 0.5×, third = 0.25×.
+    buy_extremes = sum([_rsi_os, _bb_lower, _stoch_os_cross])
+    sell_extremes = sum([_rsi_ob, _bb_upper, _stoch_ob_cross])
+    if buy_extremes >= 2:
+        penalty = (buy_extremes - 1) * 0.75  # 2→-0.75, 3→-1.5
+        buy_conditions -= penalty
+        signal['reasons'].append(f"⚠️  {buy_extremes} oversold conditions clustered — diminishing returns applied (-{penalty:.2f})")
+    if sell_extremes >= 2:
+        penalty = (sell_extremes - 1) * 0.75
+        sell_conditions -= penalty
+        signal['reasons'].append(f"⚠️  {sell_extremes} overbought conditions clustered — diminishing returns applied (-{penalty:.2f})")
+
+    # ── RSI divergence overrides RSI zone (they contradict) ──
+    if divergence == 'BULLISH' and _rsi_ob:
+        # Bullish divergence + overbought RSI: divergence wins, suppress OB score
+        buy_conditions += 1.5   # was already suppressed by OB; restore divergence advantage
+        signal['reasons'].append("⚠️  RSI OB suppressed by BULLISH divergence — divergence stronger signal")
+    elif divergence == 'BEARISH' and _rsi_os:
+        sell_conditions += 1.5
+        signal['reasons'].append("⚠️  RSI OS suppressed by BEARISH divergence — divergence stronger signal")
 
     # Determine final signal
     if buy_conditions >= threshold and buy_conditions > sell_conditions:
@@ -392,6 +526,14 @@ def integrate_news_with_signal(signal, news_data):
     elif fng_val >= 80 and enhanced['type'] == 'SELL':
         enhanced['strength'] += 1.5
         enhanced['reasons'].append(f"🟢 EXTREME GREED ({fng_val}) — contrarian SELL confirmed")
+    elif fng_val >= 70 and enhanced['type'] == 'BUY':
+        # Buying into greed — risky, not contrarian
+        enhanced['strength'] = max(0, enhanced['strength'] - 0.5)
+        enhanced['reasons'].append(f"⚠️  F&G GREED ({fng_val}) contradicts BUY — chasing risk")
+    elif fng_val <= 30 and enhanced['type'] == 'SELL':
+        # Selling into fear — risky, not contrarian
+        enhanced['strength'] = max(0, enhanced['strength'] - 0.5)
+        enhanced['reasons'].append(f"⚠️  F&G FEAR ({fng_val}) contradicts SELL — panic risk")
     elif news_data.get('sentiment') == 'BULLISH' and enhanced['type'] == 'BUY':
         enhanced['strength'] += 0.75
         enhanced['reasons'].append(f"📰 Sentiment BULLISH (F&G: {fng_val})")
