@@ -427,28 +427,42 @@ def _get_recent_win_rate(mode, hours=72):
 
 
 def _get_adaptive_threshold(base, t_min, t_max, state_file, env_var):
-    """Shared adaptive threshold logic with signal-quality awareness."""
+    """Shared adaptive threshold logic with multi-window signal-quality awareness.
+
+    Two windows:
+    - 24h fast window: rapid response to a losing streak — raises threshold aggressively
+    - 72h standard window: steady-state frequency control
+    """
     override = float(os.getenv(env_var, 0))
     if override > 0:
         return override
 
     state = load_cache(state_file)
     now = datetime.now(UTC)
-    cutoff = (now - timedelta(hours=ADAPTIVE_WINDOW_HOURS)).isoformat()
-    recent = [ts for ts in state.get("signals", []) if ts > cutoff]
     all_ts = state.get("signals", [])
 
-    # Check win rate to adjust threshold sensitivity
     mode = "spot" if "spot" in state_file else "futures"
-    wr = _get_recent_win_rate(mode)
+    wr_72h = _get_recent_win_rate(mode, hours=72)
+    wr_24h = _get_recent_win_rate(mode, hours=24)
 
-    if len(recent) > ADAPTIVE_MAX_SIGNALS:
-        # Many signals: raise threshold.  Raise more if win rate is poor.
-        step = 0.75 if (wr is not None and wr < 0.35) else 0.5
+    # 24h fast window: 4+ signals with poor win rate → raise aggressively
+    cutoff_24h = (now - timedelta(hours=24)).isoformat()
+    recent_24h = [ts for ts in all_ts if ts > cutoff_24h]
+    if len(recent_24h) >= 4 and wr_24h is not None and wr_24h < 0.30:
+        base = min(base + 1.0, t_max)
+        return base
+
+    # 72h standard window: frequency + quality control
+    cutoff_72h = (now - timedelta(hours=ADAPTIVE_WINDOW_HOURS)).isoformat()
+    recent_72h = [ts for ts in all_ts if ts > cutoff_72h]
+
+    if len(recent_72h) > ADAPTIVE_MAX_SIGNALS:
+        # Many signals: raise threshold. Raise more if win rate is poor.
+        step = 0.75 if (wr_72h is not None and wr_72h < 0.35) else 0.5
         base = min(base + step, t_max)
-    elif len(recent) == 0 and len(all_ts) > 0:
-        # No recent signals: lower threshold.  Lower more if win rate is good.
-        step = 0.5 if (wr is not None and wr >= 0.6) else 0.25
+    elif len(recent_72h) == 0 and len(all_ts) > 0:
+        # No recent signals: lower threshold. Lower more if win rate is good.
+        step = 0.5 if (wr_72h is not None and wr_72h >= 0.6) else 0.25
         base = max(base - step, t_min)
     return base
 

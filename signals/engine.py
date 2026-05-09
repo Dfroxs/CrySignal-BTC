@@ -93,14 +93,14 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     # 4b — Volume climax / Effort vs Result (Wyckoff)
     candle_range = current['high'] - current['low']
     range_vs_atr = candle_range / current['ATR_14'] if current['ATR_14'] > 0 else 1
-    if vol_ratio >= 2.0 and range_vs_atr < 0.5:
+    if vol_ratio >= 1.5 and range_vs_atr < 0.75:
         close_pos = (current['close'] - current['low']) / candle_range if candle_range > 0 else 0.5
-        if close_pos < 0.35:
+        if close_pos < 0.40 and current['close'] >= current['open']:  # green close near low = accumulation
             buy_conditions += 0.75
-            signal['reasons'].append(f"✓ Volume climax ({vol_ratio:.1f}x) + narrow range — potential accumulation")
-        elif close_pos > 0.65:
+            signal['reasons'].append(f"✓ Effort vs Result ({vol_ratio:.1f}x vol, narrow range) — accumulation")
+        elif close_pos > 0.60 and current['close'] <= current['open']:  # red close near high = distribution
             sell_conditions += 0.75
-            signal['reasons'].append(f"✗ Volume climax ({vol_ratio:.1f}x) + narrow range — potential distribution")
+            signal['reasons'].append(f"✗ Effort vs Result ({vol_ratio:.1f}x vol, narrow range) — distribution")
 
     # 5 — Bollinger Bands
     _bb_lower = False

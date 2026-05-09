@@ -135,34 +135,49 @@ def detect_rsi_divergence(df, pivot_window=3, lookback=50):
 
 
 def detect_support_resistance(df, lookback=50, tolerance=0.005):
-    """Find nearest support/resistance from swing highs & lows."""
-    window = df.tail(lookback)
+    """Find nearest support/resistance from swing highs & lows.
+
+    Returns nearest level above/below close. Among pivots within the same
+    ATR-width band, the most recent pivot takes precedence.
+    """
+    window = df.tail(lookback).reset_index(drop=True)
     close = window['close'].iloc[-1]
+    atr = window['ATR_14'].iloc[-1] if 'ATR_14' in window.columns else close * 0.005
 
     pivot_window = max(3, len(window) // 10)
     n = len(window)
     highs = window['high'].values
-    lows = window['low'].values
+    lows  = window['low'].values
 
+    # Collect (level, candle_index) — index is recency proxy (higher = more recent)
     swing_highs = []
     for i in range(pivot_window, n - pivot_window):
         if highs[i] == max(highs[i - pivot_window:i + pivot_window + 1]):
-            swing_highs.append(highs[i])
+            swing_highs.append((highs[i], i))
 
     swing_lows = []
     for i in range(pivot_window, n - pivot_window):
         if lows[i] == min(lows[i - pivot_window:i + pivot_window + 1]):
-            swing_lows.append(lows[i])
+            swing_lows.append((lows[i], i))
 
     result = {'support': None, 'resistance': None}
 
-    resistance_levels = sorted([h for h in swing_highs if h > close * (1 + tolerance)], reverse=True)
-    if resistance_levels:
-        result['resistance'] = resistance_levels[0]
+    # Resistance: levels above close, sorted ascending → nearest first
+    r_candidates = [(h, idx) for h, idx in swing_highs if h > close * (1 + tolerance)]
+    if r_candidates:
+        r_candidates.sort(key=lambda x: x[0])   # nearest first
+        nearest_r = r_candidates[0][0]
+        # Prefer most recent pivot within 1 ATR band of the nearest level
+        band = [(h, idx) for h, idx in r_candidates if h <= nearest_r + atr]
+        result['resistance'] = max(band, key=lambda x: x[1])[0]  # most recent in band
 
-    support_levels = sorted([l for l in swing_lows if l < close * (1 - tolerance)])
-    if support_levels:
-        result['support'] = support_levels[-1]
+    # Support: levels below close, sorted descending → nearest first
+    s_candidates = [(l, idx) for l, idx in swing_lows if l < close * (1 - tolerance)]
+    if s_candidates:
+        s_candidates.sort(key=lambda x: x[0], reverse=True)   # nearest first
+        nearest_s = s_candidates[0][0]
+        band = [(l, idx) for l, idx in s_candidates if l >= nearest_s - atr]
+        result['support'] = max(band, key=lambda x: x[1])[0]  # most recent in band
 
     return result
 

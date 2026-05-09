@@ -208,11 +208,15 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
         tp2 = tp2_raw * (1 + entry_cost) if tp2_raw else None
 
     trail = sl
-    trail_factor = FUTURES_CONFIG.get("trailing_atr_factor", 0.7) if mode == "futures" else 1.0
+    base_trail_factor = FUTURES_CONFIG.get("trailing_atr_factor", 0.9) if mode == "futures" else RISK_CONFIG.get("trailing_atr_factor", 1.0)
+    post_tp1_factor   = RISK_CONFIG.get("trailing_post_tp1_factor", 0.8)
+    min_adv_ratio     = RISK_CONFIG.get("trailing_advance_min_ratio", 0.5)
     partial_closed = False
     partial_pnl = 0
     exit_fee_pct = ec["futures_fee_pct"] if mode == "futures" else ec["spot_fee_pct"]
     exit_cost = (exit_fee_pct + slip) / 100
+    # Funding exit threshold for futures (proxy — no historical funding data in backtest)
+    funding_exit_gain_pct = 12.0  # close futures LONG if unrealized > 12% (high funding proxy)
 
     for j in range(entry_idx + 1, min(entry_idx + 1 + max_hold, len(df))):
         c = df.iloc[j]
@@ -237,10 +241,19 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
             return _make_trade(df, entry_idx, j, signal, "VOL_EXIT", entry, exit_px, exit_pnl)
 
         if stype == "BUY":
-            # Advance trailing stop
+            # Funding exit proxy for futures — sustained large gain signals crowded longs
+            if mode == "futures" and not partial_closed:
+                unrealized = (c["close"] - entry) / entry * 100
+                if unrealized > funding_exit_gain_pct:
+                    exit_pnl = _calc_backtest_pnl(stype, entry, c["close"], partial_closed, partial_pnl, mode)
+                    return _make_trade(df, entry_idx, j, signal, "FUNDING_EXIT", entry, c["close"], exit_pnl)
+
+            # Advance trailing stop (with minimum advance threshold)
             if atr_now > 0:
-                new_trail = c["close"] - atr_now * trail_factor
-                if new_trail > trail:
+                tf = base_trail_factor * (post_tp1_factor if partial_closed else 1.0)
+                new_trail = c["close"] - atr_now * tf
+                min_adv = atr_now * tf * min_adv_ratio
+                if new_trail > trail + min_adv:
                     trail = new_trail
 
             # Partial TP1 (50%)
@@ -264,9 +277,18 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
                 return _make_trade(df, entry_idx, j, signal, outcome, entry, trail, exit_pnl)
 
         else:  # SELL
+            # Funding exit proxy — sustained large short gain signals crowded shorts
+            if mode == "futures" and not partial_closed:
+                unrealized = (entry - c["close"]) / entry * 100
+                if unrealized > funding_exit_gain_pct:
+                    exit_pnl = _calc_backtest_pnl(stype, entry, c["close"], partial_closed, partial_pnl, mode)
+                    return _make_trade(df, entry_idx, j, signal, "FUNDING_EXIT", entry, c["close"], exit_pnl)
+
             if atr_now > 0:
-                new_trail = c["close"] + atr_now * trail_factor
-                if new_trail < trail:
+                tf = base_trail_factor * (post_tp1_factor if partial_closed else 1.0)
+                new_trail = c["close"] + atr_now * tf
+                min_adv = atr_now * tf * min_adv_ratio
+                if new_trail < trail - min_adv:
                     trail = new_trail
 
             if not partial_closed and low <= tp1:

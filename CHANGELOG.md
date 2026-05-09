@@ -4,6 +4,18 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-10 — Low Priority Fixes: Backtest Parity, Adaptive Threshold, Wyckoff, S/R Recency
+
+### Changed
+
+- **Backtest trail now matches live paper.py behavior** (`backtest.py`): `_simulate_forward()` reads `trailing_post_tp1_factor` (0.8) and `trailing_advance_min_ratio` (0.5) from `RISK_CONFIG`, applying the same minimum-advance gate and post-TP1 tightening as `paper.py`. Previously backtest trail was always identical to paper.py from before the critical fixes — results were now diverging.
+- **Backtest futures funding exit proxy** (`backtest.py`): Simulates a FUNDING_EXIT when unrealized gain exceeds 12% on a futures position (proxy for crowded funding regime). Historical funding data is unavailable in backtest, but extreme sustained moves strongly correlate with positive funding. Applies to both BUY and SELL directions before partial TP.
+- **Adaptive threshold: 24h fast window added** (`signals/market_data.py`): `_get_adaptive_threshold()` now checks a 24h window first: if ≥4 signals fired AND win rate < 30%, threshold raises +1.0 immediately (vs the slow 72h raise of +0.5/0.75). Addresses lag where a losing streak on day 1-2 wasn't reflected until day 4. 72h standard window unchanged.
+- **Wyckoff Effort vs Result thresholds relaxed** (`signals/engine.py`): Volume climax threshold lowered from `2.0×` → `1.5×` avg and range threshold from `< 0.5×` → `< 0.75×` ATR, making the pattern fire more often. Added directional confirmation: accumulation requires green close (close ≥ open), distribution requires red close. Close position thresholds widened to 0.40/0.60 from 0.35/0.65.
+- **S/R detection returns nearest level (not farthest) + recency preference** (`signals/indicators.py`): Previous code sorted resistance descending and returned the highest (furthest) level — now returns the lowest resistance above close (nearest). Among pivots within one ATR band of the nearest level, the most recent pivot is preferred. Same logic applied to support. This corrects both the direction bug and stale-pivot preference.
+
+---
+
 ## 2026-05-10 — Medium Quality Fixes: Daily Limit, HTF Volume, TP2 Resistance, Sentiment Freshness, Divergence ATR
 
 ### Fixed
