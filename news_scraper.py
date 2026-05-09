@@ -347,13 +347,16 @@ def analyze_sentiment(text):
     pos_sub_covered = {w for w in _POSITIVE_WORDS if any(s.startswith(w) and s in text_lower for s in _POSITIVE_SUB)}
     neg_sub_covered = {w for w in _NEGATIVE_WORDS if any(s.startswith(w) and s in text_lower for s in _NEGATIVE_SUB)}
 
-    score = (
+    raw = (
         sum(1 for w in _POSITIVE_WORDS if w in words and w not in pos_sub_covered)
         + pos_sub_hits
         - sum(1 for w in _NEGATIVE_WORDS if w in words and w not in neg_sub_covered)
         - neg_sub_hits
         + neg_adj  # flip sentiment for negated phrases
     )
+    # Normalize by sqrt(word count) so longer headlines don't dominate
+    wc = max(1, len(text_lower.split()))
+    score = round(raw / (wc ** 0.5), 2)
     if score > 0:
         return "BULLISH", score
     if score < 0:
@@ -458,8 +461,25 @@ def scrape_and_export():
             seen.add(key)
             unique.append(item)
 
-    filtered = []
+    # Freshness filter — drop headlines older than N hours
+    max_age_hours = 24  # configurable: max age for news to be actionable
+    now = datetime.now(UTC)
+    fresh = []
     for item in unique:
+        ts_str = item.get("timestamp", "")
+        if ts_str:
+            try:
+                from email.utils import parsedate_to_datetime
+                ts = parsedate_to_datetime(ts_str)
+                age = (now - ts).total_seconds() / 3600
+                if age > max_age_hours:
+                    continue  # stale — skip
+            except (ValueError, TypeError):
+                pass  # can't parse timestamp — keep the item
+        fresh.append(item)
+
+    filtered = []
+    for item in fresh:
         if is_crypto_related(item["title"]):
             label, score = analyze_sentiment(item["title"])
             item["sentiment_label"] = label
