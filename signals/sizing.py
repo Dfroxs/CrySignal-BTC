@@ -21,6 +21,15 @@ def calculate_position_size(signal, account_balance=None):
     risk_amount = account_balance * risk_pct
     max_position = account_balance * RISK_CONFIG["max_position_size"]
 
+    # Volatility cap — reduce max position in high-vol regimes (like futures)
+    atr_pct = signal.get("_atr_percentile", 0.5)
+    if atr_pct > 0.90:
+        max_position *= 0.33   # extreme vol: reduce to 33% of normal
+    elif atr_pct > 0.75:
+        max_position *= 0.50
+    elif atr_pct > 0.60:
+        max_position *= 0.75
+
     position_size = (risk_amount / price_diff) * entry
     position_size = min(position_size, max_position)
 

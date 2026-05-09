@@ -79,6 +79,8 @@ def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
         signal['mode'] = 'spot'
         signal['_threshold'] = threshold
         log_cycle(signal, df, market_structure, htf, 'spot')
+        from signals.indicators import compute_atr_percentile
+        signal['_atr_percentile'] = round(compute_atr_percentile(df), 3)
         signal['_htf'] = htf
         signal['_market'] = market_structure
         signal['_news_data'] = news_data

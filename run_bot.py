@@ -45,12 +45,16 @@ def _confidence_at_least(actual, minimum):
 def _check_reentry_quality(signal, mode):
     """TA-driven re-entry guard: skip if price is worse and confidence didn't improve.
 
+    Also enforces post-pyramid cooldown: if the last closed position was a pyramid
+    entry, require a cooling-off period before re-entering.
+
     Returns (reason: str | None) — None means allow re-entry.
     """
+    from datetime import UTC as _UTC, datetime as _dt, timedelta as _td
     from trading.history import _conn
     c = _conn()
     row = c.execute(
-        """SELECT p.entry_price, p.type, s.strength
+        """SELECT p.entry_price, p.type, p.pyramid_entry, p.closed_at, s.strength
            FROM paper_positions p
            JOIN signals s ON p.signal_id = s.id
            WHERE p.outcome IS NOT NULL AND p.mode = ?
@@ -59,6 +63,17 @@ def _check_reentry_quality(signal, mode):
     ).fetchone()
     if not row:
         return None  # no history → allow
+
+    # Post-pyramid cooldown: if last closed was pyramid entry, wait before re-entry
+    if row["pyramid_entry"] and row["pyramid_entry"] > 1 and row["closed_at"]:
+        try:
+            closed_dt = _dt.fromisoformat(row["closed_at"])
+            hours_since = (_dt.now(_UTC) - closed_dt).total_seconds() / 3600
+            cooldown_hours = 12  # configurable: wait N hours after pyramid close
+            if hours_since < cooldown_hours:
+                return f"post-pyramid cooldown: {hours_since:.0f}h since pyramid close (< {cooldown_hours}h)"
+        except (ValueError, TypeError):
+            pass
 
     last_entry = row["entry_price"]
     last_type = row["type"]
