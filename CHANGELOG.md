@@ -4,6 +4,19 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-10 — fix: Gold & VIX data sources + Gold risk-on scoring
+
+### Fixed
+
+- **Gold data source** (`signals/market_data.py`): Replaced PAXG (PAX Gold crypto token) with Yahoo Finance `GC=F` (gold futures). PAXG had crypto-market noise independent of actual gold prices.
+- **VIX data source** (`signals/market_data.py`): Replaced `volatility-index-token` (invalid CoinGecko crypto token) with Yahoo Finance `^VIX` (CBOE VIX). Previous implementation returned crypto token price, not the actual equity volatility index.
+
+### Added
+
+- **Gold falling = risk-on buy signal** (`signals/engine.py`): Gold price dropping >0.5% now adds `buy_conditions += 0.25` with reason note. Previously only Gold rising + BTC falling was scored (sell side) — the bullish counterpart was missing.
+
+---
+
 ## 2026-05-10 — feat: Condition #19 — Candlestick Pattern Recognition
 
 ### Added

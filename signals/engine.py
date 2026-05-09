@@ -422,6 +422,9 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             signal['reasons'].append(f"📊 Gold rising ({gold['change_pct']:+.1f}%) — safe-haven demand")
             if current['close'] < df['close'].iloc[-5]:
                 sell_conditions += 0.25  # Gold up + BTC down = risk-off
+        elif gold.get("change_pct", 0) < -0.5:
+            buy_conditions += 0.25
+            signal['reasons'].append(f"📊 Gold falling ({gold['change_pct']:+.1f}%) — risk-on, capital rotating to crypto")
         if vix.get("change_pct", 0) > 3:
             buy_conditions += 0.25
             signal['reasons'].append(f"📊 VIX spiking ({vix['change_pct']:+.1f}%) — fear gauge, contrarian BTC bid")

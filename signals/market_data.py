@@ -359,32 +359,38 @@ def fetch_fear_and_greed():
 # ---------------------------------------------------------------------------
 
 def fetch_gold_price():
-    """Fetch gold spot price via CoinGecko (PAXG/USD as proxy)."""
+    """Fetch gold futures price via Yahoo Finance (GC=F)."""
     try:
         resp = HTTP_SESSION.get(
-            "https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=usd&include_24hr_change=true",
+            "https://query1.finance.yahoo.com/v8/finance/chart/GC%3DF?interval=1d&range=2d",
+            headers={"User-Agent": "Mozilla/5.0"},
             timeout=10,
         )
-        data = resp.json().get("pax-gold", {})
-        current = data.get("usd", 0)
-        change = data.get("usd_24h_change", 0)
-        return {"current": current, "change_pct": round(change, 2) if change else 0}
+        result = resp.json()["chart"]["result"][0]
+        closes = [c for c in result["indicators"]["quote"][0]["close"] if c is not None]
+        if len(closes) < 2:
+            return {"current": 0, "change_pct": 0}
+        current, prev = closes[-1], closes[-2]
+        return {"current": round(current, 2), "change_pct": round((current - prev) / prev * 100, 2)}
     except Exception:
         logger.debug("Gold fetch failed")
         return {"current": 0, "change_pct": 0}
 
 
 def fetch_vix():
-    """Fetch VIX via free API as fear gauge."""
+    """Fetch CBOE VIX via Yahoo Finance (^VIX)."""
     try:
         resp = HTTP_SESSION.get(
-            "https://api.coingecko.com/api/v3/simple/price?ids=volatility-index-token&vs_currencies=usd&include_24hr_change=true",
+            "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&range=2d",
+            headers={"User-Agent": "Mozilla/5.0"},
             timeout=10,
         )
-        data = resp.json().get("volatility-index-token", {})
-        current = data.get("usd", 0)
-        change = data.get("usd_24h_change", 0)
-        return {"current": current, "change_pct": round(change, 2) if change else 0}
+        result = resp.json()["chart"]["result"][0]
+        closes = [c for c in result["indicators"]["quote"][0]["close"] if c is not None]
+        if len(closes) < 2:
+            return {"current": 0, "change_pct": 0}
+        current, prev = closes[-1], closes[-2]
+        return {"current": round(current, 2), "change_pct": round((current - prev) / prev * 100, 2)}
     except Exception:
         logger.debug("VIX fetch failed")
         return {"current": 0, "change_pct": 0}
