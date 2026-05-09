@@ -405,6 +405,8 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
         sp500  = mkt.get("sp500", {})
         btcdom = mkt.get("btc_dom", {})
         stable = mkt.get("stablecoin", {})
+        gold   = mkt.get("gold", {})
+        vix    = mkt.get("vix", {})
 
         dxy_c = dxy.get("current", 0)
         dxy_d = dxy.get("change_pct", 0)
@@ -415,6 +417,10 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
         btcd_dir = _dir(btcdom.get("change_pct", 0))
         stab     = stable.get("total_b", 0)
         stab_dir = _dir(stable.get("change_pct", 0))
+        gold_c = gold.get("current", 0)
+        gold_d = gold.get("change_pct", 0)
+        vix_c  = vix.get("current", 0)
+        vix_d  = vix.get("change_pct", 0)
 
         if dxy_c:
             lines.append(f"DXY       <code>{dxy_c:.3f}</code>  <code>{dxy_d:+.2f}%</code>")
@@ -424,6 +430,100 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
             lines.append(f"BTC.D     <code>{btcd:.1f}%</code>  {btcd_dir}")
         if stab:
             lines.append(f"Stable    <code>${stab:.0f}B</code>  {stab_dir}")
+        if gold_c:
+            gold_dir = _UP if gold_d > 0 else _DOWN
+            lines.append(f"Gold      <code>${gold_c:,.0f}</code>  <code>{gold_d:+.2f}%</code>  {gold_dir}")
+        if vix_c:
+            vix_dir = _UP if vix_d > 0 else _DOWN
+            lines.append(f"VIX       <code>{vix_c:.2f}</code>  <code>{vix_d:+.2f}%</code>  {vix_dir}")
+        lines.append("")
+
+    # ── Technicals per mode ─────────────────────────────────────
+    for sig in [spot_signal, futures_signal]:
+        if not sig:
+            continue
+        mode   = sig.get("mode", "futures")
+        tf_lbl = "SPOT 4H" if mode == "spot" else "FUTURES 1H"
+        _last  = sig.get("_last", {})
+        if not _last:
+            continue
+
+        lines.append(f"<b>━━━ 🔬 TECHNICALS — {tf_lbl} ━━━</b>")
+
+        rsi_v  = _last.get("rsi", 0)
+        macd   = _last.get("macd", 0)
+        msig_v = _last.get("macd_sig", 0)
+        sk     = _last.get("stoch_k")
+        sd     = _last.get("stoch_d")
+        vwap   = _last.get("vwap")
+        atr_v  = _last.get("atr", 0)
+        obv    = _last.get("obv_slope", 0)
+        price  = sig.get("entry_price", _last.get("close", 0))
+        div    = sig.get("rsi_divergence", "NONE")
+        cs     = sig.get("candlestick", {})
+        regime = sig.get("regime", "")
+        adx_v  = sig.get("adx")
+
+        rsi_tag   = " 🔴OB" if rsi_v > 70 else (" 🟢OS" if rsi_v < 30 else "")
+        macd_dir  = _UP if macd > msig_v else _DOWN
+        obv_dir   = _UP if obv > 0 else _DOWN
+
+        lines.append(f"RSI       <code>{rsi_v:.1f}</code>{rsi_tag}")
+        lines.append(f"MACD      <code>{macd:.0f}</code>  {macd_dir}  sig <code>{msig_v:.0f}</code>")
+        if sk is not None and sd is not None:
+            sk_tag = " 🔴OB" if sk > 80 else (" 🟢OS" if sk < 20 else "")
+            lines.append(f"StochRSI  <code>{sk:.0f}/{sd:.0f}</code>{sk_tag}")
+        if vwap:
+            vwap_dir = _UP if price > vwap else _DOWN
+            lines.append(f"VWAP      <code>${vwap:,.0f}</code>  {vwap_dir}")
+        lines.append(f"ATR       <code>${atr_v:,.0f}</code>")
+        lines.append(f"OBV       <code>{obv:+,.0f}</code>  {obv_dir}")
+        if div and str(div).strip() not in ("", "NONE"):
+            div_icon = "🟢" if div == "BULLISH" else "🔴"
+            lines.append(f"RSI Div   {div_icon} {_esc(div)}")
+        if cs:
+            bull_cs = cs.get("bullish")
+            bear_cs = cs.get("bearish")
+            if bull_cs:
+                lines.append(f"Candle    🟢 {_esc(bull_cs.replace('_', ' '))}")
+            if bear_cs:
+                lines.append(f"Candle    🔴 {_esc(bear_cs.replace('_', ' '))}")
+        if regime:
+            adx_str = f"  ADX <code>{adx_v:.1f}</code>" if adx_v is not None else ""
+            lines.append(f"Regime    <b>{_esc(regime)}</b>{adx_str}")
+        lines.append("")
+
+    # ── HTF per mode ────────────────────────────────────────────
+    htf_printed = False
+    for sig in [spot_signal, futures_signal]:
+        if not sig:
+            continue
+        mode   = sig.get("mode", "futures")
+        tf_lbl = "SPOT 4H" if mode == "spot" else "FUTURES 1H"
+        htf    = sig.get("_htf", {})
+        if not htf:
+            continue
+        if not htf_printed:
+            lines.append("<b>━━━ ⏱ HTF ALIGNMENT ━━━</b>")
+            htf_printed = True
+
+        tf_order = ["1d", "1w"] if mode == "spot" else ["4h", "1d"]
+        lines.append(f"<b>{tf_lbl}</b>")
+        for key in tf_order:
+            if key not in htf:
+                continue
+            ind = htf.get(f"{key}_indicators", {})
+            rsi_h = ind.get("rsi")
+            macd_h = ind.get("macd", "")
+            vol_h  = ind.get("vol_trend", "FLAT")
+            macd_icon = _UP if macd_h == "BULLISH" else (_DOWN if macd_h == "BEARISH" else _FLAT)
+            vol_icon  = {"RISING": _UP, "FALLING": _DOWN, "FLAT": _FLAT}.get(vol_h, _FLAT)
+            trend_str = htf[key]
+            trend_icon = "🟢" if trend_str == "BULLISH" else "🔴"
+            rsi_str = f"  RSI <code>{rsi_h:.0f}</code>" if rsi_h is not None else ""
+            lines.append(f"{key.upper():<5}  {trend_icon} <b>{trend_str}</b>{rsi_str}  MACD {macd_icon}  Vol {vol_icon}")
+        aligned_str = "✅ ALIGNED" if htf.get("aligned") else "⚠️ DIVERGING"
+        lines.append(f"       {aligned_str}")
         lines.append("")
 
     # ── Top Headlines ──────────────────────────────────────────
@@ -662,15 +762,29 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
             )
 
             detail = [f"Buy <b>{buy_s:.2f}</b>  ·  Sell <b>{sell_s:.2f}</b>"]
-            if reasons_n:
-                detail.append(f"{reasons_n} reasons")
             if conf:
                 detail.append(f"{conf} conf")
                 if mode == "spot" and conf == "STRONG":
                     detail.append("🧩 pyramid eligible")
             lines.append("         " + "  ·  ".join(detail))
 
-    lines.append("")
+        # Reasons list per mode
+        reasons = sig.get("reasons", [])
+        if reasons:
+            for r in reasons[:12]:
+                if r.startswith("✓"):
+                    sym, body = "✅", r[2:].strip()
+                elif r.startswith("✗"):
+                    sym, body = "❌", r[2:].strip()
+                elif r.startswith("⚠"):
+                    sym, body = "⚠️", r[2:].strip()
+                elif r.startswith("📊"):
+                    sym, body = "📊", r[2:].strip()
+                else:
+                    sym, body = "•", r.strip()
+                lines.append(f"  {sym} {_esc(body[:80])}")
+        lines.append("")
+
     lines.append("ⓘ  hobby · study · experiment — not financial advice")
 
     return "\n".join(lines)

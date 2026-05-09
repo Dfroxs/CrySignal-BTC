@@ -16,10 +16,12 @@ from signals.market_data import (
     fetch_dxy_trend,
     fetch_fear_and_greed,
     fetch_funding_rate,
+    fetch_gold_price,
     fetch_long_short_ratio,
     fetch_open_interest,
     fetch_sp500_trend,
     fetch_stablecoin_supply,
+    fetch_vix,
     get_adaptive_threshold,
     update_threshold_state,
 )
@@ -37,7 +39,7 @@ def analyze_futures_signal(symbol='BTC/USDT', include_news=True, display=False):
 
         logger.info("Fetching futures market data in parallel...")
         fmap = {}
-        with ThreadPoolExecutor(max_workers=9) as pool:
+        with ThreadPoolExecutor(max_workers=11) as pool:
             fmap['htf'] = pool.submit(get_htf_trend)
             fmap['funding'] = pool.submit(fetch_funding_rate)
             fmap['ls'] = pool.submit(fetch_long_short_ratio)
@@ -46,6 +48,8 @@ def analyze_futures_signal(symbol='BTC/USDT', include_news=True, display=False):
             fmap['stablecoin'] = pool.submit(fetch_stablecoin_supply)
             fmap['btc_dom'] = pool.submit(fetch_btc_dominance)
             fmap['oi'] = pool.submit(fetch_open_interest)
+            fmap['gold'] = pool.submit(fetch_gold_price)
+            fmap['vix'] = pool.submit(fetch_vix)
             if include_news:
                 fmap['fng'] = pool.submit(fetch_fear_and_greed)
 
@@ -58,6 +62,8 @@ def analyze_futures_signal(symbol='BTC/USDT', include_news=True, display=False):
                 'stablecoin': fmap['stablecoin'].result(),
                 'btc_dom': fmap['btc_dom'].result(),
                 'open_interest': fmap['oi'].result(),
+                'gold': fmap['gold'].result(),
+                'vix': fmap['vix'].result(),
             }
             fng = fmap['fng'].result() if include_news else None
 

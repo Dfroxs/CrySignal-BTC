@@ -4,6 +4,17 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-10 — feat: Telegram detail — technicals, HTF, reasons, Gold/VIX
+
+### Added
+
+- **Technicals section per pipeline** (`notifier/telegram.py`): New `━━━ 🔬 TECHNICALS ━━━` block for both SPOT 4H and FUTURES 1H showing RSI (with OB/OS tag), MACD + signal, StochRSI, VWAP, ATR, OBV slope, RSI divergence, candlestick pattern, and Regime/ADX.
+- **HTF Alignment section** (`notifier/telegram.py`): New `━━━ ⏱ HTF ALIGNMENT ━━━` block showing per-timeframe trend, RSI, MACD direction, volume trend, and aligned/diverging status for each pipeline.
+- **Reasons list in VERDICT** (`notifier/telegram.py`): Up to 12 scoring reasons per mode now shown under the verdict (✅/❌/⚠️ icons). Previously reasons were absent from the consolidated message.
+- **Gold & VIX in Market Structure** (`notifier/telegram.py`, `signals/futures.py`, `signals/spot.py`): Gold price (GC=F) and CBOE VIX now fetched in parallel and displayed in the Market Structure section. Both pipelines add `gold` and `vix` keys to `market_structure`.
+
+---
+
 ## 2026-05-10 — fix: Gold & VIX data sources + Gold risk-on scoring
 
 ### Fixed
