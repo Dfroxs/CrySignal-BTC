@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 atexit.register(close_db)
 
 _CONFIDENCE_LEVEL = {"WEAK": 0, "NORMAL": 1, "STRONG": 2}
+_last_atr = 0  # cached for mid-cycle vol-exit checks
 
 
 def _confidence_at_least(actual, minimum):
@@ -438,13 +439,19 @@ def run_cycle():
 
         # Futures positions — close-and-flip on opposite signal
         if futures_signal and futures_signal["type"] != "HOLD":
+            fut_entry_cfg = FUTURES_CONFIG.get("entry", {})
+            actual_conf = futures_signal.get("confidence")
+            min_conf = fut_entry_cfg.get("min_confidence", "NORMAL")
+            fakeout_warn = _detect_fakeout_rejection(
+                futures_signal, wick_ratio=fut_entry_cfg.get("fakeout_wick_ratio", 0.6),
+            )
             opp_dir = "SELL" if futures_signal["type"] == "BUY" else "BUY"
             opp_positions = [p for p in get_open_positions("futures") if p["type"] == opp_dir]
             flipped = False
 
             for opp in opp_positions:
                 entry = opp["entry_price"]
-                flip_px = futures_signal["entry_price"]  # close at new signal price
+                flip_px = futures_signal["entry_price"]
                 pnl = ((flip_px - entry) / entry * 100) if opp_dir == "SELL" else ((entry - flip_px) / entry * 100)
                 close_paper_position(opp["id"], "FLIP", round(pnl, 2), closed_at=flip_px)
                 msg = f"FUT {opp['type']} flipped → {futures_signal['type']} (#{opp['id']} closed, P&L {pnl:+.2f}%)"
@@ -453,22 +460,57 @@ def run_cycle():
                 flipped = True
 
             if flipped:
-                # After flip, open the new position
-                pid = open_paper_position(futures_signal, mode="futures")
-                msg = f"FUT {futures_signal['type']} opened (#{pid}) @ ${futures_signal['entry_price']:,.0f}"
-                logger.info(msg)
-                phase3_actions.append(f"🚀 {msg}")
-                pending_tg.append((_format_open_notification(futures_signal, pid, "futures"), "position-open"))
+                # After flip — confidence gate before opening new direction
+                if not _confidence_at_least(actual_conf, min_conf):
+                    msg = f"FUT flip requires ≥{min_conf} confidence (got {actual_conf}) — skipping open"
+                    logger.info(msg)
+                    phase3_actions.append(f"⏭ FUT  {msg}")
+                elif fakeout_warn:
+                    logger.info("FUT %s — %s — skipping open", futures_signal['type'], fakeout_warn)
+                    phase3_actions.append(f"⏭ FUT  {fakeout_warn}")
+                else:
+                    pid = open_paper_position(futures_signal, mode="futures")
+                    msg = f"FUT {futures_signal['type']} opened (#{pid}) @ ${futures_signal['entry_price']:,.0f} (flip)"
+                    logger.info(msg)
+                    phase3_actions.append(f"🔄 {msg}")
+                    pending_tg.append((_format_open_notification(futures_signal, pid, "futures"), "position-open"))
+
             elif has_open_position_same_direction(futures_signal["type"], "futures"):
                 msg = f"Already have open {futures_signal['type']} futures — skipping"
                 logger.info(msg)
                 phase3_actions.append(f"⏭ FUT  {msg}")
+
             else:
-                pid = open_paper_position(futures_signal, mode="futures")
-                msg = f"FUT {futures_signal['type']} opened (#{pid}) @ ${futures_signal['entry_price']:,.0f}"
-                logger.info(msg)
-                phase3_actions.append(f"🚀 {msg}")
-                pending_tg.append((_format_open_notification(futures_signal, pid, "futures"), "position-open"))
+                # First futures entry — quality gates
+                reentry_warn = _check_reentry_quality(futures_signal, "futures") \
+                    if fut_entry_cfg.get("reentry_price_check", True) else None
+                if reentry_warn:
+                    logger.info("FUT %s — %s — skipping", futures_signal['type'], reentry_warn)
+                    phase3_actions.append(f"⏭ FUT  {reentry_warn}")
+                elif not _confidence_at_least(actual_conf, min_conf):
+                    msg = f"FUT {futures_signal['type']} requires ≥{min_conf} confidence (got {actual_conf}) — skipping"
+                    logger.info(msg)
+                    phase3_actions.append(f"⏭ FUT  {msg}")
+                elif fakeout_warn:
+                    logger.info("FUT %s — %s — skipping", futures_signal['type'], fakeout_warn)
+                    phase3_actions.append(f"⏭ FUT  {fakeout_warn}")
+                else:
+                    # Aggregate risk cap
+                    agg_risk, agg_warn = _calc_aggregate_risk(
+                        "futures", futures_signal["entry_price"],
+                        futures_signal["stop_loss"], 1.0,
+                        {"max_aggregate_risk_pct": fut_entry_cfg.get("max_aggregate_risk_pct", 8.0)},
+                    )
+                    if agg_warn:
+                        msg = f"FUT {futures_signal['type']} — {agg_warn}"
+                        logger.info(msg)
+                        phase3_actions.append(f"⏭ FUT  {msg}")
+                    else:
+                        pid = open_paper_position(futures_signal, mode="futures")
+                        msg = f"FUT {futures_signal['type']} opened (#{pid}) @ ${futures_signal['entry_price']:,.0f}"
+                        logger.info(msg)
+                        phase3_actions.append(f"🚀 {msg}")
+                        pending_tg.append((_format_open_notification(futures_signal, pid, "futures"), "position-open"))
 
         # Determine current price for position checks
         if futures_signal and futures_signal.get("entry_price"):
@@ -481,8 +523,13 @@ def run_cycle():
             current_price = ticker["last"]
 
         current_atr = (spot_signal or futures_signal or {}).get("atr", 0)
+        if current_atr > 0:
+            _last_atr = current_atr  # cache for mid-cycle
+        fut_funding = 0
+        if futures_signal and futures_signal.get("_market"):
+            fut_funding = futures_signal["_market"].get("funding", {}).get("rate_pct", 0)
         closed_spot = check_and_close_positions(current_price, mode="spot", current_atr=current_atr)
-        closed_fut   = check_and_close_positions(current_price, mode="futures", current_atr=current_atr)
+        closed_fut   = check_and_close_positions(current_price, mode="futures", current_atr=current_atr, funding_rate=fut_funding)
         all_closed   = (closed_spot or []) + (closed_fut or [])
 
         print_open_status("spot")
@@ -530,8 +577,8 @@ def run_position_check():
         print(f"  MID-CYCLE CHECK  ·  BTC ${price:,.0f}")
         print(f"  {'─' * 40}")
 
-        closed_spot = check_and_close_positions(price, mode="spot", current_atr=0)
-        closed_fut = check_and_close_positions(price, mode="futures", current_atr=0)
+        closed_spot = check_and_close_positions(price, mode="spot", current_atr=_last_atr)
+        closed_fut = check_and_close_positions(price, mode="futures", current_atr=_last_atr)
         all_closed = (closed_spot or []) + (closed_fut or [])
 
         print_open_status("spot")

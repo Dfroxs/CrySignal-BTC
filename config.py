@@ -65,6 +65,16 @@ FUTURES_CONFIG = {
     "risk_per_trade":        0.03,
     "max_margin_pct":        0.20,
     "max_positions":         2,     # max 1 LONG + 1 SHORT (one per direction)
+    "entry": {
+        "min_confidence":         "NORMAL",   # minimum confidence to open first position
+        "reentry_price_check":    True,       # TA-driven re-entry quality gate
+        "fakeout_wick_ratio":     0.60,       # reject on >60% upper/lower wick
+        "max_aggregate_risk_pct": 8.0,        # max total risk % across all futures positions
+    },
+    "funding_exit": {
+        "close_long_rate":   0.10,   # close LONG if funding > 0.10% (expensive to hold)
+        "close_short_rate": -0.05,   # close SHORT if funding < -0.05% (expensive to short)
+    },
 }
 
 

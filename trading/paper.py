@@ -56,7 +56,7 @@ def _check_slippage(trigger_price, fill_price, pos_id):
 # Position management
 # ---------------------------------------------------------------------------
 
-def check_and_close_positions(current_price, mode=None, current_atr=0):
+def check_and_close_positions(current_price, mode=None, current_atr=0, funding_rate=0):
     """Check open paper positions against *current_price*, optionally filtered by mode.
 
     If a HIGH impact USD macro event is within 2 hours, all open positions
@@ -149,6 +149,39 @@ def check_and_close_positions(current_price, mode=None, current_atr=0):
                 pos["type"], pos_id, _CURRENT_ATR, entry_atr, vol_mult, exit_pnl,
             )
             continue
+
+        # ── Exit 0c: funding-rate exit (futures only) ──
+        if mode == "futures" and funding_rate != 0:
+            from config import FUTURES_CONFIG
+            fe_cfg = FUTURES_CONFIG.get("funding_exit", {})
+            close_long_rate = fe_cfg.get("close_long_rate", 0.10)
+            close_short_rate = fe_cfg.get("close_short_rate", -0.05)
+            if pos["type"] == "BUY" and funding_rate > close_long_rate:
+                exit_pnl = _calc_pnl(pos, current_price)
+                sh.close_paper_position(pos_id, "FUNDING_EXIT", exit_pnl, closed_at=current_price)
+                closed.append({
+                    "type": pos["type"], "entry": entry,
+                    "exit": current_price, "pnl": exit_pnl,
+                    "outcome": "FUNDING_EXIT", "mode": pos.get("mode", "futures"),
+                })
+                logger.info(
+                    "Paper %s %s → FUNDING_EXIT (%.4f%% > %.2f%%, %.2f%%)",
+                    pos["type"], pos_id, funding_rate, close_long_rate, exit_pnl,
+                )
+                continue
+            elif pos["type"] == "SELL" and funding_rate < close_short_rate:
+                exit_pnl = _calc_pnl(pos, current_price)
+                sh.close_paper_position(pos_id, "FUNDING_EXIT", exit_pnl, closed_at=current_price)
+                closed.append({
+                    "type": pos["type"], "entry": entry,
+                    "exit": current_price, "pnl": exit_pnl,
+                    "outcome": "FUNDING_EXIT", "mode": pos.get("mode", "futures"),
+                })
+                logger.info(
+                    "Paper %s %s → FUNDING_EXIT (%.4f%% < %.2f%%, %.2f%%)",
+                    pos["type"], pos_id, funding_rate, close_short_rate, exit_pnl,
+                )
+                continue
 
         if pos["type"] == "BUY":
             # 1 — advance trailing stop
