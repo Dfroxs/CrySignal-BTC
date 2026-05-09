@@ -155,6 +155,21 @@ def fetch_open_interest():
 
     if oi is None:
         return result
+
+    # oi is in BTC — convert to USD notional
+    try:
+        price_resp = HTTP_SESSION.get(
+            'https://fapi.binance.com/fapi/v1/ticker/price',
+            params={'symbol': 'BTCUSDT'},
+            headers={'User-Agent': 'curl/8.4'},
+            timeout=5,
+        )
+        btc_price = float(price_resp.json().get('price', 0))
+        if btc_price > 0:
+            oi = oi * btc_price
+    except Exception:
+        pass  # keep raw BTC value; display will still work
+
     result['notional'] = round(oi, 2)
 
     prev_oi = None
