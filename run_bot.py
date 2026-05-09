@@ -21,15 +21,45 @@ from config import RISK_CONFIG, FUTURES_CONFIG, RISK_LIMITS
 from signals.sizing import calculate_position_size, get_pyramid_size_factor
 from trading.history import close as close_db, close_paper_position, get_open_position_count_by_direction, get_open_positions, has_open_position_same_direction, open_paper_position
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("spotsignal.log"),
-    ],
-)
+_file_handler   = logging.FileHandler("spotsignal.log")
+_file_handler.setLevel(logging.INFO)
+_file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s — %(message)s"))
+
+_console_handler = logging.StreamHandler(sys.stdout)
+_console_handler.setLevel(logging.WARNING)   # INFO stays in file only
+_console_handler.setFormatter(logging.Formatter("%(levelname)s %(name)s — %(message)s"))
+
+logging.basicConfig(level=logging.INFO, handlers=[_file_handler, _console_handler])
 logger = logging.getLogger(__name__)
+
+
+# ── Terminal progress helpers ────────────────────────────────────────────────
+
+_W  = "\033[0m"   # reset
+_B  = "\033[1m"   # bold
+_G  = "\033[92m"  # green
+_Y  = "\033[93m"  # yellow
+_R  = "\033[91m"  # red
+_DIM = "\033[2m"  # dim
+
+def _step(icon, text, color=None, end="\n"):
+    c = color or _W
+    print(f"  {c}{icon}{_W}  {text}", end=end, flush=True)
+
+def _loading(text):
+    print(f"  {_DIM}⟳{_W}  {text}", end="\r", flush=True)
+
+def _ok(text):
+    print(f"  {_G}✓{_W}  {text}", flush=True)
+
+def _warn(text):
+    print(f"  {_Y}⚠{_W}  {text}", flush=True)
+
+def _err(text):
+    print(f"  {_R}✗{_W}  {text}", flush=True)
+
+def _section(title):
+    print(f"\n{_B}{title}{_W}")
 
 atexit.register(close_db)
 
@@ -240,35 +270,50 @@ def _calc_aggregate_risk(mode, new_entry_price, new_sl, new_size_factor, pyramid
 # ---------------------------------------------------------------------------
 
 def run_cycle():
+    ts = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
+    _section(f"CrySignal · BTC/USDT · {ts}")
+
     # Phase 1 — scrape news
-    logger.info("[PHASE 1] Updating market intelligence ...")
+    _loading("Phase 1  Fetching news & macro data...")
     start = time.time()
     try:
         scrape_and_export()
-        logger.info("Data sync complete (%.2fs)", time.time() - start)
+        _ok(f"Phase 1  News & macro synced  ({time.time()-start:.1f}s)")
     except Exception as e:
         logger.error("Phase 1 failed — proceeding with stale data: %s", e)
+        _err(f"Phase 1  Failed — using stale data  ({e})")
 
-    # Phase 2 — analyze (spot then futures sequentially to avoid exchange rate limits)
-    logger.info("[PHASE 2] Running spot analysis (4H) ...")
+    # Phase 2 — analyze
+    _loading("Phase 2  SPOT 4H — fetching OHLCV & indicators...")
     spot_signal = None
     try:
         spot_signal = analyze_spot_signal(symbol="BTC/USDT", include_news=True)
+        s_type = spot_signal["type"]
+        s_score = spot_signal.get("strength", 0)
+        s_icon = "🟢" if s_type == "BUY" else ("🔴" if s_type == "SELL" else "⏸")
+        _ok(f"Phase 2  SPOT 4H    {s_icon} {s_type}  score {s_score:.2f}")
     except Exception as e:
         logger.error("Spot analysis failed: %s", e)
+        _err(f"Phase 2  SPOT failed  ({e})")
 
-    logger.info("[PHASE 2] Running futures analysis (1H) ...")
+    _loading("Phase 2  FUTURES 1H — fetching OHLCV & indicators...")
     futures_signal = None
     try:
         futures_signal = analyze_futures_signal(symbol="BTC/USDT", include_news=True)
+        f_type = futures_signal["type"]
+        f_score = futures_signal.get("strength", 0)
+        f_icon = "🟢" if f_type == "BUY" else ("🔴" if f_type == "SELL" else "⏸")
+        _ok(f"Phase 2  FUTURES 1H {f_icon} {f_type}  score {f_score:.2f}")
     except Exception as e:
         logger.error("Futures analysis failed: %s", e)
+        _err(f"Phase 2  FUTURES failed  ({e})")
 
     # Cross-check: spot vs futures directional conflict
     if spot_signal and futures_signal:
         spot_dir = spot_signal["type"]
         fut_dir = futures_signal["type"]
         if spot_dir != "HOLD" and fut_dir != "HOLD" and spot_dir != fut_dir:
+            _warn(f"Directional conflict: SPOT {spot_dir} vs FUTURES {fut_dir} — both suppressed")
             logger.warning(
                 "⚠️  Directional conflict: SPOT %s vs FUTURES %s — skipping both",
                 spot_dir, fut_dir,
@@ -286,7 +331,7 @@ def run_cycle():
     display_combined(spot_signal, futures_signal)
 
     # Phase 3 — paper trading
-    logger.info("[PHASE 3] Updating paper positions ...")
+    _loading("Phase 3  Updating paper positions...")
     phase3_actions = []     # track what happened for summary
     pending_tg    = []      # defer Telegram notifications until after Phase 4
 
@@ -654,11 +699,13 @@ def run_cycle():
         print_paper_summary("futures")
 
         if phase3_actions:
-            print(f"\n  {'─' * 40}")
-            print(f"  PHASE 3: POSITIONS")
-            print(f"  {'─' * 40}")
+            _section("Phase 3  Positions")
             for action in phase3_actions:
-                print(f"  {action}")
+                icon = "✓" if action.startswith("🚀") or action.startswith("🧩") or action.startswith("🔄") else "⏭"
+                color = _G if icon == "✓" else _DIM
+                print(f"  {color}{icon}{_W}  {action}")
+        else:
+            _ok("Phase 3  No position changes")
 
         # Collect close notification (defer to after Phase 4)
         if all_closed:
@@ -668,13 +715,14 @@ def run_cycle():
 
     except Exception as e:
         logger.error("Paper trading update failed: %s", e)
+        _err(f"Phase 3  Failed  ({e})")
 
-    # Phase 4 — main signal alert FIRST
+    # Phase 4 — notifications
+    _loading("Phase 4  Sending Telegram notifications...")
     send_signal_alert(spot_signal=spot_signal, futures_signal=futures_signal)
-
-    # Then position open/close/warning
     for msg, label in pending_tg:
         _send_telegram_message(msg, label)
+    _ok("Phase 4  Telegram sent")
 
 
 # ---------------------------------------------------------------------------
@@ -725,11 +773,7 @@ def main():
         full_minute = 1   # full cycle fires at :01 past the hour
         check_minute = (full_minute + half) % 60
 
-        logger.info(
-            "Scheduled mode: full cycle at :%02d, position check at :%02d. "
-            "Press Ctrl+C to stop.",
-            full_minute, check_minute,
-        )
+        _ok(f"Loop mode — full cycle at :{full_minute:02d}, position check at :{check_minute:02d}  (Ctrl+C to stop)")
         fired = set()
         last_minute = None
         while True:
@@ -749,7 +793,6 @@ def main():
                 continue  # already fired this minute
 
             if minute == full_minute:
-                logger.info("=== Full cycle starting ===")
                 run_cycle()
                 next_min = check_minute
                 wait_sec = ((next_min - datetime.now().astimezone().minute - 1) % 60) * 60 + (60 - datetime.now().astimezone().second)
@@ -758,7 +801,7 @@ def main():
                 next_min = full_minute
                 wait_sec = ((next_min - datetime.now().astimezone().minute - 1) % 60) * 60 + (60 - datetime.now().astimezone().second)
             fired.add(minute)
-            logger.info("Next run at :%02d (~%d min)", next_min, max(1, wait_sec // 60))
+            _step(_DIM + "⟳" + _W, f"Next run at :{next_min:02d}  (~{max(1, wait_sec // 60)} min)")
     else:
         run_cycle()
 

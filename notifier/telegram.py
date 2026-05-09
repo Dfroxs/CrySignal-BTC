@@ -464,14 +464,14 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
         regime = sig.get("regime", "")
         adx_v  = sig.get("adx")
 
-        rsi_tag   = " 🔴OB" if rsi_v > 70 else (" 🟢OS" if rsi_v < 30 else "")
+        rsi_tag   = "  <b>OB</b>" if rsi_v > 70 else ("  <b>OS</b>" if rsi_v < 30 else "")
         macd_dir  = _UP if macd > msig_v else _DOWN
         obv_dir   = _UP if obv > 0 else _DOWN
 
         lines.append(f"RSI       <code>{rsi_v:.1f}</code>{rsi_tag}")
-        lines.append(f"MACD      <code>{macd:.0f}</code>  {macd_dir}  sig <code>{msig_v:.0f}</code>")
+        lines.append(f"MACD      <code>{macd:+.0f}</code>  {macd_dir}  sig <code>{msig_v:+.0f}</code>")
         if sk is not None and sd is not None:
-            sk_tag = " 🔴OB" if sk > 80 else (" 🟢OS" if sk < 20 else "")
+            sk_tag = "  <b>OB</b>" if sk > 80 else ("  <b>OS</b>" if sk < 20 else "")
             lines.append(f"StochRSI  <code>{sk:.0f}/{sd:.0f}</code>{sk_tag}")
         if vwap:
             vwap_dir = _UP if price > vwap else _DOWN
@@ -507,23 +507,22 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
             lines.append("<b>━━━ ⏱ HTF ALIGNMENT ━━━</b>")
             htf_printed = True
 
+        aligned_str = "✓ ALIGNED" if htf.get("aligned") else "✗ DIVERGING"
+        lines.append(f"<b>{tf_lbl}</b>  {aligned_str}")
         tf_order = ["1d", "1w"] if mode == "spot" else ["4h", "1d"]
-        lines.append(f"<b>{tf_lbl}</b>")
         for key in tf_order:
             if key not in htf:
                 continue
-            ind = htf.get(f"{key}_indicators", {})
-            rsi_h = ind.get("rsi")
-            macd_h = ind.get("macd", "")
-            vol_h  = ind.get("vol_trend", "FLAT")
-            macd_icon = _UP if macd_h == "BULLISH" else (_DOWN if macd_h == "BEARISH" else _FLAT)
-            vol_icon  = {"RISING": _UP, "FALLING": _DOWN, "FLAT": _FLAT}.get(vol_h, _FLAT)
-            trend_str = htf[key]
+            ind        = htf.get(f"{key}_indicators", {})
+            rsi_h      = ind.get("rsi")
+            macd_h     = ind.get("macd", "")
+            vol_h      = ind.get("vol_trend", "FLAT")
+            macd_icon  = _UP if macd_h == "BULLISH" else (_DOWN if macd_h == "BEARISH" else _FLAT)
+            vol_icon   = {"RISING": _UP, "FALLING": _DOWN, "FLAT": _FLAT}.get(vol_h, _FLAT)
+            trend_str  = htf[key]
             trend_icon = "🟢" if trend_str == "BULLISH" else "🔴"
-            rsi_str = f"  RSI <code>{rsi_h:.0f}</code>" if rsi_h is not None else ""
-            lines.append(f"{key.upper():<5}  {trend_icon} <b>{trend_str}</b>{rsi_str}  MACD {macd_icon}  Vol {vol_icon}")
-        aligned_str = "✅ ALIGNED" if htf.get("aligned") else "⚠️ DIVERGING"
-        lines.append(f"       {aligned_str}")
+            rsi_str    = f"  RSI <code>{rsi_h:.0f}</code>" if rsi_h is not None else ""
+            lines.append(f"  {key.upper():<4} {trend_icon} <b>{trend_str}</b>{rsi_str}  MACD {macd_icon}  Vol {vol_icon}")
         lines.append("")
 
     # ── Top Headlines ──────────────────────────────────────────
@@ -532,35 +531,42 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
         lines.append("<b>━━━ 📰 TOP HEADLINES ━━━</b>")
         for h in headlines[:5]:
             icon = _UP if h["sentiment"] > 0 else (_DOWN if h["sentiment"] < 0 else _FLAT)
-            cat = "G" if h.get("category") == "geopolitical" else "C"
-            lines.append(f"{icon} {cat}  {_esc(h['title'][:68])}")
+            lines.append(f"{icon} {_esc(h['title'][:72])}")
         lines.append("")
 
     # ── Performance ────────────────────────────────────────────
+    lines.append("<b>━━━ 📈 PERFORMANCE ━━━</b>")
     try:
-        spot_pnl, spot_cnt, _ = _sh.get_closed_pnl("spot")
-        fut_pnl, fut_cnt, _   = _sh.get_closed_pnl("futures")
-        total_trades = spot_cnt + fut_cnt
+        for label_str, mode_str in [("SPOT", "spot"), ("FUTURES", "futures")]:
+            pnl, cnt, avg = _sh.get_closed_pnl(mode_str)
+            if cnt == 0:
+                lines.append(f"<b>{label_str}</b>  No closed trades yet")
+                continue
+            bd   = _sh.get_outcome_breakdown(mode_str)
+            wins = bd.get("WIN", 0)
+            loss = bd.get("LOSS", 0)
+            mac  = bd.get("MACRO_CLOSE", 0)
+            pf   = _sh.get_profit_factor(mode_str)
+            wr   = _sh.get_win_rate(mode_str)
 
-        if total_trades > 0:
-            # Per-mode breakdown
-            sp_bd = _sh.get_outcome_breakdown("spot") if spot_cnt > 0 else {}
-            fu_bd = _sh.get_outcome_breakdown("futures") if fu_cnt > 0 else {}
-            sp_w = sp_bd.get("WIN", 0); sp_l = sp_bd.get("LOSS", 0)
-            fu_w = fu_bd.get("WIN", 0); fu_l = fu_bd.get("LOSS", 0)
+            outcomes = f"{wins} Wins · {loss} Losses"
+            if mac:
+                outcomes += f" · {mac} Macro"
 
-            if spot_cnt > 0:
-                sp_wr = f"WR {sp_w/(sp_w+sp_l)*100:.0f}%" if (sp_w + sp_l) > 0 else ""
-                lines.append(f"SPOT     {spot_cnt} trades  {sp_w}W {sp_l}L {sp_wr}  <b>{spot_pnl:+.2f}%</b>")
-            if fut_cnt > 0:
-                fu_wr = f"WR {fu_w/(fu_w+fu_l)*100:.0f}%" if (fu_w + fu_l) > 0 else ""
-                lines.append(f"FUTURES  {fut_cnt} trades  {fu_w}W {fu_l}L {fu_wr}  <b>{fut_pnl:+.2f}%</b>")
-            if spot_cnt > 0 and fut_cnt > 0:
-                total_pnl = spot_pnl + fut_pnl
-                tot_col = "+" if total_pnl >= 0 else ""
-                lines.append(f"Total    {total_trades} trades  {sp_w+fu_w}W {sp_l+fu_l}L  <b>{tot_col}{total_pnl:.2f}%</b>")
+            lines.append(f"<b>📊 {label_str}</b>")
+            lines.append(f"Total Trades  <code>{cnt}</code>")
+            lines.append(f"Net P&amp;L      <b>{pnl:+.2f}%</b>")
+            lines.append(f"Avg / Trade   <code>{avg:+.2f}%</code>")
+            lines.append(f"Outcomes      {outcomes}")
+            if (wins + loss) > 0:
+                wr_str = f"{wr*100:.1f}%" if wr is not None else "—"
+                pf_str = f"{pf:.2f}" if pf is not None and pf != float('inf') else ("∞" if pf == float('inf') else "—")
+                lines.append(f"Win Rate      <code>{wr_str}</code>")
+                lines.append(f"Profit Factor <code>{pf_str}</code>")
+            lines.append("")
     except Exception:
-        pass
+        lines.append("—")
+        lines.append("")
 
     # ── Position Sizing ────────────────────────────────────────
     lines.append("<b>━━━ 📊 POSITION SIZING ━━━</b>")
@@ -619,13 +625,12 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
                     else:
                         hypo_sl = entry_px + sl_dist
                         hypo_tp = entry_px - tp_dist
-                    lines.append(f"Stop SL   <code>~${hypo_sl:,.0f}</code> (if fired)")
-                    lines.append(f"Take TP   <code>~${hypo_tp:,.0f}</code> (if fired)")
+                    lines.append(f"Stop SL   <code>~${hypo_sl:,.0f}</code> <i>(estimate, not active)</i>")
+                    lines.append(f"Take TP   <code>~${hypo_tp:,.0f}</code> <i>(estimate, not active)</i>")
                 else:
                     lines.append("Stop SL   —")
                     lines.append("Take TP   —")
                 lines.append(f"R/R       <b>1:{RISK_CONFIG['take_profit_rr']:.1f}</b>")
-                lines.append("Position  — (no active trade)")
                 risk_amt = balance * RISK_CONFIG["risk_per_trade"]
                 lines.append(f"Max Risk  <code>${risk_amt:,.0f}</code> ({RISK_CONFIG['risk_per_trade']*100:.0f}%/trade)")
 
@@ -662,10 +667,8 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
                     lines.append(f"Liq.      <code>${fut['liquidation_price']:,.0f}</code>")
                     lines.append(f"Max Risk  <code>${fut['risk_amount']:,.0f}</code> ({FUTURES_CONFIG['risk_per_trade']*100:.0f}%/trade)")
                 else:
-                    lines.append("Direction —")
-                    lines.append("Leverage  —")
-                    lines.append("Margin    —")
-                    lines.append("Max Risk  —")
+                    risk_amt = balance * FUTURES_CONFIG["risk_per_trade"]
+                    lines.append(f"Max Risk  <code>${risk_amt:,.0f}</code> ({FUTURES_CONFIG['risk_per_trade']*100:.0f}%/trade)")
             else:
                 lines.append(f"Entry     <code>${entry_px:,.0f}</code>")
                 if atr > 0 and direction != "neutral":
@@ -677,21 +680,18 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
                     else:
                         hypo_sl = entry_px + sl_dist
                         hypo_tp = entry_px - tp_dist
-                    lines.append(f"Stop SL   <code>~${hypo_sl:,.0f}</code> (if fired)")
-                    lines.append(f"Take TP   <code>~${hypo_tp:,.0f}</code> (if fired)")
+                    lines.append(f"Stop SL   <code>~${hypo_sl:,.0f}</code> <i>(estimate, not active)</i>")
+                    lines.append(f"Take TP   <code>~${hypo_tp:,.0f}</code> <i>(estimate, not active)</i>")
                 else:
                     lines.append("Stop SL   —")
                     lines.append("Take TP   —")
                 lines.append(f"R/R       <b>1:{RISK_CONFIG['take_profit_rr']:.1f}</b>")
-                lines.append("Direction —")
-                lines.append("Leverage  —")
-                lines.append("Margin    —")
                 risk_amt = balance * FUTURES_CONFIG["risk_per_trade"]
                 lines.append(f"Max Risk  <code>${risk_amt:,.0f}</code> ({FUTURES_CONFIG['risk_per_trade']*100:.0f}%/trade)")
 
         lines.append("")
 
-    # ── NOTE ───────────────────────────────────────────────────
+    # ── Verdict ────────────────────────────────────────────────
     lines.append("<b>━━━ 📝 VERDICT ━━━</b>")
     for sig in [spot_signal, futures_signal]:
         if not sig:
@@ -705,9 +705,30 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
         mscore    = _max_score(sig)
         threshold = sig.get("_threshold", 0)
         conf      = sig.get("confidence", "")
-        reasons_n = len(sig.get("reasons", []))
 
-        if stype == "HOLD":
+        if stype == "BUY":
+            conf_str = f"  {conf}" if conf else ""
+            lines.append(f"🟢 <b>{label}  BUY 🔥  {score:.2f}/{mscore}  ≥ thr {threshold:.2f}{conf_str}</b>")
+            sub = f"B:<b>{buy_s:.2f}</b>  S:<b>{sell_s:.2f}</b>"
+            if conf == "STRONG" and mode == "spot":
+                sub += "  · pyramid eligible"
+            lines.append(f"  {sub}")
+            # Action guidance
+            action_word = "LONG" if mode == "futures" else "BUY"
+            if conf == "STRONG":
+                action = f"▶ <b>ENTER {action_word}</b> — strong signal · full size · SL/TP set above"
+            elif conf == "WEAK":
+                action = f"▶ <b>ENTER {action_word}</b> — weak signal · reduce size · watch closely"
+            else:
+                action = f"▶ <b>ENTER {action_word}</b> — signal confirmed · SL/TP set above"
+            lines.append(f"  {action}")
+
+        elif stype == "SELL":
+            lines.append(f"🔴 <b>{label}  SELL 🔥  {score:.2f}/{mscore}  ≥ thr {threshold:.2f}</b>")
+            lines.append(f"  B:<b>{buy_s:.2f}</b>  S:<b>{sell_s:.2f}</b>")
+            lines.append("  ▶ <b>SHORT</b> — downside confirmed · SL/TP set above")
+
+        else:
             if buy_s > sell_s:
                 dir_str, lead = "BUY", buy_s
             elif sell_s > buy_s:
@@ -718,72 +739,62 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
             gap = threshold - lead
 
             if mode == "spot" and dir_str == "BEARISH":
-                # Spot can't short — sell score is irrelevant for firing
-                lines.append(
-                    f"❄️ <b>{label}</b>  ·  HOLD  ·  "
-                    f"<code>{score:.2f}/{mscore:.2f}</code>  ·  "
-                    f"BEARISH · BUY-only → HOLD"
-                )
-                detail = [
-                    f"Buy <b>{buy_s:.2f}</b>  ·  Sell <b>{sell_s:.2f}</b>",
-                    "BUY-only → HOLD",
-                ]
+                lines.append(f"⏸ <b>{label}  HOLD  {score:.2f}/{mscore}  BEARISH · BUY-only</b>")
+                lines.append(f"  B:<b>{buy_s:.2f}</b>  S:<b>{sell_s:.2f}</b>")
+                lines.append("  ▶ <b>SKIP</b> — bearish pressure · spot BUY-only · no trade")
+            elif gap < 0:
+                lines.append(f"⏸ <b>{label}  HOLD  {score:.2f}/{mscore}  news downgrade</b>")
+                lines.append(f"  B:<b>{buy_s:.2f}</b>  S:<b>{sell_s:.2f}</b>  {dir_str} leads")
+                lines.append("  ▶ <b>SKIP</b> — score met but macro news blocked entry")
+            elif dir_str == "NEUTRAL":
+                lines.append(f"⏸ <b>{label}  HOLD  {score:.2f}/{mscore}  NEUTRAL</b>")
+                lines.append(f"  B:<b>{buy_s:.2f}</b>  S:<b>{sell_s:.2f}</b>")
+                lines.append("  ▶ <b>SKIP</b> — no clear direction · wait for setup")
             else:
-                if gap < 0:
-                    lines.append(
-                        f"❄️ <b>{label}</b>  ·  HOLD  ·  "
-                        f"<code>{score:.2f}/{mscore:.2f}</code>  ·  "
-                        f"news downgrade → HOLD"
-                    )
-                    detail = [
-                        f"Buy <b>{buy_s:.2f}</b>  ·  Sell <b>{sell_s:.2f}</b>",
-                        f"{dir_str} leads but news blocked",
-                    ]
-                else:
-                    lines.append(
-                        f"❄️ <b>{label}</b>  ·  HOLD  ·  "
-                        f"<code>{score:.2f}/{mscore:.2f}</code>  ·  "
-                        f"gap <b>{gap:.2f}</b> to fire"
-                    )
-                    detail = [f"Buy <b>{buy_s:.2f}</b>  ·  Sell <b>{sell_s:.2f}</b>"]
-                    if dir_str == "NEUTRAL":
-                        detail.append("NEUTRAL")
-                    elif gap <= 0:
-                        detail.append(f"{dir_str} leads  ·  gap 0.00 READY")
-                    else:
-                        detail.append(f"{dir_str} leads")
-            lines.append("         " + "  ·  ".join(detail))
-        else:
-            icon = "🟢" if stype == "BUY" else "🔴"
-            lines.append(
-                f"{icon} <b>{label}</b>  ·  {stype} 🔥  ·  "
-                f"<code>{score:.2f}/{mscore:.2f}</code>  ·  "
-                f"≥ thr <b>{threshold:.2f}</b>"
-            )
+                lines.append(f"⏸ <b>{label}  HOLD  {score:.2f}/{mscore}  gap {gap:.2f} to fire</b>")
+                lines.append(f"  B:<b>{buy_s:.2f}</b>  S:<b>{sell_s:.2f}</b>  {dir_str} leads")
+                lines.append(f"  ▶ <b>SKIP</b> — {dir_str} building · need <b>+{gap:.2f}</b> more · SL/TP estimates above")
 
-            detail = [f"Buy <b>{buy_s:.2f}</b>  ·  Sell <b>{sell_s:.2f}</b>"]
-            if conf:
-                detail.append(f"{conf} conf")
-                if mode == "spot" and conf == "STRONG":
-                    detail.append("🧩 pyramid eligible")
-            lines.append("         " + "  ·  ".join(detail))
-
-        # Reasons list per mode
         reasons = sig.get("reasons", [])
-        if reasons:
-            for r in reasons[:12]:
-                if r.startswith("✓"):
-                    sym, body = "✅", r[2:].strip()
-                elif r.startswith("✗"):
-                    sym, body = "❌", r[2:].strip()
-                elif r.startswith("⚠"):
-                    sym, body = "⚠️", r[2:].strip()
-                elif r.startswith("📊"):
-                    sym, body = "📊", r[2:].strip()
-                else:
-                    sym, body = "•", r.strip()
-                lines.append(f"  {sym} {_esc(body[:80])}")
+        for r in reasons[:12]:
+            if r.startswith("✓"):
+                sym, body = "✓", r[2:].strip()
+            elif r.startswith("✗"):
+                sym, body = "✗", r[2:].strip()
+            elif r.startswith("⚠"):
+                sym, body = "⚠", r[2:].strip()
+            elif r.startswith("📊"):
+                sym, body = "·", r[2:].strip()
+            else:
+                sym, body = "·", r.strip()
+            lines.append(f"  {sym} {_esc(body[:80])}")
         lines.append("")
+
+    # ── Open Positions ─────────────────────────────────────────
+    try:
+        open_pos = _sh.get_open_positions()
+        lines.append("<b>━━━ 📂 OPEN POSITIONS ━━━</b>")
+        if open_pos:
+            for p in open_pos:
+                icon        = "🟢" if p["type"] == "BUY" else "🔴"
+                mode_lbl    = "SPOT" if p.get("mode") == "spot" else "FUTURES"
+                entry       = p["entry_price"]
+                sl          = p.get("trailing_stop") or p["stop_loss"]
+                tp1         = p["take_profit"]
+                tp2         = p.get("tp2")
+                partial     = p.get("partial_closed", 0)
+                opened      = str(p.get("opened_at", ""))[:16]
+                pyr         = p.get("pyramid_entry", 0)
+                pyr_str     = f"  #pyr{pyr}" if pyr else ""
+                partial_str = "  · TP1 ✓ trail→BE" if partial else ""
+                lines.append(f"{icon} <b>{mode_lbl} {p['type']}  #{p['id']}</b>  @ <code>${entry:,.0f}</code>{pyr_str}")
+                lines.append(f"   SL <code>${sl:,.0f}</code>  TP1 <code>${tp1:,.0f}</code>" + (f"  TP2 <code>${tp2:,.0f}</code>" if tp2 else "") + partial_str)
+                lines.append(f"   Opened {opened}")
+        else:
+            lines.append("No open positions")
+        lines.append("")
+    except Exception:
+        pass
 
     lines.append("ⓘ  hobby · study · experiment — not financial advice")
 

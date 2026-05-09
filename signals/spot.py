@@ -109,6 +109,7 @@ def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
             'stoch_d': last.get('StochRSI_D'),
             'vwap': last.get('VWAP_24'),
             'bb_upper': last.get('BB_Upper', 0),
+            'bb_middle': last.get('BB_Middle', 0),
             'bb_lower': last.get('BB_Lower', 0),
             'atr': last.get('ATR_14', 0),
             'obv_slope': df['OBV'].iloc[-1] - df['OBV'].iloc[-5],
