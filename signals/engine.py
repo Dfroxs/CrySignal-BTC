@@ -5,7 +5,7 @@ integrate_news_with_signal() for macro/sentiment overlay.
 import pandas as pd
 
 from config import RISK_CONFIG
-from signals.indicators import detect_rsi_divergence
+from signals.indicators import calculate_adx, classify_regime, detect_rsi_divergence
 from signals.market_data import get_signal_confidence
 from signals.sentiment import check_upcoming_macro_events
 
@@ -349,6 +349,69 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         else:
             sell_conditions += 0.75
             signal['reasons'].append(f"✗ Price below VWAP ${vwap:,.2f} — institutional selling")
+
+    # 18 — ADX trend strength + DI crossover
+    try:
+        adx_df = calculate_adx(df)
+        adx_val = adx_df['ADX'].iloc[-1]
+        di_plus = adx_df['DI+'].iloc[-1]
+        di_minus = adx_df['DI-'].iloc[-1]
+        prev_di_plus = adx_df['DI+'].iloc[-2]
+        prev_di_minus = adx_df['DI-'].iloc[-2]
+
+        if adx_val > 25:
+            if di_plus > di_minus:
+                buy_conditions += 0.5
+                signal['reasons'].append(f"✓ ADX {adx_val:.0f} — trending, DI+/DI- bullish")
+            else:
+                sell_conditions += 0.5
+                signal['reasons'].append(f"✗ ADX {adx_val:.0f} — trending, DI+/DI- bearish")
+
+        # DI crossover (independent trigger)
+        if di_plus > di_minus and prev_di_plus <= prev_di_minus:
+            buy_conditions += 0.75
+            signal['reasons'].append(f"✓ DI+ crossed above DI- — bullish momentum (ADX {adx_val:.0f})")
+        elif di_minus > di_plus and prev_di_minus <= prev_di_plus:
+            sell_conditions += 0.75
+            signal['reasons'].append(f"✗ DI- crossed above DI+ — bearish momentum (ADX {adx_val:.0f})")
+
+        # Regime classifier
+        regime = classify_regime(df, adx_df)
+        signal['regime'] = regime['regime']
+        signal['adx'] = regime['adx']
+        signal['_regime'] = regime
+    except Exception:
+        regime = {"regime": "UNKNOWN", "threshold_bump": 0, "size_adj": 1.0, "trend_dir": "NEUTRAL"}
+        signal['regime'] = "UNKNOWN"
+
+    # ── Session-based threshold adjustment ──
+    from datetime import UTC, datetime
+    utc_hour = datetime.now(UTC).hour
+    if utc_hour < 8:
+        session_bump = 0.5    # Asia session: low liquidity, raise threshold
+    elif 13 <= utc_hour < 22:
+        session_bump = -0.25  # US session: highest volume, lower threshold
+    else:
+        session_bump = 0.0
+    threshold = threshold + regime.get("threshold_bump", 0) + session_bump
+
+    # ── OI × Price directional analysis ──
+    if mode == 'futures' and market_structure:
+        oi = market_structure.get('open_interest', {})
+        oi_change = oi.get('change_pct', 0)
+        price_change = (current['close'] - df['close'].iloc[-5]) / df['close'].iloc[-5] * 100
+        if oi_change > 1 and price_change > 0.5:
+            buy_conditions += 0.75
+            signal['reasons'].append(f"✓ OI↑ ({oi_change:+.1f}%) + Price↑ — healthy uptrend")
+        elif oi_change > 1 and price_change < -0.5:
+            sell_conditions += 0.5
+            signal['reasons'].append(f"✗ OI↑ ({oi_change:+.1f}%) + Price↓ — distribution")
+        elif oi_change < -1 and price_change > 0.5:
+            buy_conditions += 0.25
+            signal['reasons'].append(f"⚠️  OI↓ ({oi_change:+.1f}%) + Price↑ — short squeeze")
+        elif oi_change < -1 and price_change < -0.5:
+            sell_conditions += 0.5
+            signal['reasons'].append(f"✓ OI↓ ({oi_change:+.1f}%) + Price↓ — liquidation cascade")
 
     # ── Diminishing returns on correlated oversold/overbought conditions ──
     # RSI OS/OB, BB lower/upper, StochRSI OS/OB crossover all fire from the

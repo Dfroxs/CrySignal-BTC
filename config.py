@@ -102,13 +102,13 @@ SPOT_THRESHOLD_STATE_FILE  = os.path.join(DATA_DIR, "spot_threshold_state.json")
 
 # Futures signal thresholds
 SIGNAL_THRESHOLD = float(os.getenv("SIGNAL_THRESHOLD", 5.2))
-SIGNAL_MAX_SCORE = 19.25
+SIGNAL_MAX_SCORE = 21.25  # 19.25 + ADX(0.5) + DI cross(0.75) + OI×price(0.75)
 THRESHOLD_MIN    = 4.0
 THRESHOLD_MAX    = 8.0
 
-# Spot signal thresholds (4H, 14 conditions — no funding/L/S/OI/basis)
+# Spot signal thresholds (4H, 15 conditions — no funding/L/S/OI/basis)
 SPOT_THRESHOLD    = float(os.getenv("SPOT_THRESHOLD", 4.3))
-SPOT_MAX_SCORE    = 15.5
+SPOT_MAX_SCORE    = 16.75  # 15.5 + ADX(0.5) + DI cross(0.75)
 SPOT_THRESHOLD_MIN = 3.0
 SPOT_THRESHOLD_MAX = 7.0
 
