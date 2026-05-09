@@ -30,7 +30,7 @@ _spot_cache = {"timestamp": 0, "signal": None}
 
 
 def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
-    """Full 4H spot pipeline: 15 conditions (no funding/L/S/OI/basis)."""
+    """Full 4H spot pipeline: 15 core conditions + funding/L/S futures sentiment at ½-weight (OI/basis skipped)."""
     import time as _time
     candle_ts = int(_time.time() // (4 * 3600))  # current 4H candle ID
 

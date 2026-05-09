@@ -240,10 +240,7 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
                 )
             elif current_price <= trail:
                 _check_slippage(trail, current_price, pos_id)
-                exit_pnl = (trail - entry) / entry * 100
-                if partial:
-                    partial_pnl = pos.get("partial_pnl") or 0
-                    exit_pnl = partial_pnl * 0.5 + exit_pnl * 0.5
+                exit_pnl = _calc_pnl(pos, trail)
                 outcome = "WIN" if trail >= entry else "LOSS"
                 sh.close_paper_position(pos_id, outcome, exit_pnl)
                 closed.append({
@@ -298,10 +295,7 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
                 )
             elif current_price >= trail:
                 _check_slippage(trail, current_price, pos_id)
-                exit_pnl = (entry - trail) / entry * 100
-                if partial:
-                    partial_pnl = pos.get("partial_pnl") or 0
-                    exit_pnl = partial_pnl * 0.5 + exit_pnl * 0.5
+                exit_pnl = _calc_pnl(pos, trail)
                 outcome = "WIN" if trail <= entry else "LOSS"
                 sh.close_paper_position(pos_id, outcome, exit_pnl)
                 closed.append({

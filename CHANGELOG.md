@@ -4,6 +4,16 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-10 — Full Codebase Review: 3 Bug Fixes (Paper Trail Fee, Sizing Threshold, Docstring)
+
+### Fixed
+
+- **`paper.py` trailing stop exits now apply exit fees** (`trading/paper.py`): BUY and SELL trailing stop exits were computing P&L directly (`(trail - entry) / entry`) without fees. All other exit types (MACRO_CLOSE, TIME_EXIT, VOL_EXIT, FUNDING_EXIT) use `_calc_pnl()` which subtracts `(fee + slippage)`. Both trail branches now call `_calc_pnl(pos, trail)` for consistency — trail exits were overstating P&L by ~0.15% (futures) or ~0.30% (spot) per trade.
+- **Spot position sizing ATR percentile thresholds use `>=` consistently** (`signals/sizing.py`): spot used strict `>` while futures used `>=`, causing a one-position edge-case discrepancy at exactly `atr_pct = 0.90` and `0.75`. Both now use `>=`.
+- **`spot.py` docstring updated to match actual behavior** (`signals/spot.py`): docstring claimed "15 conditions (no funding/L/S/OI/basis)" but the pipeline fetches funding rate and L/S ratio, which engine.py uses at ½-weight (0.25 each) for spot. Docstring now accurately describes behavior; OI and basis remain excluded.
+
+---
+
 ## 2026-05-10 — Technical Indicator Review: 4 Correctness Fixes (ADX, Backtest HTF)
 
 ### Fixed
