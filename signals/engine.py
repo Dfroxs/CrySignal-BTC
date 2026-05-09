@@ -5,7 +5,8 @@ integrate_news_with_signal() for macro/sentiment overlay.
 import pandas as pd
 
 from config import RISK_CONFIG
-from signals.indicators import calculate_adx, classify_regime, detect_rsi_divergence
+from signals.indicators import (calculate_adx, classify_regime,
+                                detect_candlestick_pattern, detect_rsi_divergence)
 from signals.market_data import get_signal_confidence
 from signals.sentiment import check_upcoming_macro_events
 
@@ -485,6 +486,20 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     elif divergence == 'BEARISH':
         sell_conditions += 2.0
         signal['reasons'].append("✗ RSI BEARISH DIVERGENCE — price higher high, RSI lower high")
+
+    # 19 — Candlestick pattern recognition
+    cs = detect_candlestick_pattern(df)
+    signal['candlestick'] = cs
+    _cs_weights = {'ENGULFING': 1.0, 'MORNING_STAR': 1.0, 'EVENING_STAR': 1.0,
+                   'HAMMER': 0.75, 'SHOOTING_STAR': 0.75, 'HARAMI': 0.5}
+    if cs['bullish']:
+        w = _cs_weights.get(cs['bullish'], 0.5)
+        buy_conditions += w
+        signal['reasons'].append(f"✓ {cs['bullish'].replace('_', ' ')} pattern — bullish reversal")
+    if cs['bearish'] and mode == 'futures':
+        w = _cs_weights.get(cs['bearish'], 0.5)
+        sell_conditions += w
+        signal['reasons'].append(f"✗ {cs['bearish'].replace('_', ' ')} pattern — bearish reversal")
 
     # Determine final signal
     if buy_conditions >= threshold and buy_conditions > sell_conditions:

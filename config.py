@@ -107,13 +107,13 @@ SPOT_THRESHOLD_STATE_FILE  = os.path.join(DATA_DIR, "spot_threshold_state.json")
 
 # Futures signal thresholds
 SIGNAL_THRESHOLD = float(os.getenv("SIGNAL_THRESHOLD", 5.2))
-SIGNAL_MAX_SCORE = 21.25  # practical max after diminishing-returns penalty; theoretical ceiling ~22
+SIGNAL_MAX_SCORE = 22.25  # +1.0 from candlestick (ENGULFING/EVENING_STAR)
 THRESHOLD_MIN    = 4.0
 THRESHOLD_MAX    = 8.0
 
 # Spot signal thresholds (4H, 15 conditions — no funding/L/S/OI/basis)
 SPOT_THRESHOLD    = float(os.getenv("SPOT_THRESHOLD", 4.3))
-SPOT_MAX_SCORE    = 17.75  # S&P500 weight halved (1.0→0.5) for spot; divergence immune after fix
+SPOT_MAX_SCORE    = 18.75  # +1.0 from candlestick (ENGULFING/MORNING_STAR)
 SPOT_THRESHOLD_MIN = 3.0
 SPOT_THRESHOLD_MAX = 7.0
 

@@ -182,6 +182,73 @@ def detect_support_resistance(df, lookback=50, tolerance=0.005):
     return result
 
 
+def detect_candlestick_pattern(df):
+    """Detect bullish/bearish candlestick reversal patterns.
+
+    Returns dict with 'bullish' and 'bearish' keys (string pattern name or None).
+    Only the highest-weight pattern per direction is returned — no stacking.
+    Priority: ENGULFING > MORNING/EVENING_STAR > HAMMER/SHOOTING_STAR > HARAMI.
+    """
+    if len(df) < 3:
+        return {'bullish': None, 'bearish': None}
+
+    c0 = df.iloc[-1]
+    c1 = df.iloc[-2]
+    c2 = df.iloc[-3]
+
+    def _body(c):  return abs(c['close'] - c['open'])
+    def _range(c): return (c['high'] - c['low']) or 0.0001
+    def _upper(c): return c['high'] - max(c['open'], c['close'])
+    def _lower(c): return min(c['open'], c['close']) - c['low']
+    def _bull(c):  return c['close'] > c['open']
+    def _bear(c):  return c['close'] < c['open']
+
+    bullish = None
+    bearish = None
+
+    # ── Bullish patterns ──
+    if (_bear(c1) and _bull(c0) and
+            c0['open'] <= c1['close'] and c0['close'] >= c1['open'] and
+            _body(c0) > _body(c1)):
+        bullish = 'ENGULFING'
+    elif (_bear(c2) and _body(c2) >= 0.6 * _range(c2) and
+          _body(c1) <= 0.3 * _range(c1) and
+          _bull(c0) and _body(c0) >= 0.6 * _range(c0) and
+          c0['close'] > (c2['open'] + c2['close']) / 2):
+        bullish = 'MORNING_STAR'
+    elif (_lower(c0) >= 2 * _body(c0) and
+          _upper(c0) <= 0.1 * _range(c0) and
+          0 < _body(c0) < 0.3 * _range(c0)):
+        bullish = 'HAMMER'
+    elif (_bear(c1) and _body(c1) >= 0.6 * _range(c1) and
+          _bull(c0) and
+          c0['open'] >= c1['close'] and c0['close'] <= c1['open'] and
+          _body(c0) < 0.5 * _body(c1)):
+        bullish = 'HARAMI'
+
+    # ── Bearish patterns ──
+    if (_bull(c1) and _bear(c0) and
+            c0['open'] >= c1['close'] and c0['close'] <= c1['open'] and
+            _body(c0) > _body(c1)):
+        bearish = 'ENGULFING'
+    elif (_bull(c2) and _body(c2) >= 0.6 * _range(c2) and
+          _body(c1) <= 0.3 * _range(c1) and
+          _bear(c0) and _body(c0) >= 0.6 * _range(c0) and
+          c0['close'] < (c2['open'] + c2['close']) / 2):
+        bearish = 'EVENING_STAR'
+    elif (_upper(c0) >= 2 * _body(c0) and
+          _lower(c0) <= 0.1 * _range(c0) and
+          0 < _body(c0) < 0.3 * _range(c0)):
+        bearish = 'SHOOTING_STAR'
+    elif (_bull(c1) and _body(c1) >= 0.6 * _range(c1) and
+          _bear(c0) and
+          c0['open'] <= c1['close'] and c0['close'] >= c1['open'] and
+          _body(c0) < 0.5 * _body(c1)):
+        bearish = 'HARAMI'
+
+    return {'bullish': bullish, 'bearish': bearish}
+
+
 def compute_atr_percentile(df, lookback=100):
     """ATR percentile over lookback. 1.0 = extreme high vol, 0.0 = extreme low."""
     if 'ATR_14' not in df.columns or len(df) < lookback:

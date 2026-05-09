@@ -4,6 +4,17 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-10 — feat: Condition #19 — Candlestick Pattern Recognition
+
+### Added
+
+- **Candlestick pattern recognition — Condition #19** (`signals/indicators.py`, `signals/engine.py`): New `detect_candlestick_pattern(df)` detects 4 bullish and 4 bearish reversal patterns from the last 3 OHLCV candles. Only the highest-weight pattern per direction is counted (no stacking). Bearish patterns are only scored in futures mode (spot is BUY-only).
+  - Bullish: ENGULFING (+1.0), MORNING_STAR (+1.0), HAMMER (+0.75), HARAMI (+0.5)
+  - Bearish: ENGULFING (+1.0), EVENING_STAR (+1.0), SHOOTING_STAR (+0.75), HARAMI (+0.5)
+- **Max scores updated** (`config.py`): `SPOT_MAX_SCORE` 17.75 → 18.75, `SIGNAL_MAX_SCORE` 21.25 → 22.25
+
+---
+
 ## 2026-05-10 — Low Priority Fixes: Backtest Parity, Adaptive Threshold, Wyckoff, S/R Recency
 
 ### Changed
