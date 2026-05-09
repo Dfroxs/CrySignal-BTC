@@ -17,7 +17,7 @@ from signals.terminal import display_combined
 from news_scraper import scrape_and_export
 from notifier import _format_close_notification, _format_open_notification, _send_telegram_message, send_signal_alert
 from trading.paper import check_and_close_positions, print_open_status, print_paper_summary
-from config import RISK_CONFIG, FUTURES_CONFIG
+from config import RISK_CONFIG, FUTURES_CONFIG, RISK_LIMITS
 from signals.sizing import calculate_position_size, get_pyramid_size_factor
 from trading.history import close as close_db, close_paper_position, get_open_position_count_by_direction, get_open_positions, has_open_position_same_direction, open_paper_position
 
@@ -245,6 +245,34 @@ def run_cycle():
     logger.info("[PHASE 3] Updating paper positions ...")
     phase3_actions = []     # track what happened for summary
     pending_tg    = []      # defer Telegram notifications until after Phase 4
+
+    # ── Circuit breaker: check drawdown before any new entries ──
+    import trading.history as _h
+    spot_pnl, _, _ = _h.get_closed_pnl("spot")
+    fut_pnl, _, _ = _h.get_closed_pnl("futures")
+    total_dd = -(spot_pnl + fut_pnl)  # negative P&L = positive drawdown
+    max_dd = RISK_LIMITS.get("max_drawdown_pct", 15.0)
+    min_eq = RISK_LIMITS.get("min_equity_pct", 50.0)
+
+    if total_dd > max_dd:
+        msg = f"⛔ DRAWDOWN {total_dd:.1f}% > {max_dd}% — blocking new entries"
+        logger.warning(msg)
+        phase3_actions.append(msg)
+        pending_tg.append((f"⛔ <b>Circuit Breaker</b>\nDrawdown <b>{total_dd:.1f}%</b> > {max_dd}% limit\nAll new entries blocked.", "circuit-breaker"))
+        # Skip Phase 3 entirely — just run position checks (close existing)
+        if spot_signal:
+            spot_signal["type"] = "HOLD"
+        if futures_signal:
+            futures_signal["type"] = "HOLD"
+
+    if total_dd > (100 - min_eq):
+        msg = f"🚨 EQUITY {100-total_dd:.0f}% < {min_eq}% — EMERGENCY close all"
+        logger.critical(msg)
+        phase3_actions.append(msg)
+        all_open = _h.get_open_positions()
+        for p in all_open:
+            _h.close_paper_position(p["id"], "BREAKER_CLOSE", 0)
+
     try:
         # Spot positions — BUY-only (no short selling on spot)
         if spot_signal and spot_signal["type"] != "HOLD":

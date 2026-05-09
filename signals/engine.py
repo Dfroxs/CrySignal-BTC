@@ -401,6 +401,18 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         regime = {"regime": "UNKNOWN", "threshold_bump": 0, "size_adj": 1.0, "trend_dir": "NEUTRAL"}
         signal['regime'] = "UNKNOWN"
 
+    # ── Gold & VIX correlation ──
+    if market_structure:
+        gold = market_structure.get("gold", {})
+        vix = market_structure.get("vix", {})
+        if gold.get("change_pct", 0) > 0.5:
+            signal['reasons'].append(f"📊 Gold rising ({gold['change_pct']:+.1f}%) — safe-haven demand")
+            if current['close'] < df['close'].iloc[-5]:
+                sell_conditions += 0.25  # Gold up + BTC down = risk-off
+        if vix.get("change_pct", 0) > 3:
+            buy_conditions += 0.25
+            signal['reasons'].append(f"📊 VIX spiking ({vix['change_pct']:+.1f}%) — fear gauge, contrarian BTC bid")
+
     # ── Session-based threshold adjustment ──
     from datetime import UTC, datetime
     utc_hour = datetime.now(UTC).hour

@@ -355,6 +355,42 @@ def fetch_fear_and_greed():
 
 
 # ---------------------------------------------------------------------------
+# Gold & VIX — macro correlation
+# ---------------------------------------------------------------------------
+
+def fetch_gold_price():
+    """Fetch gold spot price via CoinGecko (PAXG/USD as proxy)."""
+    try:
+        resp = HTTP_SESSION.get(
+            "https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=usd&include_24hr_change=true",
+            timeout=10,
+        )
+        data = resp.json().get("pax-gold", {})
+        current = data.get("usd", 0)
+        change = data.get("usd_24h_change", 0)
+        return {"current": current, "change_pct": round(change, 2) if change else 0}
+    except Exception:
+        logger.debug("Gold fetch failed")
+        return {"current": 0, "change_pct": 0}
+
+
+def fetch_vix():
+    """Fetch VIX via free API as fear gauge."""
+    try:
+        resp = HTTP_SESSION.get(
+            "https://api.coingecko.com/api/v3/simple/price?ids=volatility-index-token&vs_currencies=usd&include_24hr_change=true",
+            timeout=10,
+        )
+        data = resp.json().get("volatility-index-token", {})
+        current = data.get("usd", 0)
+        change = data.get("usd_24h_change", 0)
+        return {"current": current, "change_pct": round(change, 2) if change else 0}
+    except Exception:
+        logger.debug("VIX fetch failed")
+        return {"current": 0, "change_pct": 0}
+
+
+# ---------------------------------------------------------------------------
 # Signal confidence
 # ---------------------------------------------------------------------------
 

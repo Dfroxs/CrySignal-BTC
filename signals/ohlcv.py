@@ -19,6 +19,26 @@ from signals.market_data import exchange
 logger = logging.getLogger(__name__)
 
 
+def _validate_ohlcv(df, timeframe):
+    """Validate fetched OHLCV data. Returns True if usable."""
+    if df is None or len(df) < 10:
+        logger.warning("OHLCV validation FAILED: empty or too few rows (%s)", len(df) if df is not None else 0)
+        return False
+    # Check staleness: last candle should be within 2× the interval
+    import time
+    tf_minutes = {"1h": 60, "4h": 240, "1d": 1440}.get(timeframe, 60)
+    last_ts = df.index[-1].timestamp() if hasattr(df.index[-1], 'timestamp') else 0
+    age_minutes = (time.time() - last_ts) / 60 if last_ts > 0 else 0
+    if age_minutes > tf_minutes * 2:
+        logger.warning("OHLCV validation: stale data (%.0fm old, interval=%dm)", age_minutes, tf_minutes)
+    # Check for NaN in critical columns
+    for col in ['close', 'high', 'low', 'volume']:
+        if df[col].isna().any():
+            logger.warning("OHLCV validation FAILED: NaN in %s", col)
+            return False
+    return True
+
+
 def fetch_ohlcv_df(symbol='BTC/USDT', timeframe='1h', limit=500, vwap_period=24):
     bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
     df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
