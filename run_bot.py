@@ -41,6 +41,24 @@ def _confidence_at_least(actual, minimum):
     return _CONFIDENCE_LEVEL.get(actual, -1) >= _CONFIDENCE_LEVEL.get(minimum, 0)
 
 
+def _get_last_close_time(mode):
+    """Return datetime of the most recent closed position for the given mode, or None."""
+    from trading.history import _conn
+    from datetime import datetime as _dt
+    c = _conn()
+    row = c.execute(
+        "SELECT MAX(closed_at) FROM paper_positions WHERE outcome IS NOT NULL AND mode = ?",
+        (mode,),
+    ).fetchone()
+    val = row[0]
+    if not val:
+        return None
+    try:
+        return _dt.fromisoformat(val)
+    except (ValueError, TypeError):
+        return None
+
+
 def _get_entry_prices_by_direction(direction, mode):
     """Return list of entry prices for open positions in the given direction, ordered by opened_at."""
     from trading.history import _conn
@@ -190,12 +208,40 @@ def run_cycle():
             existing_count = get_open_position_count_by_direction(spot_signal["type"], "spot")
 
             if existing_count == 0:
-                # First position — normal open
-                pid = open_paper_position(spot_signal, mode="spot", pyramid_entry=1, size_factor=1.0)
-                msg = f"SPOT {spot_signal['type']} opened (#{pid}) @ ${spot_signal['entry_price']:,.0f}"
-                logger.info(msg)
-                phase3_actions.append(f"🚀 {msg}")
-                pending_tg.append((_format_open_notification(spot_signal, pid, "spot"), "position-open"))
+                # First position — with quality gates (lighter than pyramid)
+                min_initial = pyramid_cfg.get("min_initial_confidence", "NORMAL")
+                actual_conf = spot_signal.get("confidence")
+                cooldown_mins = pyramid_cfg.get("reentry_cooldown_minutes", 120)
+                fakeout_warn = _detect_fakeout_rejection(
+                    spot_signal, wick_ratio=pyramid_cfg.get("fakeout_wick_ratio", 0.6),
+                )
+
+                # Gate 0a: re-entry cooldown
+                last_close = _get_last_close_time("spot")
+                if last_close is not None:
+                    since_close = (datetime.now(UTC) - last_close).total_seconds() / 60
+                    if since_close < cooldown_mins:
+                        msg = f"Spot re-entry cooldown: {since_close:.0f}m since last close (< {cooldown_mins}m) — skipping"
+                        logger.info(msg)
+                        phase3_actions.append(f"⏭ SPOT  {msg}")
+
+                # Gate 0b: initial confidence floor
+                elif not _confidence_at_least(actual_conf, min_initial):
+                    msg = f"Spot {spot_signal['type']} requires ≥{min_initial} confidence for first entry (got {actual_conf}) — skipping"
+                    logger.info(msg)
+                    phase3_actions.append(f"⏭ SPOT  {msg}")
+
+                # Gate 0c: fakeout check (dangerous for any entry)
+                elif fakeout_warn:
+                    logger.info("Spot %s — %s — skipping", spot_signal['type'], fakeout_warn)
+                    phase3_actions.append(f"⏭ SPOT  {fakeout_warn}")
+
+                else:
+                    pid = open_paper_position(spot_signal, mode="spot", pyramid_entry=1, size_factor=1.0)
+                    msg = f"SPOT {spot_signal['type']} opened (#{pid}) @ ${spot_signal['entry_price']:,.0f}"
+                    logger.info(msg)
+                    phase3_actions.append(f"🚀 {msg}")
+                    pending_tg.append((_format_open_notification(spot_signal, pid, "spot"), "position-open"))
 
             elif pyramid_cfg.get("enabled", False):
                 max_entries = pyramid_cfg.get("max_entries", 3)
