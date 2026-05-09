@@ -4,6 +4,18 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-10 — Critical Quality Fixes: Trail Noise, HTF False Positives, Confidence Staleness, Regime Filter
+
+### Fixed
+
+- **Trailing stop no longer ratchets on micro-moves** (`trading/paper.py`, `config.py`): Trail only advances when the new level is at least `ATR × trail_factor × 0.5` above the current trail. Previously, any single-candle close slightly above trail would update it, causing gradual ratcheting in sideways markets and premature stop-outs on normal pullbacks. Added `trailing_advance_min_ratio: 0.5` to `RISK_CONFIG`.
+- **Trailing stop tightens 20% after TP1 hit** (`trading/paper.py`, `config.py`): After the first 50% partial close, the remaining position uses `trail_factor × 0.8` instead of the full factor. At half position size the risk profile is lower, so a tighter trail protects the accumulated gain more aggressively. Added `trailing_post_tp1_factor: 0.8` to `RISK_CONFIG`.
+- **HTF aligned flag no longer false-positive on momentum exhaustion** (`signals/htf.py`): `aligned=True` now requires that the two HTF timeframes are NOT both in an extreme counter-trend RSI zone. Example: 4H BULLISH + 1D BULLISH both overbought → `aligned=False` (impending reversal, not a safe buy setup). Both `get_htf_trend()` (futures) and `get_spot_htf_trend()` (spot) updated via shared `_htf_aligned()` helper.
+- **Confidence recalculated after news integration** (`signals/engine.py`): `integrate_news_with_signal()` now calls `get_signal_confidence()` at the end to reflect post-news strength. Previously a signal that dropped from strength 6.5 → 4.2 after news was still labeled "STRONG", allowing pyramid entries to open on stale confidence.
+- **Regime filter only blocks TRENDING + BEARISH entries** (`run_bot.py`): `_is_bearish_regime()` now requires `regime == "TRENDING"` in addition to `trend_dir == "BEARISH"`. In ranging/transition markets (ADX < 20-25), DI- > DI+ is normal oscillation — blocking spot BUY in these conditions was incorrectly rejecting valid pullback entries.
+
+---
+
 ## 2026-05-10 — Strategy Tuning: 10 Parameter Fixes (Vol Exit, Trail, OBV, S&P, VWAP, Funding, Time Exit, EMA Slope, BB Squeeze, Pyramid SL)
 
 ### Changed

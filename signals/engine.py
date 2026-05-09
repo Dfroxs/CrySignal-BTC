@@ -594,4 +594,8 @@ def integrate_news_with_signal(signal, news_data):
             f"⚠️  Post-news strength ({enhanced['strength']:.2f}) below threshold ({thr:.2f}) — downgraded to HOLD"
         )
 
+    # Always recalculate confidence after news adjustments — strength may have changed
+    if enhanced['type'] != 'HOLD':
+        enhanced['confidence'] = get_signal_confidence(enhanced['strength'], thr)
+
     return enhanced

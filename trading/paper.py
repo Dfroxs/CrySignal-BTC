@@ -204,8 +204,13 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
         if pos["type"] == "BUY":
             # 1 — advance trailing stop
             if atr:
-                new_trail = current_price - atr * _trail_factor(pos.get("mode", "futures"))
-                if new_trail > trail:
+                mode_key = pos.get("mode", "futures")
+                trail_mult = _trail_factor(mode_key)
+                if partial:  # tighten 20% after TP1 — remaining half needs less room
+                    trail_mult *= RISK_CONFIG.get("trailing_post_tp1_factor", 0.8)
+                new_trail = current_price - atr * trail_mult
+                min_adv = atr * trail_mult * RISK_CONFIG.get("trailing_advance_min_ratio", 0.5)
+                if new_trail > trail + min_adv:
                     trail = new_trail
                     sh.update_trailing_stop(pos_id, trail)
 
@@ -260,8 +265,13 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
         elif pos["type"] == "SELL":
             # 1 — advance trailing stop (moves down for shorts)
             if atr:
-                new_trail = current_price + atr * _trail_factor(pos.get("mode", "futures"))
-                if new_trail < trail:
+                mode_key = pos.get("mode", "futures")
+                trail_mult = _trail_factor(mode_key)
+                if partial:
+                    trail_mult *= RISK_CONFIG.get("trailing_post_tp1_factor", 0.8)
+                new_trail = current_price + atr * trail_mult
+                min_adv = atr * trail_mult * RISK_CONFIG.get("trailing_advance_min_ratio", 0.5)
+                if new_trail < trail - min_adv:
                     trail = new_trail
                     sh.update_trailing_stop(pos_id, trail)
 

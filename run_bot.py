@@ -86,9 +86,12 @@ def _check_reentry_quality(signal, mode):
 
 
 def _is_bearish_regime(signal):
-    """Block spot BUY if regime is bearish (DI- > DI+)."""
+    """Block spot BUY only if market is in a confirmed TRENDING bearish regime.
+    Ranging/transition markets with temporary DI- dominance are not blocked —
+    DI- > DI+ at low ADX is normal oscillation, not a trend."""
     regime = signal.get("_regime", {})
-    return regime.get("trend_dir") == "BEARISH"
+    return (regime.get("regime") == "TRENDING" and
+            regime.get("trend_dir") == "BEARISH")
 
 
 def _trend_confluence_ok(signal):

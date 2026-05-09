@@ -36,7 +36,9 @@ RISK_CONFIG = {
     "max_position_size":     0.10,
     "atr_multiplier":        1.5,
     "take_profit_rr":        2.5,
-    "trailing_atr_factor":   1.0,   # trail distance = ATR × this (tighter than entry SL)
+    "trailing_atr_factor":      1.0,  # trail distance = ATR × this (tighter than entry SL)
+    "trailing_advance_min_ratio": 0.5, # only advance trail if new trail > old + ATR×factor×this
+    "trailing_post_tp1_factor":   0.8, # tighten trail 20% after TP1 hit (remaining 50%)
     "max_position_hours":      72,   # force-close futures position if open longer than this
     "max_position_hours_spot": 48,   # spot 4H: move materializes in 12-15 candles, free capital sooner
     "vol_expansion_exit_mult": 1.5,  # close if current ATR > entry ATR × this
