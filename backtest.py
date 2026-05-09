@@ -148,6 +148,27 @@ def _passes_entry_gates(signal, mode, window):
         if signal["type"] == "BUY" and upper_wick > 0.6:
             return False  # fake bullish breakout
 
+    # Spot-only quality gates
+    if mode == "spot" and signal["type"] == "BUY":
+        regime = signal.get("_regime", {})
+        # Gate: regime filter — no BUY in bearish trend
+        if regime.get("trend_dir") == "BEARISH":
+            return False
+        # Gate: trend confluence — need 2/3 bullish confirmations
+        ema200 = last.get("EMA_200", last.get("ema200", 0))
+        vwap = last.get("VWAP_24", last.get("vwap", 0))
+        confluence = 0
+        if last["close"] > ema200: confluence += 1
+        if regime.get("trend_dir") == "BULLISH": confluence += 1
+        if last["close"] > vwap: confluence += 1
+        if confluence < 2:
+            return False
+        # Gate: breakout chase — block if price > VWAP+ATR and not near support
+        atr = last.get("ATR_14", 0)
+        sr_entry = signal.get("entry_price", 0)
+        if atr and vwap and sr_entry > vwap + atr:
+            return False  # FOMO entry
+
     return True
 
 
