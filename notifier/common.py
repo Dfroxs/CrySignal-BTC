@@ -36,7 +36,14 @@ def _max_score(signal):
 
 
 def _mode_label(signal):
-    return "SPOT 4H" if signal.get("mode") == "spot" else "FUTURES 1H"
+    if signal.get("mode") == "spot":
+        return "SPOT 4H"
+    stype = signal.get("type", "HOLD")
+    if stype == "BUY":
+        return "FUTURES LONG 1H"
+    if stype == "SELL":
+        return "FUTURES SHORT 1H"
+    return "FUTURES 1H"
 
 
 def _macro_banner(signal):

@@ -4,6 +4,16 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-11 — feat: remove conflict detection — spot/futures/long/short pipelines fully independent
+
+### Changed
+
+- **Conflict detection removed** (`run_bot.py`): Deleted the cross-pipeline suppression block that forced both signals to HOLD when SPOT 4H and FUTURES 1H disagreed in direction. SPOT 4H and FUTURES 1H are different timeframes by design — a 1H bearish signal during a 4H bullish trend is a normal pullback, not a contradiction. Each pipeline now fires independently.
+- **Pipeline labels direction-aware** (`notifier/common.py`, `signals/terminal.py`): Futures signals now show as "FUTURES LONG 1H" or "FUTURES SHORT 1H" (instead of generic "FUTURES 1H") making the three independent pipelines explicit: SPOT 4H · FUTURES LONG 1H · FUTURES SHORT 1H.
+- **`_conflict` display code removed** (`signals/terminal.py`, `notifier/telegram.py`): All `_conflict` key checks and CONFLICT display branches cleaned up from `_signal_box()`, `_combined_box()`, `display_combined()`, `_format_compact_signal_telegram()`, and `_format_consolidated_telegram()`.
+
+---
+
 ## 2026-05-11 — fix: terminal/Telegram display — conflict label, wrong app name, hardcoded count
 
 ### Fixed

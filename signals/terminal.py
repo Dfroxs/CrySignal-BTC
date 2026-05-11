@@ -83,9 +83,7 @@ def _signal_box(signal, effective_threshold, max_score=None):
         l1   = f"  {icon} {_C[c1]}{_C['bld']}HOLD{_C['rst']}"
         l1  += f"  ·  Score {_C['bld']}{signal['strength']:.2f}/{max_score}{_C['rst']}"
         l1  += f"  ·  B:{_C['grn']}{buy_s:.2f}{_C['rst']} S:{_C['red']}{sell_s:.2f}{_C['rst']}"
-        if signal.get("_conflict"):
-            l1 += f"  ·  {_C['yel']}⚠ CONFLICT → HOLD{_C['rst']}"
-        elif signal.get("mode") == "spot" and dir_str == "BEARISH":
+        if signal.get("mode") == "spot" and dir_str == "BEARISH":
             l1 += f"  ·  {_C['red']}BEARISH · BUY-only → HOLD{_C['rst']}"
         elif gap < 0:
             l1 += f"  ·  {_C['yel']}news downgrade → HOLD{_C['rst']}"
@@ -592,7 +590,14 @@ def _combined_box(spot_signal, futures_signal):
         score  = sig.get("strength", 0)
         max_s  = SPOT_MAX_SCORE if mode == "spot" else SIGNAL_MAX_SCORE
         thr    = sig.get("_threshold", 0)
-        label  = "SPOT 4H" if mode == "spot" else "FUT 1H"
+        if mode == "spot":
+            label = "SPOT 4H"
+        elif stype == "BUY":
+            label = "FUT LONG 1H"
+        elif stype == "SELL":
+            label = "FUT SHORT 1H"
+        else:
+            label = "FUT 1H"
 
         if stype == "HOLD":
             if buy_s > sell_s:
@@ -604,18 +609,7 @@ def _combined_box(spot_signal, futures_signal):
                 d, lead = "NEUTRAL", max(buy_s, sell_s)
             gap = thr - lead
 
-            if sig.get("_conflict"):
-                lines.append(
-                    f"  ❄️ {_C['yel']}{_C['bld']}{label}  HOLD{_C['rst']}  "
-                    f"{score:.2f}/{max_s:.2f}  "
-                    f"{_C['yel']}⚠ CONFLICT{_C['rst']}"
-                )
-                lines.append(
-                    f"       B:{_C['grn']}{buy_s:.2f}{_C['rst']}  "
-                    f"S:{_C['red']}{sell_s:.2f}{_C['rst']}  "
-                    f"opposing signals cancel"
-                )
-            elif mode == "spot" and d == "BEARISH":
+            if mode == "spot" and d == "BEARISH":
                 lines.append(
                     f"  ❄️ {_C['yel']}{_C['bld']}{label}  HOLD{_C['rst']}  "
                     f"{score:.2f}/{max_s:.2f}  "
@@ -738,9 +732,9 @@ def display_combined(spot_signal, futures_signal):
             _kv("Stable", f"{_C['bld']}${stable['total_b']:.0f}B{_C['rst']}  {st_dir}")
 
     # ── PER-MODE SECTIONS ──
-    for sig, mode, label in [
-        (spot_signal, "spot", "SPOT 4H"),
-        (futures_signal, "futures", "FUTURES 1H"),
+    for sig, mode in [
+        (spot_signal, "spot"),
+        (futures_signal, "futures"),
     ]:
         if not sig:
             continue
@@ -749,6 +743,15 @@ def display_combined(spot_signal, futures_signal):
         last    = sig.get("_last", {})
         if not last:
             continue
+
+        if mode == "spot":
+            label = "SPOT 4H"
+        elif stype == "BUY":
+            label = "FUTURES LONG 1H"
+        elif stype == "SELL":
+            label = "FUTURES SHORT 1H"
+        else:
+            label = "FUTURES 1H"
 
         is_active = stype != "HOLD" and sig.get("stop_loss")
         entry_px  = sig.get("entry_price", last.get("close", 0))
@@ -764,11 +767,7 @@ def display_combined(spot_signal, futures_signal):
         thr    = sig.get("_threshold", 0)
         if stype == "HOLD":
             gap = thr - max(buy_s, sell_s)
-            if sig.get("_conflict"):
-                print(f"  ❄️ {_C['yel']}{_C['bld']}HOLD{_C['rst']}  "
-                      f"Score {sig['strength']:.2f}/{max_s:.2f}  "
-                      f"{_C['yel']}⚠ CONFLICT{_C['rst']}")
-            elif gap < 0:
+            if gap < 0:
                 print(f"  ❄️ {_C['yel']}{_C['bld']}HOLD{_C['rst']}  "
                       f"Score {sig['strength']:.2f}/{max_s:.2f}  "
                       f"{_C['yel']}news downgrade → HOLD{_C['rst']}")
