@@ -698,7 +698,14 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
             continue
         mode      = sig.get("mode", "futures")
         stype     = sig["type"]
-        label     = "SPOT" if mode == "spot" else "FUTURES"
+        if mode == "spot":
+            label = "SPOT"
+        elif stype == "BUY":
+            label = "FUTURES LONG"
+        elif stype == "SELL":
+            label = "FUTURES SHORT"
+        else:
+            label = "FUTURES"
         buy_s     = sig.get("buy_score", 0)
         sell_s    = sig.get("sell_score", 0)
         score     = sig.get("strength", 0)

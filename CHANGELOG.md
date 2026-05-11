@@ -4,6 +4,18 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-12 — test: pipeline dummy-data test suite (25 cases, all pass)
+
+### Added
+
+- **`test_pipelines.py`**: 25 dummy-data tests covering all pipeline combinations without network or DB. Tests `_mode_label()`, compact formatter, consolidated formatter, terminal `display_combined()`, absence of `_conflict` in codebase, and edge cases (SHORT SL direction, HOLD gap display, None signal handling).
+
+### Fixed
+
+- **VERDICT section label in consolidated Telegram** (`notifier/telegram.py`): The VERDICT section used `"FUTURES"` regardless of direction. Updated to `"FUTURES LONG"` / `"FUTURES SHORT"` / `"FUTURES"` for consistency with the rest of the message.
+
+---
+
 ## 2026-05-11 — feat: remove conflict detection — spot/futures/long/short pipelines fully independent
 
 ### Changed
