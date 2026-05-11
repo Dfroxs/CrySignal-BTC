@@ -4,6 +4,15 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-12 — fix: 2 paper-trading position bugs (gap-through P&L, return type)
+
+### Fixed
+
+- **Gap-through TP1+TP2 same-cycle P&L understatement** (`trading/paper.py`): When price gaps through both TP1 and TP2 in a single bot cycle, `pos.get("partial_pnl")` was returning the stale value from the loop-start snapshot (0 for fresh positions) because the `pos` dict was never updated after `sh.partial_close_position()`. Combined P&L was calculated as `0 × 0.5 + remaining_pnl × 0.5` instead of the correct blend. Fixed by adding `pos['partial_pnl'] = pnl` immediately after `sh.partial_close_position()` in both BUY (line 223) and SELL (line 290) TP1 blocks.
+- **`check_and_close_positions()` returns `None` instead of `[]`** (`trading/paper.py:117`): When no open positions exist, the function returned `None` implicitly. Callers used `or []` defensively so no crash occurred, but the implicit `None` was a latent bug. Fixed to `return []`.
+
+---
+
 ## 2026-05-12 — fix: misleading "pyramid eligible" label in VERDICT display
 
 ### Fixed
