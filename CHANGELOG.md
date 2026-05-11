@@ -4,6 +4,15 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-12 — fix: TP2 < TP1 bug + "CrySignal" header in run_bot.py
+
+### Fixed
+
+- **TP2 below TP1 for BUY (and above TP1 for SELL)** (`signals/engine.py`): The resistance/support cap on TP2 did not check whether the capped value would still be beyond TP1. When resistance fell between entry and TP1 (e.g., resistance=$82,479, TP1=$84,220), TP2 was capped at resistance×0.995=$82,067 — less than TP1. Fixed: cap is only applied if the capped value still exceeds TP1 (BUY) or is still below TP1 (SELL). 4 new TP2 unit tests added.
+- **"CrySignal" header** (`run_bot.py`): The `run_cycle()` status header displayed "CrySignal · BTC/USDT" at the start of each cycle. Fixed to "SpotSignal · BTC/USDT".
+
+---
+
 ## 2026-05-12 — test: pipeline dummy-data test suite (25 cases, all pass)
 
 ### Added

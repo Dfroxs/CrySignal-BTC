@@ -271,7 +271,7 @@ def _calc_aggregate_risk(mode, new_entry_price, new_sl, new_size_factor, pyramid
 
 def run_cycle():
     ts = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
-    _section(f"CrySignal · BTC/USDT · {ts}")
+    _section(f"SpotSignal · BTC/USDT · {ts}")
 
     # Phase 1 — scrape news
     _loading("Phase 1  Fetching news & macro data...")

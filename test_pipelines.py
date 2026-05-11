@@ -406,6 +406,84 @@ def test_consolidated_open_positions_section_no_crash():
     assert "OPEN POSITIONS" in out
 
 
+# ── 7. engine.py TP2 calculation ──────────────────────────────────────────────
+
+def _make_engine_signal(stype, entry, atr, resistance=None, support=None):
+    """Build a minimal signal dict matching engine.py output structure."""
+    from config import RISK_CONFIG
+    sl_dist = atr * RISK_CONFIG["atr_multiplier"]
+    tp_dist = sl_dist * RISK_CONFIG["take_profit_rr"]
+    sl  = entry - sl_dist if stype == "BUY" else entry + sl_dist
+    tp1 = entry + tp_dist if stype == "BUY" else entry - tp_dist
+    sr  = {}
+    if resistance: sr["resistance"] = resistance
+    if support:    sr["support"]    = support
+    return {"type": stype, "entry_price": entry, "stop_loss": sl,
+            "take_profit": tp1, "support_resistance": sr}
+
+def _apply_tp2(sig):
+    """Run only the TP2 block from engine.py on an already-built signal."""
+    tp1_dist = abs(sig["take_profit"] - sig["entry_price"])
+    sr = sig.get("support_resistance") or {}
+    if sig["type"] == "BUY":
+        tp2_raw = sig["entry_price"] + tp1_dist * 2
+        resistance = sr.get("resistance")
+        if resistance and sig["entry_price"] < resistance < tp2_raw:
+            capped = resistance * 0.995
+            if capped > sig["take_profit"]:
+                tp2_raw = capped
+        sig["tp2"] = round(tp2_raw, 2)
+    else:
+        tp2_raw = sig["entry_price"] - tp1_dist * 2
+        support = sr.get("support")
+        if support and sig["entry_price"] > support > tp2_raw:
+            capped = support * 1.005
+            if capped < sig["take_profit"]:
+                tp2_raw = capped
+        sig["tp2"] = round(tp2_raw, 2)
+    return sig
+
+def test_tp2_always_beyond_tp1_buy():
+    """TP2 must always be further from entry than TP1 for BUY — even when resistance < TP1."""
+    # Reproduce the live bug: resistance between entry and TP1
+    entry = 81_410; atr = 749
+    resistance = 82_479   # between entry and TP1 ($84,220)
+    sig = _make_engine_signal("BUY", entry, atr, resistance=resistance)
+    sig = _apply_tp2(sig)
+    tp1 = sig["take_profit"]
+    tp2 = sig["tp2"]
+    assert tp2 > tp1, f"BUY TP2 ({tp2:.0f}) must be > TP1 ({tp1:.0f}), got {tp2:.0f} < {tp1:.0f}"
+
+def test_tp2_always_beyond_tp1_sell():
+    """TP2 must always be further from entry than TP1 for SELL — even when support > TP1."""
+    entry = 81_410; atr = 749
+    support = 80_500   # between entry and TP1 (~$79,190)
+    sig = _make_engine_signal("SELL", entry, atr, support=support)
+    sig = _apply_tp2(sig)
+    tp1 = sig["take_profit"]
+    tp2 = sig["tp2"]
+    assert tp2 < tp1, f"SELL TP2 ({tp2:.0f}) must be < TP1 ({tp1:.0f}), got {tp2:.0f} > {tp1:.0f}"
+
+def test_tp2_capped_when_resistance_beyond_tp1():
+    """TP2 should be capped at resistance when resistance is beyond TP1 (valid cap)."""
+    entry = 81_410; atr = 749
+    tp1 = entry + atr * 1.5 * 2.5   # ~$84,220
+    resistance = 86_000              # beyond TP1, before TP2 raw
+    sig = _make_engine_signal("BUY", entry, atr, resistance=resistance)
+    sig = _apply_tp2(sig)
+    assert sig["tp2"] == round(resistance * 0.995, 2), "TP2 should be capped at resistance when valid"
+
+def test_tp2_no_cap_when_resistance_below_entry():
+    """Resistance below entry should not affect TP2 for BUY."""
+    entry = 81_410; atr = 749
+    resistance = 80_000  # below entry — irrelevant for BUY TP2
+    sig = _make_engine_signal("BUY", entry, atr, resistance=resistance)
+    sig = _apply_tp2(sig)
+    tp1_dist = abs(sig["take_profit"] - entry)
+    expected = round(entry + tp1_dist * 2, 2)
+    assert sig["tp2"] == expected, f"TP2 should be uncapped: expected {expected}, got {sig['tp2']}"
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -447,6 +525,12 @@ if __name__ == "__main__":
     run("spot SELL handled gracefully",           test_spot_buy_no_short)
     run("performance section — empty DB",         test_consolidated_performance_section_no_crash)
     run("open positions section — no crash",      test_consolidated_open_positions_section_no_crash)
+
+    print("\n── 7. engine.py TP2 calculation ──")
+    run("BUY TP2 > TP1 even when resistance < TP1",    test_tp2_always_beyond_tp1_buy)
+    run("SELL TP2 < TP1 even when support > TP1",      test_tp2_always_beyond_tp1_sell)
+    run("TP2 capped at resistance when valid (>TP1)",  test_tp2_capped_when_resistance_beyond_tp1)
+    run("resistance below entry does not affect TP2",  test_tp2_no_cap_when_resistance_below_entry)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

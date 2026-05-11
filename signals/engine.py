@@ -560,13 +560,17 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             tp2_raw = signal['entry_price'] + tp1_dist * 2
             resistance = sr_levels.get('resistance')
             if resistance and signal['entry_price'] < resistance < tp2_raw:
-                tp2_raw = resistance * 0.995  # 0.5% buffer below resistance
+                capped = resistance * 0.995
+                if capped > signal['take_profit']:  # only cap if capped value still exceeds TP1
+                    tp2_raw = capped
             signal['tp2'] = round(tp2_raw, 2)
         else:
             tp2_raw = signal['entry_price'] - tp1_dist * 2
             support = sr_levels.get('support')
             if support and signal['entry_price'] > support > tp2_raw:
-                tp2_raw = support * 1.005  # 0.5% buffer above support
+                capped = support * 1.005
+                if capped < signal['take_profit']:  # only cap if capped value still exceeds TP1
+                    tp2_raw = capped
             signal['tp2'] = round(tp2_raw, 2)
 
     if signal['type'] != 'HOLD':
