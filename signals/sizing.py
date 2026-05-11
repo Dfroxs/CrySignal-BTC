@@ -85,7 +85,7 @@ def calculate_futures_position(signal):
     risk_amount = balance * effective_risk
     max_margin = balance * max_margin_pct
     needed_position = risk_amount / sl_distance_pct
-    optimal_leverage = int(needed_position / max_margin)
+    optimal_leverage = int(needed_position / max_margin) if max_margin > 0 else effective_max
     leverage = max(1, min(optimal_leverage, effective_max))
 
     # ── Tier label ──
@@ -104,9 +104,9 @@ def calculate_futures_position(signal):
     # Maintenance margin rate (Binance: 0.5% at 10x, 1.0% at 20x+)
     mm_rate = LEVERAGE_CONFIG.get("maintenance_margin_rate", 0.005)
     if direction == "LONG":
-        liquidation_price = entry * (1 - (1 - mm_rate) / leverage)
+        liquidation_price = entry * (1 - 1 / leverage) / (1 - mm_rate) if leverage > 1 else 0
     else:
-        liquidation_price = entry * (1 + (1 - mm_rate) / leverage)
+        liquidation_price = entry * (1 + 1 / leverage) / (1 + mm_rate) if leverage > 1 else float('inf')
 
     if direction == "LONG":
         pnl_at_tp = (tp - entry) / entry * position_value

@@ -1,5 +1,6 @@
 """Spot (4H) analysis pipeline — 15 conditions, BUY-only, HTF=1D+1W."""
 
+import copy
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
@@ -38,9 +39,7 @@ def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
 
     if _spot_cache["timestamp"] == candle_ts and _spot_cache["signal"] is not None:
         logger.info("[SPOT] Cache hit — reusing 4H candle %d result", candle_ts)
-        sig = dict(_spot_cache["signal"])   # copy top-level keys (type/SL/TP mutations in run_bot won't corrupt cache)
-        sig["reasons"] = list(sig["reasons"])  # copy reasons list so appends don't accumulate across cycles
-        return sig
+        return copy.deepcopy(_spot_cache["signal"])
 
     logger.info("[SPOT] Analyzing %s (4H)...", symbol)
     try:

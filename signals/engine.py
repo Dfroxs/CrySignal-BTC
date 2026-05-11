@@ -60,9 +60,9 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         sell_conditions += 1.5
         _rsi_ob = True
         signal['reasons'].append("✗ RSI OVERBOUGHT (>70) — strong sell signal")
-    elif rsi > 55:
-        sell_conditions += 0.5
-        signal['reasons'].append("✗ RSI elevated (>55)")
+    elif 50 < rsi < 70:
+        sell_conditions += 1.0
+        signal['reasons'].append("✗ RSI in sell zone (50–70)")
 
     # 3 — MACD crossover / position
     if current['MACD'] > current['MACD_Signal'] and previous['MACD'] <= previous['MACD_Signal']:

@@ -87,7 +87,7 @@ def get_htf_trend():
             ind = _htf_indicators(df)
             htf[key] = ind['trend']
             htf[f'{key}_indicators'] = ind
-        trend_match = htf['4h'] == htf['1d']
+        trend_match = htf['4h'] != 'NEUTRAL' and htf['4h'] == htf['1d']
         htf['aligned'] = trend_match and _htf_aligned(
             htf['4h_indicators'], htf['1d_indicators'], htf['1d']
         )
@@ -109,7 +109,7 @@ def get_spot_htf_trend():
             ind = _htf_indicators(df)
             htf[key] = ind['trend']
             htf[f'{key}_indicators'] = ind
-        trend_match = htf['1d'] == htf['1w']
+        trend_match = htf['1d'] != 'NEUTRAL' and htf['1d'] == htf['1w']
         htf['aligned'] = trend_match and _htf_aligned(
             htf['1d_indicators'], htf['1w_indicators'], htf['1w']
         )

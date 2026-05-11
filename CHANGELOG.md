@@ -4,6 +4,18 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-12 — fix: 5 strategy bugs (HTF alignment, RSI bias, cache, liquidation, sizing)
+
+### Fixed
+
+- **HTF NEUTRAL-NEUTRAL falsely aligned** (`signals/htf.py`): When both timeframes returned NEUTRAL, `trend_match = True` because NEUTRAL == NEUTRAL, incorrectly awarding +2.0 HTF alignment score in flat markets. Fixed: alignment requires at least one non-NEUTRAL trend (`htf['4h'] != 'NEUTRAL'`). Same fix applied to spot HTF (`1d != NEUTRAL` before comparing `1d == 1w`).
+- **RSI asymmetric scoring** (`signals/engine.py`): BUY zone (RSI 30–50) scored +1.0 while SELL elevated (RSI 55–70) only scored +0.5 — a systematic long bias. Fixed: sell zone broadened to 50–70 and raised to +1.0, matching buy zone weight symmetrically.
+- **Spot cache shallow copy** (`signals/spot.py`): Cache hit returned `dict(signal)` which only copied top-level keys; nested dicts (`_market`, `_htf`, `_news_data`) were shared references. Mutation by caller between cache hits could corrupt the cached value. Fixed: `copy.deepcopy()` ensures full isolation.
+- **Liquidation price formula** (`signals/sizing.py`): Previous formula `entry * (1 - (1 - mm_rate) / leverage)` gave near-zero values at leverage=1. Fixed: Binance isolated-margin formula `entry * (1 - 1/leverage) / (1 - mm_rate)` with explicit 0/inf guard when leverage=1.
+- **Division by zero in leverage calculation** (`signals/sizing.py`): `int(needed_position / max_margin)` could divide by zero if `balance = 0`. Fixed: falls back to `effective_max` when `max_margin <= 0`.
+
+---
+
 ## 2026-05-12 — fix: TP2 < TP1 bug + "CrySignal" header in run_bot.py
 
 ### Fixed
