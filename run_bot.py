@@ -116,11 +116,11 @@ def _check_reentry_quality(signal, mode):
 
 
 def _is_bearish_regime(signal):
-    """Block spot BUY only if market is in a confirmed TRENDING bearish regime.
+    """Block spot BUY in TRENDING or VOLATILE bearish regimes.
     Ranging/transition markets with temporary DI- dominance are not blocked —
     DI- > DI+ at low ADX is normal oscillation, not a trend."""
     regime = signal.get("_regime", {})
-    return (regime.get("regime") == "TRENDING" and
+    return (regime.get("regime") in ("TRENDING", "VOLATILE") and
             regime.get("trend_dir") == "BEARISH")
 
 
@@ -271,7 +271,7 @@ def _calc_aggregate_risk(mode, new_entry_price, new_sl, new_size_factor, pyramid
 
 def run_cycle():
     ts = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
-    _section(f"CrySignal · BTC/USDT · {ts}")
+    _section(f"SpotSignal · BTC/USDT · {ts}")
 
     # Phase 1 — scrape news
     _loading("Phase 1  Fetching news & macro data...")
@@ -307,25 +307,6 @@ def run_cycle():
     except Exception as e:
         logger.error("Futures analysis failed: %s", e)
         _err(f"Phase 2  FUTURES failed  ({e})")
-
-    # Cross-check: spot vs futures directional conflict
-    if spot_signal and futures_signal:
-        spot_dir = spot_signal["type"]
-        fut_dir = futures_signal["type"]
-        if spot_dir != "HOLD" and fut_dir != "HOLD" and spot_dir != fut_dir:
-            _warn(f"Directional conflict: SPOT {spot_dir} vs FUTURES {fut_dir} — both suppressed")
-            logger.warning(
-                "⚠️  Directional conflict: SPOT %s vs FUTURES %s — skipping both",
-                spot_dir, fut_dir,
-            )
-            spot_signal["type"] = "HOLD"
-            spot_signal["reasons"].append(
-                f"⚠️  CONFLICT: SPOT {spot_dir} vs FUTURES {fut_dir} — both suppressed"
-            )
-            futures_signal["type"] = "HOLD"
-            futures_signal["reasons"].append(
-                f"⚠️  CONFLICT: FUTURES {fut_dir} vs SPOT {spot_dir} — both suppressed"
-            )
 
     # Combined terminal display (once, not per-mode)
     display_combined(spot_signal, futures_signal)

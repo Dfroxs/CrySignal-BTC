@@ -4,6 +4,100 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-12 — fix: 5 strategy bugs (HTF alignment, RSI bias, cache, liquidation, sizing)
+
+### Fixed
+
+- **HTF NEUTRAL-NEUTRAL falsely aligned** (`signals/htf.py`): When both timeframes returned NEUTRAL, `trend_match = True` because NEUTRAL == NEUTRAL, incorrectly awarding +2.0 HTF alignment score in flat markets. Fixed: alignment requires at least one non-NEUTRAL trend (`htf['4h'] != 'NEUTRAL'`). Same fix applied to spot HTF (`1d != NEUTRAL` before comparing `1d == 1w`).
+- **RSI asymmetric scoring** (`signals/engine.py`): BUY zone (RSI 30–50) scored +1.0 while SELL elevated (RSI 55–70) only scored +0.5 — a systematic long bias. Fixed: sell zone broadened to 50–70 and raised to +1.0, matching buy zone weight symmetrically.
+- **Spot cache shallow copy** (`signals/spot.py`): Cache hit returned `dict(signal)` which only copied top-level keys; nested dicts (`_market`, `_htf`, `_news_data`) were shared references. Mutation by caller between cache hits could corrupt the cached value. Fixed: `copy.deepcopy()` ensures full isolation.
+- **Liquidation price formula** (`signals/sizing.py`): Previous formula `entry * (1 - (1 - mm_rate) / leverage)` gave near-zero values at leverage=1. Fixed: Binance isolated-margin formula `entry * (1 - 1/leverage) / (1 - mm_rate)` with explicit 0/inf guard when leverage=1.
+- **Division by zero in leverage calculation** (`signals/sizing.py`): `int(needed_position / max_margin)` could divide by zero if `balance = 0`. Fixed: falls back to `effective_max` when `max_margin <= 0`.
+
+---
+
+## 2026-05-12 — fix: TP2 < TP1 bug + "CrySignal" header in run_bot.py
+
+### Fixed
+
+- **TP2 below TP1 for BUY (and above TP1 for SELL)** (`signals/engine.py`): The resistance/support cap on TP2 did not check whether the capped value would still be beyond TP1. When resistance fell between entry and TP1 (e.g., resistance=$82,479, TP1=$84,220), TP2 was capped at resistance×0.995=$82,067 — less than TP1. Fixed: cap is only applied if the capped value still exceeds TP1 (BUY) or is still below TP1 (SELL). 4 new TP2 unit tests added.
+- **"CrySignal" header** (`run_bot.py`): The `run_cycle()` status header displayed "CrySignal · BTC/USDT" at the start of each cycle. Fixed to "SpotSignal · BTC/USDT".
+
+---
+
+## 2026-05-12 — test: pipeline dummy-data test suite (25 cases, all pass)
+
+### Added
+
+- **`test_pipelines.py`**: 25 dummy-data tests covering all pipeline combinations without network or DB. Tests `_mode_label()`, compact formatter, consolidated formatter, terminal `display_combined()`, absence of `_conflict` in codebase, and edge cases (SHORT SL direction, HOLD gap display, None signal handling).
+
+### Fixed
+
+- **VERDICT section label in consolidated Telegram** (`notifier/telegram.py`): The VERDICT section used `"FUTURES"` regardless of direction. Updated to `"FUTURES LONG"` / `"FUTURES SHORT"` / `"FUTURES"` for consistency with the rest of the message.
+
+---
+
+## 2026-05-11 — feat: remove conflict detection — spot/futures/long/short pipelines fully independent
+
+### Changed
+
+- **Conflict detection removed** (`run_bot.py`): Deleted the cross-pipeline suppression block that forced both signals to HOLD when SPOT 4H and FUTURES 1H disagreed in direction. SPOT 4H and FUTURES 1H are different timeframes by design — a 1H bearish signal during a 4H bullish trend is a normal pullback, not a contradiction. Each pipeline now fires independently.
+- **Pipeline labels direction-aware** (`notifier/common.py`, `signals/terminal.py`): Futures signals now show as "FUTURES LONG 1H" or "FUTURES SHORT 1H" (instead of generic "FUTURES 1H") making the three independent pipelines explicit: SPOT 4H · FUTURES LONG 1H · FUTURES SHORT 1H.
+- **`_conflict` display code removed** (`signals/terminal.py`, `notifier/telegram.py`): All `_conflict` key checks and CONFLICT display branches cleaned up from `_signal_box()`, `_combined_box()`, `display_combined()`, `_format_compact_signal_telegram()`, and `_format_consolidated_telegram()`.
+
+---
+
+## 2026-05-11 — fix: terminal/Telegram display — conflict label, wrong app name, hardcoded count
+
+### Fixed
+
+- **"CrySignal" wrong app name** (`signals/terminal.py`, `notifier/telegram.py`): `display_combined()` header and Telegram consolidated message header showed "CrySignal · BTC/USDT" instead of "SpotSignal · BTC/USDT". Fixed in both places.
+- **`_signal_box()` conflict HOLD shows wrong reason** (`signals/terminal.py`): When both pipelines conflict (BUY vs SELL), the HOLD verdict in the single-pipeline display showed "news downgrade → HOLD" (gap < 0 branch) instead of "⚠ CONFLICT". Fixed: `_conflict` key checked first in `_signal_box()`, `_combined_box()`, and the per-mode HOLD section of `display_combined()`.
+- **`_format_compact_signal_telegram()` conflict HOLD** (`notifier/telegram.py`): The compact card used as fallback (when only one pipeline runs) showed a negative gap and no conflict context. Fixed: HOLD header now shows "⚠️ CONFLICT" and score line shows "opposing signals cancel".
+- **Hardcoded "17" in SIGNAL REASONS label** (`signals/terminal.py`): Changed "of 17" to "active" since condition count has grown past 17.
+
+---
+
+## 2026-05-11 — fix: divergence pivots used close price, cache writes non-atomic, bearish regime incomplete
+
+### Fixed
+
+- **RSI divergence using close instead of high/low** (`signals/indicators.py`): `detect_rsi_divergence` stored `closes[i]` when building swing pivot lists but was comparing them against actual `lows[i]`/`highs[i]` for the lower-low / higher-high check. A hammer candle (close near top, wick near bottom) would fail the bearish lower-low test even though the actual low was lower. Fixed: pivots now store `lows[i]` for swing lows and `highs[i]` for swing highs.
+- **Cache writes non-atomic** (`signals/market_data.py`): OI, stablecoin, and BTC dominance cache files were written via raw `open()` instead of the shared `save_cache()` helper, risking corrupt JSON if the process was killed mid-write. Fixed: all three use `save_cache()` which writes to `.tmp` then `os.replace()`.
+- **OHLCV staleness check always bypassed** (`signals/ohlcv.py`): `_validate_ohlcv` checked `df.index[-1].timestamp()` to detect stale data, but the DataFrame had an integer index (timestamp was a column), so `.timestamp()` raised `AttributeError` and `last_ts` was always 0. Fixed: `df.set_index('timestamp')` now called before indicators are computed, converting the index to `DatetimeIndex`.
+- **`_is_bearish_regime` missed VOLATILE bearish** (`run_bot.py`): The function guarding spot BUY entries only blocked in `TRENDING` + `BEARISH` regimes. A `VOLATILE` + `BEARISH` regime (extreme ATR percentile, DI− dominant) would pass through and allow a spot BUY entry against a confirmed bearish trend. Fixed: added `"VOLATILE"` to the allowed blocking regimes.
+
+---
+
+## 2026-05-11 — fix: strategy review — fees, threshold floor, sizing, config
+
+### Fixed
+
+- **TP1/TP2 exits missing fees** (`trading/paper.py`): TP1 and TP2 exits were computing raw P&L without deducting fees or slippage. Paper trading WIN results were overstated by ~0.18% per futures trade (0.09% spot). Fixed: TP1 deducts entry+exit costs (×2 sides); TP2 deducts exit cost only (entry was counted at TP1).
+- **Session threshold bump could fall below floor** (`signals/engine.py`): US session bump (−0.25) applied to an already-floored adaptive threshold (e.g. 4.0) would produce 3.75 — below `SPOT_THRESHOLD_MIN`. Fixed with `max(..., 3.0)` floor after all adjustments.
+- **`max_position_hours_spot` too tight** (`config.py`): 48h = 12 candles on 4H, forcing TIME_EXIT before a typical swing trade resolves. Raised to 72h (18 candles) — same as futures.
+- **Funding exit thresholds not symmetric** (`config.py`): `close_short_rate` was −0.08 while `close_long_rate` is +0.10. Comment claimed symmetry. Fixed to −0.10.
+- **`SIGNAL_MAX_SCORE` / `SPOT_MAX_SCORE` too low** (`config.py`): Gold/VIX bonus conditions (+0.25 each) added since initial calibration were not reflected in the max score constants, causing display to show >100% in extreme conditions. Updated: 22.25→22.75 (futures), 18.75→19.25 (spot).
+
+---
+
+## 2026-05-11 — fix: HTF scoring ignores direction — SELL signals systematically suppressed
+
+### Fixed
+
+- **`_htf_score` ignores HTF direction** (`signals/engine.py`): When HTF was bearish-aligned (4H=BEARISH, 1D=BEARISH), `_htf_score('BUY')` still returned 1.0–1.5 because the function only checked `htf['aligned']` without verifying the aligned direction matched the signal direction. Fixed: aligned bonus is now only granted when `aligned_dir == 'BULLISH'` for BUY or `aligned_dir == 'BEARISH'` for SELL.
+- **`elif sell_add > 0` silently discards SELL HTF score** (`signals/engine.py`): Because `buy_add` was always > 0 in bearish HTF (due to the bug above), the `elif` branch for sell was never reached. Combined effect: in bearish-aligned HTF, `buy_conditions` incorrectly received +1.0–1.5 and `sell_conditions` received +0 instead of +1.75–2.0. Fixed: the `elif` is now a dominant-side comparison (`buy_add > sell_add` vs `sell_add > buy_add`).
+
+---
+
+## 2026-05-11 — fix: Telegram misleading "news downgrade" label on directional conflict
+
+### Fixed
+
+- **Telegram conflict display** (`run_bot.py`, `notifier/telegram.py`): When SPOT and FUTURES signals are opposing (BUY vs SELL), both are suppressed to HOLD. Previously the HOLD header in Telegram incorrectly showed "news downgrade" or "gap 0.00 READY" because the `gap < 0` branch fired (score already exceeded threshold). Now both compact and detailed HOLD formatters check for `signal["_conflict"]` and display `⚠️ CONFLICT` with the actual conflicting directions.
+
+---
+
 ## 2026-05-10 — feat: Telegram detail — technicals, HTF, reasons, Gold/VIX
 
 ### Added

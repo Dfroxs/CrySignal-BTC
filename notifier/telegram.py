@@ -308,7 +308,7 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
 
     # ── Header ─────────────────────────────────────────────────
     time_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
-    lines.append(f"🔔 <b>CrySignal · BTC/USDT</b>")
+    lines.append(f"🔔 <b>SpotSignal · BTC/USDT</b>")
     lines.append(f"<code>{_esc(time_str)}</code>")
     lines.append("")
 
@@ -698,7 +698,14 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
             continue
         mode      = sig.get("mode", "futures")
         stype     = sig["type"]
-        label     = "SPOT" if mode == "spot" else "FUTURES"
+        if mode == "spot":
+            label = "SPOT"
+        elif stype == "BUY":
+            label = "FUTURES LONG"
+        elif stype == "SELL":
+            label = "FUTURES SHORT"
+        else:
+            label = "FUTURES"
         buy_s     = sig.get("buy_score", 0)
         sell_s    = sig.get("sell_score", 0)
         score     = sig.get("strength", 0)

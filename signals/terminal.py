@@ -263,7 +263,7 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
     reasons = signal.get("reasons", [])
     if reasons:
         print()
-        print(f"  {_C['bld']}SIGNAL REASONS{_C['rst']} ({len(reasons)} of 17)")
+        print(f"  {_C['bld']}SIGNAL REASONS{_C['rst']} ({len(reasons)} active)")
         print(sep)
 
         groups = {"trend": [], "momentum": [], "volume": [], "structure": [], "macro": [], "other": []}
@@ -590,7 +590,14 @@ def _combined_box(spot_signal, futures_signal):
         score  = sig.get("strength", 0)
         max_s  = SPOT_MAX_SCORE if mode == "spot" else SIGNAL_MAX_SCORE
         thr    = sig.get("_threshold", 0)
-        label  = "SPOT 4H" if mode == "spot" else "FUT 1H"
+        if mode == "spot":
+            label = "SPOT 4H"
+        elif stype == "BUY":
+            label = "FUT LONG 1H"
+        elif stype == "SELL":
+            label = "FUT SHORT 1H"
+        else:
+            label = "FUT 1H"
 
         if stype == "HOLD":
             if buy_s > sell_s:
@@ -678,7 +685,7 @@ def display_combined(spot_signal, futures_signal):
     box_w = _W + 2
     print(f"\n{_C['dim']}╭{'─' * box_w}╮{_C['rst']}")
     time_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
-    print(f"{_C['dim']}│{_C['rst']} {_C['bld']}{_C['wht']}{'CrySignal · BTC/USDT':^{box_w - 2}}{_C['dim']} │{_C['rst']}")
+    print(f"{_C['dim']}│{_C['rst']} {_C['bld']}{_C['wht']}{'SpotSignal · BTC/USDT':^{box_w - 2}}{_C['dim']} │{_C['rst']}")
     print(f"{_C['dim']}│{_C['rst']} {_C['gry']}{time_str:^{box_w - 2}}{_C['dim']} │{_C['rst']}")
     print(f"{_C['dim']}╰{'─' * box_w}╯{_C['rst']}")
 
@@ -725,9 +732,9 @@ def display_combined(spot_signal, futures_signal):
             _kv("Stable", f"{_C['bld']}${stable['total_b']:.0f}B{_C['rst']}  {st_dir}")
 
     # ── PER-MODE SECTIONS ──
-    for sig, mode, label in [
-        (spot_signal, "spot", "SPOT 4H"),
-        (futures_signal, "futures", "FUTURES 1H"),
+    for sig, mode in [
+        (spot_signal, "spot"),
+        (futures_signal, "futures"),
     ]:
         if not sig:
             continue
@@ -736,6 +743,15 @@ def display_combined(spot_signal, futures_signal):
         last    = sig.get("_last", {})
         if not last:
             continue
+
+        if mode == "spot":
+            label = "SPOT 4H"
+        elif stype == "BUY":
+            label = "FUTURES LONG 1H"
+        elif stype == "SELL":
+            label = "FUTURES SHORT 1H"
+        else:
+            label = "FUTURES 1H"
 
         is_active = stype != "HOLD" and sig.get("stop_loss")
         entry_px  = sig.get("entry_price", last.get("close", 0))

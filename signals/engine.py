@@ -60,9 +60,9 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         sell_conditions += 1.5
         _rsi_ob = True
         signal['reasons'].append("✗ RSI OVERBOUGHT (>70) — strong sell signal")
-    elif rsi > 55:
-        sell_conditions += 0.5
-        signal['reasons'].append("✗ RSI elevated (>55)")
+    elif 50 < rsi < 70:
+        sell_conditions += 1.0
+        signal['reasons'].append("✗ RSI in sell zone (50–70)")
 
     # 3 — MACD crossover / position
     if current['MACD'] > current['MACD_Signal'] and previous['MACD'] <= previous['MACD_Signal']:
@@ -151,17 +151,24 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             vol_rising = any(ind.get('vol_trend') == 'RISING' for ind in indicators)
 
             if htf['aligned']:
-                if rsi_all_ok:
-                    score = 1.5
-                else:
-                    score = 1.0   # aligned structure > RSI disagreement (was 0.75)
-                if macd_all_ok:
-                    score += 0.25
+                # Only give the aligned bonus when HTF direction matches the signal direction.
+                # Without this check, a bearish-aligned HTF would give buy_add=1.0 just because
+                # htf['aligned'] is True, silently suppressing the SELL score via the elif below.
+                aligned_dir = htf.get(htf_keys[0], 'NEUTRAL') if htf_keys else 'NEUTRAL'
+                dir_matches = (direction == 'BUY' and aligned_dir == 'BULLISH') or \
+                              (direction == 'SELL' and aligned_dir == 'BEARISH')
+                if dir_matches:
+                    if rsi_all_ok:
+                        score = 1.5
+                    else:
+                        score = 1.0
+                    if macd_all_ok:
+                        score += 0.25
             else:
                 # Diverging: structure is weak, only score if RSI is extreme
                 for ind in indicators:
                     if direction == 'BUY' and ind.get('rsi_zone') == 'oversold':
-                        score += 0.5  # was 0.75 — diverging deserves less weight
+                        score += 0.5
                     elif direction == 'SELL' and ind.get('rsi_zone') == 'overbought':
                         score += 0.5
 
@@ -173,7 +180,9 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         buy_add = _htf_score('BUY', indicators_list)
         sell_add = _htf_score('SELL', indicators_list)
 
-        if buy_add > 0:
+        # Pick the dominant side. The old `elif` caused sell_add to be silently discarded
+        # whenever buy_add > 0 (which happened even in bearish HTF due to Bug 1 above).
+        if buy_add > sell_add and buy_add > 0:
             buy_conditions += buy_add
             detail = f"HTF{' aligned' if htf['aligned'] else ''}"
             if any(ind.get('rsi_zone') in ('oversold', 'low') for ind in indicators_list):
@@ -183,7 +192,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             if any(ind.get('vol_trend') == 'RISING' for ind in indicators_list):
                 detail += " + Vol rising"
             signal['reasons'].append(f"✓ {detail} ({htf_label})")
-        elif sell_add > 0:
+        elif sell_add > buy_add and sell_add > 0:
             sell_conditions += sell_add
             detail = f"HTF{' aligned' if htf['aligned'] else ''}"
             if any(ind.get('rsi_zone') in ('overbought', 'elevated') for ind in indicators_list):
@@ -438,7 +447,8 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         session_bump = -0.25  # US session: highest volume, lower threshold
     else:
         session_bump = 0.0
-    threshold = threshold + regime.get("threshold_bump", 0) + session_bump
+    # Floor at 3.0 so session/regime bumps can't push threshold below the spot minimum.
+    threshold = max(threshold + regime.get("threshold_bump", 0) + session_bump, 3.0)
 
     # ── OI × Price directional analysis ──
     if mode == 'futures' and market_structure:
@@ -550,13 +560,17 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             tp2_raw = signal['entry_price'] + tp1_dist * 2
             resistance = sr_levels.get('resistance')
             if resistance and signal['entry_price'] < resistance < tp2_raw:
-                tp2_raw = resistance * 0.995  # 0.5% buffer below resistance
+                capped = resistance * 0.995
+                if capped > signal['take_profit']:  # only cap if capped value still exceeds TP1
+                    tp2_raw = capped
             signal['tp2'] = round(tp2_raw, 2)
         else:
             tp2_raw = signal['entry_price'] - tp1_dist * 2
             support = sr_levels.get('support')
             if support and signal['entry_price'] > support > tp2_raw:
-                tp2_raw = support * 1.005  # 0.5% buffer above support
+                capped = support * 1.005
+                if capped < signal['take_profit']:  # only cap if capped value still exceeds TP1
+                    tp2_raw = capped
             signal['tp2'] = round(tp2_raw, 2)
 
     if signal['type'] != 'HOLD':

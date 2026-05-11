@@ -107,12 +107,12 @@ def detect_rsi_divergence(df, pivot_window=3, lookback=50):
     swing_lows = []
     for i in range(pivot_window, n - pivot_window):
         if lows[i] == min(lows[i - pivot_window:i + pivot_window + 1]):
-            swing_lows.append((i, closes[i], rsis[i]))
+            swing_lows.append((i, lows[i], rsis[i]))   # use the actual low, not close
 
     swing_highs = []
     for i in range(pivot_window, n - pivot_window):
         if highs[i] == max(highs[i - pivot_window:i + pivot_window + 1]):
-            swing_highs.append((i, closes[i], rsis[i]))
+            swing_highs.append((i, highs[i], rsis[i]))  # use the actual high, not close
 
     # Dynamic threshold: ATR% of price (floor 0.2%) — scales with volatility
     atr_val = df['ATR_14'].iloc[-1] if 'ATR_14' in df.columns else 0

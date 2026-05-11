@@ -181,8 +181,7 @@ def fetch_open_interest():
         else:
             logger.warning("Open Interest cache stale — skipping comparison")
 
-    with open(OI_CACHE_FILE, 'w') as f:
-        json.dump({'oi': oi, 'ts': datetime.now(UTC).isoformat()}, f)
+    save_cache(OI_CACHE_FILE, {'oi': oi})
 
     if prev_oi and prev_oi > 0:
         change_pct = ((oi - prev_oi) / prev_oi) * 100
@@ -293,8 +292,7 @@ def fetch_stablecoin_supply():
             else:
                 logger.warning("Stablecoin cache stale — skipping comparison")
 
-        with open(STABLECOIN_CACHE_FILE, 'w') as f:
-            json.dump({'total_b': total_now, 'ts': datetime.now(UTC).isoformat()}, f)
+        save_cache(STABLECOIN_CACHE_FILE, {'total_b': total_now})
 
         if prev_total and prev_total > 0:
             change_pct = ((total_now - prev_total) / prev_total) * 100
@@ -330,8 +328,7 @@ def fetch_btc_dominance():
             else:
                 logger.warning("BTC dominance cache stale — skipping comparison")
 
-        with open(BTC_DOM_CACHE_FILE, 'w') as f:
-            json.dump({'btc_dom': btc_dom, 'ts': datetime.now(UTC).isoformat()}, f)
+        save_cache(BTC_DOM_CACHE_FILE, {'btc_dom': btc_dom})
 
         if prev_btc_dom and prev_btc_dom > 0:
             change_pct = btc_dom - prev_btc_dom
