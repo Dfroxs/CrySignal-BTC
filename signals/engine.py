@@ -151,17 +151,24 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             vol_rising = any(ind.get('vol_trend') == 'RISING' for ind in indicators)
 
             if htf['aligned']:
-                if rsi_all_ok:
-                    score = 1.5
-                else:
-                    score = 1.0   # aligned structure > RSI disagreement (was 0.75)
-                if macd_all_ok:
-                    score += 0.25
+                # Only give the aligned bonus when HTF direction matches the signal direction.
+                # Without this check, a bearish-aligned HTF would give buy_add=1.0 just because
+                # htf['aligned'] is True, silently suppressing the SELL score via the elif below.
+                aligned_dir = htf.get(htf_keys[0], 'NEUTRAL') if htf_keys else 'NEUTRAL'
+                dir_matches = (direction == 'BUY' and aligned_dir == 'BULLISH') or \
+                              (direction == 'SELL' and aligned_dir == 'BEARISH')
+                if dir_matches:
+                    if rsi_all_ok:
+                        score = 1.5
+                    else:
+                        score = 1.0
+                    if macd_all_ok:
+                        score += 0.25
             else:
                 # Diverging: structure is weak, only score if RSI is extreme
                 for ind in indicators:
                     if direction == 'BUY' and ind.get('rsi_zone') == 'oversold':
-                        score += 0.5  # was 0.75 — diverging deserves less weight
+                        score += 0.5
                     elif direction == 'SELL' and ind.get('rsi_zone') == 'overbought':
                         score += 0.5
 
@@ -173,7 +180,9 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         buy_add = _htf_score('BUY', indicators_list)
         sell_add = _htf_score('SELL', indicators_list)
 
-        if buy_add > 0:
+        # Pick the dominant side. The old `elif` caused sell_add to be silently discarded
+        # whenever buy_add > 0 (which happened even in bearish HTF due to Bug 1 above).
+        if buy_add > sell_add and buy_add > 0:
             buy_conditions += buy_add
             detail = f"HTF{' aligned' if htf['aligned'] else ''}"
             if any(ind.get('rsi_zone') in ('oversold', 'low') for ind in indicators_list):
@@ -183,7 +192,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             if any(ind.get('vol_trend') == 'RISING' for ind in indicators_list):
                 detail += " + Vol rising"
             signal['reasons'].append(f"✓ {detail} ({htf_label})")
-        elif sell_add > 0:
+        elif sell_add > buy_add and sell_add > 0:
             sell_conditions += sell_add
             detail = f"HTF{' aligned' if htf['aligned'] else ''}"
             if any(ind.get('rsi_zone') in ('overbought', 'elevated') for ind in indicators_list):

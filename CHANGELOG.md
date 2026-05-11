@@ -4,6 +4,15 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-11 — fix: HTF scoring ignores direction — SELL signals systematically suppressed
+
+### Fixed
+
+- **`_htf_score` ignores HTF direction** (`signals/engine.py`): When HTF was bearish-aligned (4H=BEARISH, 1D=BEARISH), `_htf_score('BUY')` still returned 1.0–1.5 because the function only checked `htf['aligned']` without verifying the aligned direction matched the signal direction. Fixed: aligned bonus is now only granted when `aligned_dir == 'BULLISH'` for BUY or `aligned_dir == 'BEARISH'` for SELL.
+- **`elif sell_add > 0` silently discards SELL HTF score** (`signals/engine.py`): Because `buy_add` was always > 0 in bearish HTF (due to the bug above), the `elif` branch for sell was never reached. Combined effect: in bearish-aligned HTF, `buy_conditions` incorrectly received +1.0–1.5 and `sell_conditions` received +0 instead of +1.75–2.0. Fixed: the `elif` is now a dominant-side comparison (`buy_add > sell_add` vs `sell_add > buy_add`).
+
+---
+
 ## 2026-05-11 — fix: Telegram misleading "news downgrade" label on directional conflict
 
 ### Fixed
