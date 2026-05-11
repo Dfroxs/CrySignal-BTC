@@ -4,6 +4,17 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-11 — fix: divergence pivots used close price, cache writes non-atomic, bearish regime incomplete
+
+### Fixed
+
+- **RSI divergence using close instead of high/low** (`signals/indicators.py`): `detect_rsi_divergence` stored `closes[i]` when building swing pivot lists but was comparing them against actual `lows[i]`/`highs[i]` for the lower-low / higher-high check. A hammer candle (close near top, wick near bottom) would fail the bearish lower-low test even though the actual low was lower. Fixed: pivots now store `lows[i]` for swing lows and `highs[i]` for swing highs.
+- **Cache writes non-atomic** (`signals/market_data.py`): OI, stablecoin, and BTC dominance cache files were written via raw `open()` instead of the shared `save_cache()` helper, risking corrupt JSON if the process was killed mid-write. Fixed: all three use `save_cache()` which writes to `.tmp` then `os.replace()`.
+- **OHLCV staleness check always bypassed** (`signals/ohlcv.py`): `_validate_ohlcv` checked `df.index[-1].timestamp()` to detect stale data, but the DataFrame had an integer index (timestamp was a column), so `.timestamp()` raised `AttributeError` and `last_ts` was always 0. Fixed: `df.set_index('timestamp')` now called before indicators are computed, converting the index to `DatetimeIndex`.
+- **`_is_bearish_regime` missed VOLATILE bearish** (`run_bot.py`): The function guarding spot BUY entries only blocked in `TRENDING` + `BEARISH` regimes. A `VOLATILE` + `BEARISH` regime (extreme ATR percentile, DI− dominant) would pass through and allow a spot BUY entry against a confirmed bearish trend. Fixed: added `"VOLATILE"` to the allowed blocking regimes.
+
+---
+
 ## 2026-05-11 — fix: strategy review — fees, threshold floor, sizing, config
 
 ### Fixed
