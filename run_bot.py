@@ -319,10 +319,12 @@ def run_cycle():
                 spot_dir, fut_dir,
             )
             spot_signal["type"] = "HOLD"
+            spot_signal["_conflict"] = f"SPOT {spot_dir} vs FUTURES {fut_dir}"
             spot_signal["reasons"].append(
                 f"⚠️  CONFLICT: SPOT {spot_dir} vs FUTURES {fut_dir} — both suppressed"
             )
             futures_signal["type"] = "HOLD"
+            futures_signal["_conflict"] = f"FUTURES {fut_dir} vs SPOT {spot_dir}"
             futures_signal["reasons"].append(
                 f"⚠️  CONFLICT: FUTURES {fut_dir} vs SPOT {spot_dir} — both suppressed"
             )

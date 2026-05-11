@@ -344,7 +344,9 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
                 dir_str = "BEARISH" if mode == "spot" else "SELL"
             else:
                 dir_str = "NEUTRAL"
-            if dir_str == "NEUTRAL":
+            if sig.get("_conflict"):
+                line = f"⏸ <b>HOLD · {label}</b>  Score <b>{score:.2f}</b>/{mscore}  ⚠️ CONFLICT"
+            elif dir_str == "NEUTRAL":
                 line = f"⏸ <b>HOLD · {label}</b>  Score <b>{score:.2f}</b>/{mscore}  NEUTRAL · gap {gap:.2f}"
             elif gap <= 0 and mode == "spot" and dir_str == "BEARISH":
                 line = f"⏸ <b>HOLD · {label}</b>  Score <b>{score:.2f}</b>/{mscore}  {dir_str} · BUY‑only → HOLD"
@@ -738,7 +740,12 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
                 dir_str, lead = "NEUTRAL", max(buy_s, sell_s)
             gap = threshold - lead
 
-            if mode == "spot" and dir_str == "BEARISH":
+            conflict_tag = sig.get("_conflict")
+            if conflict_tag:
+                lines.append(f"⏸ <b>{label}  HOLD  {score:.2f}/{mscore}  ⚠️ CONFLICT</b>")
+                lines.append(f"  B:<b>{buy_s:.2f}</b>  S:<b>{sell_s:.2f}</b>")
+                lines.append(f"  ▶ <b>SKIP</b> — {_esc(conflict_tag)} · opposing signals cancel")
+            elif mode == "spot" and dir_str == "BEARISH":
                 lines.append(f"⏸ <b>{label}  HOLD  {score:.2f}/{mscore}  BEARISH · BUY-only</b>")
                 lines.append(f"  B:<b>{buy_s:.2f}</b>  S:<b>{sell_s:.2f}</b>")
                 lines.append("  ▶ <b>SKIP</b> — bearish pressure · spot BUY-only · no trade")

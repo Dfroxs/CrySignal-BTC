@@ -4,6 +4,14 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-11 — fix: Telegram misleading "news downgrade" label on directional conflict
+
+### Fixed
+
+- **Telegram conflict display** (`run_bot.py`, `notifier/telegram.py`): When SPOT and FUTURES signals are opposing (BUY vs SELL), both are suppressed to HOLD. Previously the HOLD header in Telegram incorrectly showed "news downgrade" or "gap 0.00 READY" because the `gap < 0` branch fired (score already exceeded threshold). Now both compact and detailed HOLD formatters check for `signal["_conflict"]` and display `⚠️ CONFLICT` with the actual conflicting directions.
+
+---
+
 ## 2026-05-10 — feat: Telegram detail — technicals, HTF, reasons, Gold/VIX
 
 ### Added
