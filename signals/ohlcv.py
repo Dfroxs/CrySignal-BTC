@@ -13,6 +13,8 @@ from signals.indicators import (
     calculate_rsi,
     calculate_stoch_rsi,
     calculate_vwap,
+    compute_cmf,
+    compute_mfi,
 )
 from signals.market_data import exchange
 
@@ -53,5 +55,7 @@ def fetch_ohlcv_df(symbol='BTC/USDT', timeframe='1h', limit=500, vwap_period=24)
     df['OBV'] = calculate_obv(df)
     df['StochRSI_K'], df['StochRSI_D'] = calculate_stoch_rsi(df['close'])
     df['VWAP_24'] = calculate_vwap(df, period=vwap_period)
+    df['MFI_14']  = compute_mfi(df)
+    df['CMF_20']  = compute_cmf(df)
 
     return df

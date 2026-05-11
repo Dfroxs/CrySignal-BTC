@@ -21,6 +21,7 @@ from signals.market_data import (
     fetch_open_interest,
     fetch_sp500_trend,
     fetch_stablecoin_supply,
+    fetch_taker_buy_sell_ratio,
     fetch_vix,
     get_adaptive_threshold,
     update_threshold_state,
@@ -43,6 +44,7 @@ def analyze_futures_signal(symbol='BTC/USDT', include_news=True, display=False):
             fmap['htf'] = pool.submit(get_htf_trend)
             fmap['funding'] = pool.submit(fetch_funding_rate)
             fmap['ls'] = pool.submit(fetch_long_short_ratio)
+            fmap['taker'] = pool.submit(fetch_taker_buy_sell_ratio)
             fmap['dxy'] = pool.submit(fetch_dxy_trend)
             fmap['sp500'] = pool.submit(fetch_sp500_trend)
             fmap['stablecoin'] = pool.submit(fetch_stablecoin_supply)
@@ -57,6 +59,7 @@ def analyze_futures_signal(symbol='BTC/USDT', include_news=True, display=False):
             market_structure = {
                 'funding': fmap['funding'].result(),
                 'long_short': fmap['ls'].result(),
+                'taker': fmap['taker'].result(),
                 'dxy': fmap['dxy'].result(),
                 'sp500': fmap['sp500'].result(),
                 'stablecoin': fmap['stablecoin'].result(),
@@ -109,6 +112,8 @@ def analyze_futures_signal(symbol='BTC/USDT', include_news=True, display=False):
             'obv_slope': df['OBV'].iloc[-1] - df['OBV'].iloc[-5],
             'hi24': df['high'].tail(24).max(),
             'lo24': df['low'].tail(24).min(),
+            'mfi': last.get('MFI_14'),
+            'cmf': last.get('CMF_20'),
         }
         return signal
 
