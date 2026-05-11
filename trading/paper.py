@@ -216,7 +216,10 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
 
             # 2 — partial exit at TP1 (first half)
             if not partial and current_price >= tp1:
-                pnl = (tp1 - entry) / entry * 100
+                _ec = EXECUTION_CONFIG
+                _fee = _ec["futures_fee_pct"] if pos.get("mode") == "futures" else _ec["spot_fee_pct"]
+                _costs = (_fee + _ec.get("slippage_pct", 0.05)) * 2  # entry + exit
+                pnl = (tp1 - entry) / entry * 100 - _costs
                 sh.partial_close_position(pos_id, pnl, new_sl=entry)
                 trail = entry  # breakeven
                 closed.append({
@@ -233,8 +236,11 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
             # 3 — full exit: TP2 hit (after partial) or trailing stop hit
             # P&L is blended: each half contributes 50% of total return
             if partial and tp2 and current_price >= tp2:
+                _ec = EXECUTION_CONFIG
+                _fee = _ec["futures_fee_pct"] if pos.get("mode") == "futures" else _ec["spot_fee_pct"]
+                _costs = _fee + _ec.get("slippage_pct", 0.05)  # exit only — entry counted at TP1
                 partial_pnl = pos.get("partial_pnl") or 0
-                remaining_pnl = (tp2 - entry) / entry * 100
+                remaining_pnl = (tp2 - entry) / entry * 100 - _costs
                 combined_pnl = partial_pnl * 0.5 + remaining_pnl * 0.5
                 sh.close_paper_position(pos_id, "WIN", combined_pnl)
                 closed.append({
@@ -277,7 +283,10 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
 
             # 2 — partial exit at TP1
             if not partial and current_price <= tp1:
-                pnl = (entry - tp1) / entry * 100
+                _ec = EXECUTION_CONFIG
+                _fee = _ec["futures_fee_pct"] if pos.get("mode") == "futures" else _ec["spot_fee_pct"]
+                _costs = (_fee + _ec.get("slippage_pct", 0.05)) * 2  # entry + exit
+                pnl = (entry - tp1) / entry * 100 - _costs
                 sh.partial_close_position(pos_id, pnl, new_sl=entry)
                 trail = entry
                 closed.append({
@@ -293,8 +302,11 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
 
             # 3 — full exit: TP2 hit or trailing stop hit
             if partial and tp2 and current_price <= tp2:
+                _ec = EXECUTION_CONFIG
+                _fee = _ec["futures_fee_pct"] if pos.get("mode") == "futures" else _ec["spot_fee_pct"]
+                _costs = _fee + _ec.get("slippage_pct", 0.05)  # exit only — entry counted at TP1
                 partial_pnl = pos.get("partial_pnl") or 0
-                remaining_pnl = (entry - tp2) / entry * 100
+                remaining_pnl = (entry - tp2) / entry * 100 - _costs
                 combined_pnl = partial_pnl * 0.5 + remaining_pnl * 0.5
                 sh.close_paper_position(pos_id, "WIN", combined_pnl)
                 closed.append({

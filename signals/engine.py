@@ -447,7 +447,8 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         session_bump = -0.25  # US session: highest volume, lower threshold
     else:
         session_bump = 0.0
-    threshold = threshold + regime.get("threshold_bump", 0) + session_bump
+    # Floor at 3.0 so session/regime bumps can't push threshold below the spot minimum.
+    threshold = max(threshold + regime.get("threshold_bump", 0) + session_bump, 3.0)
 
     # ── OI × Price directional analysis ──
     if mode == 'futures' and market_structure:

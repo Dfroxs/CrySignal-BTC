@@ -4,6 +4,18 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-11 — fix: strategy review — fees, threshold floor, sizing, config
+
+### Fixed
+
+- **TP1/TP2 exits missing fees** (`trading/paper.py`): TP1 and TP2 exits were computing raw P&L without deducting fees or slippage. Paper trading WIN results were overstated by ~0.18% per futures trade (0.09% spot). Fixed: TP1 deducts entry+exit costs (×2 sides); TP2 deducts exit cost only (entry was counted at TP1).
+- **Session threshold bump could fall below floor** (`signals/engine.py`): US session bump (−0.25) applied to an already-floored adaptive threshold (e.g. 4.0) would produce 3.75 — below `SPOT_THRESHOLD_MIN`. Fixed with `max(..., 3.0)` floor after all adjustments.
+- **`max_position_hours_spot` too tight** (`config.py`): 48h = 12 candles on 4H, forcing TIME_EXIT before a typical swing trade resolves. Raised to 72h (18 candles) — same as futures.
+- **Funding exit thresholds not symmetric** (`config.py`): `close_short_rate` was −0.08 while `close_long_rate` is +0.10. Comment claimed symmetry. Fixed to −0.10.
+- **`SIGNAL_MAX_SCORE` / `SPOT_MAX_SCORE` too low** (`config.py`): Gold/VIX bonus conditions (+0.25 each) added since initial calibration were not reflected in the max score constants, causing display to show >100% in extreme conditions. Updated: 22.25→22.75 (futures), 18.75→19.25 (spot).
+
+---
+
 ## 2026-05-11 — fix: HTF scoring ignores direction — SELL signals systematically suppressed
 
 ### Fixed

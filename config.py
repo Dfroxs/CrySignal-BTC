@@ -40,7 +40,7 @@ RISK_CONFIG = {
     "trailing_advance_min_ratio": 0.5, # only advance trail if new trail > old + ATR×factor×this
     "trailing_post_tp1_factor":   0.8, # tighten trail 20% after TP1 hit (remaining 50%)
     "max_position_hours":      72,   # force-close futures position if open longer than this
-    "max_position_hours_spot": 48,   # spot 4H: move materializes in 12-15 candles, free capital sooner
+    "max_position_hours_spot": 72,   # spot 4H: 72h = 18 candles; enough room for swing to develop
     "vol_expansion_exit_mult": 1.5,  # close if current ATR > entry ATR × this
     "max_positions":         2,     # max 1 BUY + 1 SELL (one per direction)
     "pyramid": {
@@ -78,7 +78,7 @@ FUTURES_CONFIG = {
     "trailing_atr_factor":   0.9,    # reduced from 0.7 — 0.7× triggered on normal wicks at 1H
     "funding_exit": {
         "close_long_rate":   0.10,   # close LONG if funding > 0.10% (expensive to hold)
-        "close_short_rate": -0.08,   # close SHORT if funding < -0.08% (symmetric with long threshold)
+        "close_short_rate": -0.10,   # close SHORT if funding < -0.10% (symmetric with long threshold)
     },
 }
 
@@ -113,7 +113,7 @@ THRESHOLD_MAX    = 8.0
 
 # Spot signal thresholds (4H, 15 conditions — no funding/L/S/OI/basis)
 SPOT_THRESHOLD    = float(os.getenv("SPOT_THRESHOLD", 4.3))
-SPOT_MAX_SCORE    = 18.75  # +1.0 from candlestick (ENGULFING/MORNING_STAR)
+SPOT_MAX_SCORE    = 19.25  # +1.0 candlestick + 0.50 Gold/VIX bonus
 SPOT_THRESHOLD_MIN = 3.0
 SPOT_THRESHOLD_MAX = 7.0
 
