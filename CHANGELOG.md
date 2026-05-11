@@ -4,6 +4,24 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-12 — fix: Telegram SELL signal missing confidence label and action guidance
+
+### Fixed
+
+- **SELL header missing confidence tier** (`notifier/telegram.py`): `_format_consolidated_telegram()` SELL branch did not include the confidence label (STRONG/WEAK/NORMAL) in the header line, unlike BUY. Fixed: `conf_str` now appended for SELL too.
+- **SELL action guidance not confidence-aware** (`notifier/telegram.py`): BUY has 3 action variants (STRONG/WEAK/NORMAL), SELL always showed the same generic message. Fixed: SELL now shows "strong signal · full size", "weak signal · reduce size", or "signal confirmed" based on confidence tier.
+
+---
+
+## 2026-05-12 — fix: terminal display bugs for FUTURES SHORT
+
+### Fixed
+
+- **VERDICT emoji always 🟢** (`signals/terminal.py`): `display_analysis()` VERDICT section used a hardcoded `🟢` for all active signals including SELL. Fixed: now `🔴` for SELL, `🟢` for BUY.
+- **SL percentage missing minus sign** (`signals/terminal.py`): `display_combined()` showed SL as `(2.00%)` without the leading `-`. Fixed to `(-2.00%)` for consistency with `display_analysis()`.
+
+---
+
 ## 2026-05-12 — fix: 5 strategy bugs (HTF alignment, RSI bias, cache, liquidation, sizing)
 
 ### Fixed
