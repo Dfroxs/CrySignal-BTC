@@ -4,6 +4,14 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-12 — fix: misleading "pyramid eligible" label in VERDICT display
+
+### Fixed
+
+- **"pyramid eligible" shown when no positions exist** (`signals/terminal.py`): The label `🧩 pyramid eligible` appeared in the VERDICT box for every SPOT STRONG signal, regardless of whether any positions were open. This was confusing because it implies pyramiding happened or should have happened, even when the first-entry gates (fakeout, trend confluence, S/R proximity, etc.) blocked the entry. Fixed: now checks `get_open_position_count_by_direction()` — if open positions exist, shows `🧩 pyramid eligible`; if none, shows `⭐ entry grade: STRONG` instead.
+
+---
+
 ## 2026-05-12 — feat: 3 new analysis conditions (MFI, CMF, Taker Ratio) + MACD ADX gate
 
 ### Added

@@ -587,6 +587,7 @@ def _section(title):
 
 def _combined_box(spot_signal, futures_signal):
     """Single verdict box with both signal lines."""
+    import trading.history as _sh
     box_w = _W + 2
     lines = []
 
@@ -668,7 +669,11 @@ def _combined_box(spot_signal, futures_signal):
             if conf:
                 det += f"  ·  {conf} conf"
                 if mode == "spot" and conf == "STRONG":
-                    det += "  ·  🧩 pyramid eligible"
+                    _existing = _sh.get_open_position_count_by_direction(stype, "spot")
+                    if _existing > 0:
+                        det += "  ·  🧩 pyramid eligible"
+                    else:
+                        det += "  ·  ⭐ entry grade: STRONG"
             lines.append(det)
 
     if not lines:
