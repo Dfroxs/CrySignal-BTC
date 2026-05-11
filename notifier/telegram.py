@@ -40,19 +40,25 @@ def _format_compact_signal_telegram(signal):
         if conf:
             hdr += f"  ·  <b>{conf}</b>"
     else:
-        hdr = f"⏸ <b>HOLD</b> · {label}"
+        if signal.get("_conflict"):
+            hdr = f"⏸ <b>HOLD</b> · {label}  ⚠️ CONFLICT"
+        else:
+            hdr = f"⏸ <b>HOLD</b> · {label}"
 
     lines.append(hdr)
     score_parts = [f"Score <b>{score:.2f}</b>/{mscore}"]
     if stype == "HOLD":
-        gap = threshold - max(buy_s, sell_s)
-        if buy_s > sell_s:
-            dir_str = "BUY"
-        elif sell_s > buy_s:
-            dir_str = "BEARISH" if mode == "spot" else "SELL"
+        if signal.get("_conflict"):
+            score_parts.append("opposing signals cancel")
         else:
-            dir_str = "—"
-        score_parts.append(f"Gap <b>{gap:.2f}</b> to {dir_str}")
+            gap = threshold - max(buy_s, sell_s)
+            if buy_s > sell_s:
+                dir_str = "BUY"
+            elif sell_s > buy_s:
+                dir_str = "BEARISH" if mode == "spot" else "SELL"
+            else:
+                dir_str = "—"
+            score_parts.append(f"Gap <b>{gap:.2f}</b> to {dir_str}")
     lines.append("  ·  ".join(score_parts))
 
     # ── Trade Setup ─────────────────────────────────────────
@@ -308,7 +314,7 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
 
     # ── Header ─────────────────────────────────────────────────
     time_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
-    lines.append(f"🔔 <b>CrySignal · BTC/USDT</b>")
+    lines.append(f"🔔 <b>SpotSignal · BTC/USDT</b>")
     lines.append(f"<code>{_esc(time_str)}</code>")
     lines.append("")
 

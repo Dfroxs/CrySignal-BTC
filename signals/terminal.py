@@ -83,7 +83,9 @@ def _signal_box(signal, effective_threshold, max_score=None):
         l1   = f"  {icon} {_C[c1]}{_C['bld']}HOLD{_C['rst']}"
         l1  += f"  ·  Score {_C['bld']}{signal['strength']:.2f}/{max_score}{_C['rst']}"
         l1  += f"  ·  B:{_C['grn']}{buy_s:.2f}{_C['rst']} S:{_C['red']}{sell_s:.2f}{_C['rst']}"
-        if signal.get("mode") == "spot" and dir_str == "BEARISH":
+        if signal.get("_conflict"):
+            l1 += f"  ·  {_C['yel']}⚠ CONFLICT → HOLD{_C['rst']}"
+        elif signal.get("mode") == "spot" and dir_str == "BEARISH":
             l1 += f"  ·  {_C['red']}BEARISH · BUY-only → HOLD{_C['rst']}"
         elif gap < 0:
             l1 += f"  ·  {_C['yel']}news downgrade → HOLD{_C['rst']}"
@@ -263,7 +265,7 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
     reasons = signal.get("reasons", [])
     if reasons:
         print()
-        print(f"  {_C['bld']}SIGNAL REASONS{_C['rst']} ({len(reasons)} of 17)")
+        print(f"  {_C['bld']}SIGNAL REASONS{_C['rst']} ({len(reasons)} active)")
         print(sep)
 
         groups = {"trend": [], "momentum": [], "volume": [], "structure": [], "macro": [], "other": []}
@@ -602,7 +604,18 @@ def _combined_box(spot_signal, futures_signal):
                 d, lead = "NEUTRAL", max(buy_s, sell_s)
             gap = thr - lead
 
-            if mode == "spot" and d == "BEARISH":
+            if sig.get("_conflict"):
+                lines.append(
+                    f"  ❄️ {_C['yel']}{_C['bld']}{label}  HOLD{_C['rst']}  "
+                    f"{score:.2f}/{max_s:.2f}  "
+                    f"{_C['yel']}⚠ CONFLICT{_C['rst']}"
+                )
+                lines.append(
+                    f"       B:{_C['grn']}{buy_s:.2f}{_C['rst']}  "
+                    f"S:{_C['red']}{sell_s:.2f}{_C['rst']}  "
+                    f"opposing signals cancel"
+                )
+            elif mode == "spot" and d == "BEARISH":
                 lines.append(
                     f"  ❄️ {_C['yel']}{_C['bld']}{label}  HOLD{_C['rst']}  "
                     f"{score:.2f}/{max_s:.2f}  "
@@ -678,7 +691,7 @@ def display_combined(spot_signal, futures_signal):
     box_w = _W + 2
     print(f"\n{_C['dim']}╭{'─' * box_w}╮{_C['rst']}")
     time_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")
-    print(f"{_C['dim']}│{_C['rst']} {_C['bld']}{_C['wht']}{'CrySignal · BTC/USDT':^{box_w - 2}}{_C['dim']} │{_C['rst']}")
+    print(f"{_C['dim']}│{_C['rst']} {_C['bld']}{_C['wht']}{'SpotSignal · BTC/USDT':^{box_w - 2}}{_C['dim']} │{_C['rst']}")
     print(f"{_C['dim']}│{_C['rst']} {_C['gry']}{time_str:^{box_w - 2}}{_C['dim']} │{_C['rst']}")
     print(f"{_C['dim']}╰{'─' * box_w}╯{_C['rst']}")
 
@@ -751,7 +764,11 @@ def display_combined(spot_signal, futures_signal):
         thr    = sig.get("_threshold", 0)
         if stype == "HOLD":
             gap = thr - max(buy_s, sell_s)
-            if gap < 0:
+            if sig.get("_conflict"):
+                print(f"  ❄️ {_C['yel']}{_C['bld']}HOLD{_C['rst']}  "
+                      f"Score {sig['strength']:.2f}/{max_s:.2f}  "
+                      f"{_C['yel']}⚠ CONFLICT{_C['rst']}")
+            elif gap < 0:
                 print(f"  ❄️ {_C['yel']}{_C['bld']}HOLD{_C['rst']}  "
                       f"Score {sig['strength']:.2f}/{max_s:.2f}  "
                       f"{_C['yel']}news downgrade → HOLD{_C['rst']}")

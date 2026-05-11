@@ -4,6 +4,17 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-11 — fix: terminal/Telegram display — conflict label, wrong app name, hardcoded count
+
+### Fixed
+
+- **"CrySignal" wrong app name** (`signals/terminal.py`, `notifier/telegram.py`): `display_combined()` header and Telegram consolidated message header showed "CrySignal · BTC/USDT" instead of "SpotSignal · BTC/USDT". Fixed in both places.
+- **`_signal_box()` conflict HOLD shows wrong reason** (`signals/terminal.py`): When both pipelines conflict (BUY vs SELL), the HOLD verdict in the single-pipeline display showed "news downgrade → HOLD" (gap < 0 branch) instead of "⚠ CONFLICT". Fixed: `_conflict` key checked first in `_signal_box()`, `_combined_box()`, and the per-mode HOLD section of `display_combined()`.
+- **`_format_compact_signal_telegram()` conflict HOLD** (`notifier/telegram.py`): The compact card used as fallback (when only one pipeline runs) showed a negative gap and no conflict context. Fixed: HOLD header now shows "⚠️ CONFLICT" and score line shows "opposing signals cancel".
+- **Hardcoded "17" in SIGNAL REASONS label** (`signals/terminal.py`): Changed "of 17" to "active" since condition count has grown past 17.
+
+---
+
 ## 2026-05-11 — fix: divergence pivots used close price, cache writes non-atomic, bearish regime incomplete
 
 ### Fixed
