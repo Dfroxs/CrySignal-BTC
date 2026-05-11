@@ -131,6 +131,30 @@ def fetch_long_short_ratio():
     return result
 
 
+def fetch_taker_buy_sell_ratio():
+    """Taker buy/sell volume ratio — measures aggressive order flow dominance.
+    >1.2 = buyers overwhelming sellers (bullish), <0.8 = sellers overwhelming buyers (bearish)."""
+    result = {'ratio': 1.0, 'bias': 'NEUTRAL'}
+    try:
+        resp = HTTP_SESSION.get(
+            'https://fapi.binance.com/futures/data/takerlongshortRatio',
+            params={'symbol': 'BTCUSDT', 'period': '1h', 'limit': 1},
+            headers={'User-Agent': 'curl/8.4'},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        data = resp.json()[0]
+        ratio = float(data.get('buySellRatio', 1.0))
+        result['ratio'] = round(ratio, 3)
+        if ratio >= 1.2:
+            result['bias'] = 'BULLISH'
+        elif ratio <= 0.8:
+            result['bias'] = 'BEARISH'
+    except Exception as e:
+        logger.warning("Taker buy/sell ratio fetch failed: %s", e)
+    return result
+
+
 def fetch_open_interest():
     """Open Interest via ccxt, with HTTP fallback."""
     result = {'notional': 0.0, 'change_pct': 0.0, 'trend': 'NEUTRAL', 'bias': 'NEUTRAL'}

@@ -32,6 +32,13 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     buy_conditions = 0.0
     sell_conditions = 0.0
 
+    # Pre-compute ADX once — used in condition 3 (MACD gate) and condition 18
+    try:
+        _adx_df_pre = calculate_adx(df)
+        _adx_pre = float(_adx_df_pre['ADX'].iloc[-1])
+    except Exception:
+        _adx_pre = 0.0
+
     # 1 — EMA 200 trend + slope (rising EMA = strengthening trend)
     ema200_now  = current['EMA_200']
     ema200_prev = df['EMA_200'].iloc[-6]  # 5-candle slope avoids single-candle noise
@@ -64,16 +71,18 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         sell_conditions += 1.0
         signal['reasons'].append("✗ RSI in sell zone (50–70)")
 
-    # 3 — MACD crossover / position
+    # 3 — MACD crossover / position (ADX-gated: full weight only in trending markets)
+    _macd_cross_w = 1.5 if _adx_pre >= 20 else 0.75
+    _macd_low_adx = "" if _adx_pre >= 20 else f" (ADX {_adx_pre:.0f} — reduced)"
     if current['MACD'] > current['MACD_Signal'] and previous['MACD'] <= previous['MACD_Signal']:
-        buy_conditions += 1.5
-        signal['reasons'].append("✓ MACD bullish crossover")
+        buy_conditions += _macd_cross_w
+        signal['reasons'].append(f"✓ MACD bullish crossover{_macd_low_adx}")
     elif current['MACD'] > current['MACD_Signal']:
         buy_conditions += 0.5
         signal['reasons'].append("✓ MACD above signal line")
     elif current['MACD'] < current['MACD_Signal'] and previous['MACD'] >= previous['MACD_Signal']:
-        sell_conditions += 1.5
-        signal['reasons'].append("✗ MACD bearish crossover")
+        sell_conditions += _macd_cross_w
+        signal['reasons'].append(f"✗ MACD bearish crossover{_macd_low_adx}")
     elif current['MACD'] < current['MACD_Signal']:
         sell_conditions += 0.5
         signal['reasons'].append("✗ MACD below signal line")
@@ -513,6 +522,48 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         w = _cs_weights.get(cs['bearish'], 0.5)
         sell_conditions += w
         signal['reasons'].append(f"✗ {cs['bearish'].replace('_', ' ')} pattern — bearish reversal")
+
+    # 20 — MFI (Money Flow Index) — volume-weighted RSI, detects institutional flow
+    mfi = current.get('MFI_14')
+    if mfi is not None and not pd.isna(mfi):
+        if mfi <= 20:
+            buy_conditions += 1.5
+            signal['reasons'].append(f"✓ MFI OVERSOLD ({mfi:.0f}) — strong buying pressure")
+        elif mfi <= 40:
+            buy_conditions += 0.75
+            signal['reasons'].append(f"✓ MFI in buy zone ({mfi:.0f}) — accumulation building")
+        elif mfi >= 80:
+            sell_conditions += 1.5
+            signal['reasons'].append(f"✗ MFI OVERBOUGHT ({mfi:.0f}) — strong selling pressure")
+        elif mfi >= 60:
+            sell_conditions += 0.75
+            signal['reasons'].append(f"✗ MFI in sell zone ({mfi:.0f}) — distribution detected")
+
+    # 21 — CMF (Chaikin Money Flow) — accumulation/distribution pressure
+    cmf = current.get('CMF_20')
+    if cmf is not None and not pd.isna(cmf):
+        if cmf >= 0.25:
+            buy_conditions += 1.0
+            signal['reasons'].append(f"✓ CMF strong accumulation ({cmf:+.3f}) — institutional buying")
+        elif cmf >= 0.10:
+            buy_conditions += 0.5
+            signal['reasons'].append(f"✓ CMF mild accumulation ({cmf:+.3f})")
+        elif cmf <= -0.25:
+            sell_conditions += 1.0
+            signal['reasons'].append(f"✗ CMF strong distribution ({cmf:+.3f}) — institutional selling")
+        elif cmf <= -0.10:
+            sell_conditions += 0.5
+            signal['reasons'].append(f"✗ CMF mild distribution ({cmf:+.3f})")
+
+    # 22 — Taker buy/sell ratio (futures only) — aggressive order flow dominance
+    if mode == 'futures' and market_structure:
+        taker = market_structure.get('taker', {})
+        if taker.get('bias') == 'BULLISH':
+            buy_conditions += 1.0
+            signal['reasons'].append(f"✓ Taker ratio {taker.get('ratio', 0):.2f} — aggressive buyers dominant")
+        elif taker.get('bias') == 'BEARISH':
+            sell_conditions += 1.0
+            signal['reasons'].append(f"✗ Taker ratio {taker.get('ratio', 0):.2f} — aggressive sellers dominant")
 
     # Determine final signal
     if buy_conditions >= threshold and buy_conditions > sell_conditions:
