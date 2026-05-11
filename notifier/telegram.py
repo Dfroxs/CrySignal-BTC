@@ -731,9 +731,16 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
             lines.append(f"  {action}")
 
         elif stype == "SELL":
-            lines.append(f"🔴 <b>{label}  SELL 🔥  {score:.2f}/{mscore}  ≥ thr {threshold:.2f}</b>")
+            conf_str = f"  {conf}" if conf else ""
+            lines.append(f"🔴 <b>{label}  SELL 🔥  {score:.2f}/{mscore}  ≥ thr {threshold:.2f}{conf_str}</b>")
             lines.append(f"  B:<b>{buy_s:.2f}</b>  S:<b>{sell_s:.2f}</b>")
-            lines.append("  ▶ <b>SHORT</b> — downside confirmed · SL/TP set above")
+            if conf == "STRONG":
+                action = "▶ <b>ENTER SHORT</b> — strong signal · full size · SL/TP set above"
+            elif conf == "WEAK":
+                action = "▶ <b>ENTER SHORT</b> — weak signal · reduce size · watch closely"
+            else:
+                action = "▶ <b>ENTER SHORT</b> — signal confirmed · SL/TP set above"
+            lines.append(f"  {action}")
 
         else:
             if buy_s > sell_s:

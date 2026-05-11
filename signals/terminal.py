@@ -471,7 +471,8 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
         if effective_threshold != base_threshold:
             print(f"       {_C['yel']}adaptive threshold active (base={base_threshold}){_C['rst']}")
     else:
-        print(f"  🟢 {_C['grn' if signal['type'] == 'BUY' else 'red']}{_C['bld']}{signal['type']} 🔥{_C['rst']}  ·  "
+        _v_icon = "🟢" if signal["type"] == "BUY" else "🔴"
+        print(f"  {_v_icon} {_C['grn' if signal['type'] == 'BUY' else 'red']}{_C['bld']}{signal['type']} 🔥{_C['rst']}  ·  "
               f"Score {_C['bld']}{signal['strength']:.2f}/{max_score}{_C['rst']}  ·  "
               f"≥ thr {_C['dim']}{effective_threshold:.2f}{_C['rst']}")
         detail = f"B:{_C['grn']}{buy_s:.2f}{_C['rst']}  ·  S:{_C['red']}{sell_s:.2f}{_C['rst']}"
@@ -853,7 +854,7 @@ def display_combined(spot_signal, futures_signal):
             sl_pct = abs(entry_px - sl) / entry_px * 100
             tp_pct = abs(tp - entry_px) / entry_px * 100
             rr = tp_pct / sl_pct if sl_pct > 0 else 0
-            _kv("SL", f"${sl:,.0f}  ({sl_pct:.2f}%)")
+            _kv("SL", f"${sl:,.0f}  (-{sl_pct:.2f}%)")
             _kv("TP1", f"${tp:,.0f}  (+{tp_pct:.2f}%)")
             if tp2:
                 tp2_pct = abs(tp2 - entry_px) / entry_px * 100
