@@ -4,6 +4,31 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-14 — feat: 5 strategy improvements (sample size, signal outcome, per-mode breaker, reentry filter, gate tracking)
+
+### Changed
+
+- **Win-rate min sample raised 3 → 5** (`signals/market_data.py`): 3 trades = ±33% standard error; far too noisy to base ±0.5–1.0 threshold moves on. Adaptive threshold now waits until 5 resolved WIN/LOSS trades are in the window before reacting. (Wilson lower-bound smoothing was prototyped and rejected — too conservative for the "lower threshold" path at small n.)
+
+- **`signals.outcome` now updated when paper position closes** (`trading/history.py`): Previously dead code. `close_paper_position()` now propagates the outcome and timestamp to the linked `signals` row via its `signal_id` FK. Enables retrospective queries like "score 6.5 STRONG → WIN/LOSS distribution" that were impossible before because every `signals.outcome` was an empty string.
+
+- **Drawdown circuit breaker is per-mode** (`run_bot.py`): Previously combined spot+futures into `total_dd`. A 12% futures collapse was masked by a 5% spot gain. Spot and futures now block independently — only the offending mode pauses new entries. Daily-loss check is also per-mode (`get_daily_pnl("spot")` and `get_daily_pnl("futures")` separately). Telegram circuit-breaker card shows both modes' DD and daily P&L for transparency.
+
+- **Re-entry quality benchmark = last RESOLVED WIN/LOSS in same direction** (`run_bot.py:_check_reentry_quality`): Previously compared against the most recent close of any kind in the mode — a quick FLIP at +0.1% or a VOL_EXIT at −0.3% would set an arbitrary baseline for the next BUY entry. Now filtered to `outcome IN ('WIN','LOSS') AND type = ?` so the benchmark is a meaningful executed trade in the same direction.
+
+### Added
+
+- **`signal_blocks` table for gate-block tracking** (`trading/history.py`, `run_bot.py`): New table records every Phase 3 gate rejection — mode, signal type, gate tag (e.g. `confidence_first`, `fakeout_pyramid`, `regime_bearish`), reason, strength, confidence, and FK to the signal. 29 block sites in `run_bot.py` instrumented via a single `_block(phase3_actions, mode, signal, gate, reason)` helper that writes to DB, logger, and phase3 status in one call. Lets us answer "which gate blocks the most signals" so the strictest gates can be tuned.
+
+  Suggested SQL:
+  ```sql
+  SELECT gate, COUNT(*) FROM signal_blocks
+   WHERE timestamp >= date('now','-7 days')
+   GROUP BY gate ORDER BY 2 DESC;
+  ```
+
+---
+
 ## 2026-05-14 — feat: complete outcome labels in Telegram + terminal display
 
 ### Changed

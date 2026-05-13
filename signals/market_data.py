@@ -449,8 +449,12 @@ def get_signal_confidence(strength, threshold):
 # Adaptive threshold
 # ---------------------------------------------------------------------------
 
+_MIN_WR_SAMPLE = 5  # raised from 3 — 3 trades = ±33% noise, not meaningful
+
+
 def _get_recent_win_rate(mode, hours=72):
-    """Return win rate (0-1) for positions closed within the window, or None if < 3 trades.
+    """Return win rate (0-1) for positions closed within the window, or None
+    when fewer than _MIN_WR_SAMPLE resolved trades exist.
 
     Denominator only includes resolved WIN/LOSS outcomes — VOL_EXIT, TIME_EXIT,
     FUNDING_EXIT, MACRO_CLOSE, BREAKER_CLOSE, FLIP are excluded so they don't
@@ -465,7 +469,7 @@ def _get_recent_win_rate(mode, hours=72):
                WHERE outcome IN ('WIN','LOSS') AND mode = ? AND closed_at >= ?""",
             (mode, cutoff),
         ).fetchall()
-        if len(rows) < 3:
+        if len(rows) < _MIN_WR_SAMPLE:
             return None
         wins = sum(1 for r in rows if r["outcome"] == "WIN")
         return wins / len(rows)

@@ -19,7 +19,7 @@ from notifier import _format_close_notification, _format_open_notification, _sen
 from trading.paper import check_and_close_positions, print_open_status, print_paper_summary
 from config import RISK_CONFIG, FUTURES_CONFIG, RISK_LIMITS
 from signals.sizing import calculate_position_size, get_pyramid_size_factor
-from trading.history import close as close_db, close_paper_position, get_open_position_count_by_direction, get_open_positions, has_open_position_same_direction, open_paper_position
+from trading.history import close as close_db, close_paper_position, get_open_position_count_by_direction, get_open_positions, has_open_position_same_direction, log_signal_block, open_paper_position
 
 _file_handler   = logging.FileHandler("spotsignal.log")
 _file_handler.setLevel(logging.INFO)
@@ -76,6 +76,10 @@ def _confidence_at_least(actual, minimum):
 def _check_reentry_quality(signal, mode):
     """TA-driven re-entry guard: skip if price is worse and confidence didn't improve.
 
+    Compared against the last RESOLVED WIN/LOSS in the same direction (not the
+    most recent close of any kind) — a quick FLIP or VOL_EXIT isn't a meaningful
+    benchmark for whether the current re-entry has improved.
+
     Returns (reason: str | None) — None means allow re-entry.
     """
     from trading.history import _conn
@@ -83,24 +87,21 @@ def _check_reentry_quality(signal, mode):
     row = c.execute(
         """SELECT p.entry_price, p.type, s.strength
            FROM paper_positions p
-           JOIN signals s ON p.signal_id = s.id
-           WHERE p.outcome IS NOT NULL AND p.mode = ?
+           LEFT JOIN signals s ON p.signal_id = s.id
+           WHERE p.outcome IN ('WIN','LOSS')
+             AND p.mode = ?
+             AND p.type = ?
            ORDER BY p.closed_at DESC LIMIT 1""",
-        (mode,),
+        (mode, signal["type"]),
     ).fetchone()
     if not row:
-        return None  # no history → allow
+        return None  # no resolved history in this direction → allow
 
     last_entry = row["entry_price"]
-    last_type = row["type"]
     last_strength = row["strength"] or 0
     new_entry = signal["entry_price"]
     new_type = signal["type"]
     new_strength = signal.get("strength", 0)
-
-    # Different direction → always allow
-    if new_type != last_type:
-        return None
 
     # Price improved for BUY (lower) / SELL (higher)
     price_improved = (new_type == "BUY" and new_entry <= last_entry) or \
@@ -266,6 +267,29 @@ def _calc_aggregate_risk(mode, new_entry_price, new_sl, new_size_factor, pyramid
     return total_risk, None
 
 
+def _block(phase3_actions, mode, signal, gate, reason):
+    """Log a Phase 3 gate block to DB + logger + phase3_actions in one call.
+
+    Returns None — callers should not branch on the value. Designed to replace
+    the 3-line `msg = …; logger.info(msg); phase3_actions.append(…)` pattern
+    so every block site automatically persists for later analysis.
+    """
+    try:
+        log_signal_block(
+            mode=mode,
+            signal_type=signal.get("type", "?") if signal else "?",
+            gate=gate, reason=reason,
+            strength=signal.get("strength") if signal else None,
+            confidence=signal.get("confidence") if signal else None,
+            signal_id=signal.get("db_id") if signal else None,
+        )
+    except Exception as e:
+        logger.debug("signal_blocks insert failed: %s", e)
+    logger.info(reason)
+    label = "SPOT" if mode == "spot" else "FUT "
+    phase3_actions.append(f"⏭ {label}  {reason}")
+
+
 # ---------------------------------------------------------------------------
 # Cycle
 # ---------------------------------------------------------------------------
@@ -317,37 +341,56 @@ def run_cycle():
     phase3_actions = []     # track what happened for summary
     pending_tg    = []      # defer Telegram notifications until after Phase 4
 
-    # ── Circuit breaker: check drawdown before any new entries ──
+    # ── Circuit breaker: per-mode drawdown + daily loss ──
+    # Spot and futures have very different risk profiles. Evaluating combined
+    # drawdown can mask a collapsing sub-account ("futures −12% but spot +5%
+    # = total −7%" lets futures keep adding). Each mode now blocks itself.
     import trading.history as _h
     spot_pnl, _, _ = _h.get_closed_pnl("spot")
     fut_pnl, _, _ = _h.get_closed_pnl("futures")
-    total_dd = -(spot_pnl + fut_pnl)  # negative P&L = positive drawdown
+    spot_dd = max(0, -spot_pnl)
+    fut_dd  = max(0, -fut_pnl)
+    total_dd = max(0, -(spot_pnl + fut_pnl))
     max_dd = RISK_LIMITS.get("max_drawdown_pct", 15.0)
     min_eq = RISK_LIMITS.get("min_equity_pct", 50.0)
 
-    daily_pnl = _h.get_daily_pnl()
+    daily_spot = _h.get_daily_pnl("spot")
+    daily_fut  = _h.get_daily_pnl("futures")
     daily_limit = RISK_LIMITS.get("daily_loss_limit", 5.0)
-    daily_breaker = daily_pnl < -daily_limit
 
-    if total_dd > max_dd or daily_breaker:
-        if daily_breaker:
-            msg = f"⛔ DAILY LOSS {daily_pnl:.1f}% > -{daily_limit}% limit — blocking new entries for today"
-        else:
-            msg = f"⛔ DRAWDOWN {total_dd:.1f}% > {max_dd}% — blocking new entries"
+    spot_block = (spot_dd > max_dd) or (daily_spot < -daily_limit)
+    fut_block  = (fut_dd > max_dd) or (daily_fut < -daily_limit)
+
+    def _breaker_reason(mode, dd, daily, dd_lim, daily_lim):
+        if daily < -daily_lim:
+            return f"daily loss {daily:.1f}% > -{daily_lim}%"
+        return f"drawdown {dd:.1f}% > {dd_lim}%"
+
+    if spot_block:
+        reason = _breaker_reason("spot", spot_dd, daily_spot, max_dd, daily_limit)
+        msg = f"⛔ SPOT  {reason} — blocking new spot entries"
         logger.warning(msg)
         phase3_actions.append(msg)
-        pending_tg.append((
-            f"⛔ <b>Circuit Breaker</b>\n"
-            f"{'Daily loss' if daily_breaker else 'Drawdown'} "
-            f"<b>{abs(daily_pnl if daily_breaker else total_dd):.1f}%</b> > limit\n"
-            f"All new entries blocked.",
-            "circuit-breaker",
-        ))
-        # Skip Phase 3 entirely — just run position checks (close existing)
         if spot_signal:
             spot_signal["type"] = "HOLD"
+
+    if fut_block:
+        reason = _breaker_reason("futures", fut_dd, daily_fut, max_dd, daily_limit)
+        msg = f"⛔ FUT   {reason} — blocking new futures entries"
+        logger.warning(msg)
+        phase3_actions.append(msg)
         if futures_signal:
             futures_signal["type"] = "HOLD"
+
+    if spot_block or fut_block:
+        modes_blocked = " + ".join(m for m, b in (("SPOT", spot_block), ("FUT", fut_block)) if b)
+        pending_tg.append((
+            f"⛔ <b>Circuit Breaker</b>\n"
+            f"{modes_blocked} new entries blocked\n"
+            f"Spot DD <b>{spot_dd:.1f}%</b>  ·  Fut DD <b>{fut_dd:.1f}%</b>\n"
+            f"Daily Spot <b>{daily_spot:+.1f}%</b>  ·  Daily Fut <b>{daily_fut:+.1f}%</b>",
+            "circuit-breaker",
+        ))
 
     if total_dd > (100 - min_eq):
         msg = f"🚨 EQUITY {100-total_dd:.0f}% < {min_eq}% — EMERGENCY close all"
@@ -392,47 +435,39 @@ def run_cycle():
                 # Gate 0a: TA-driven re-entry quality (price improved or confidence upgraded)
                 reentry_warn = _check_reentry_quality(spot_signal, "spot")
                 if reentry_warn:
-                    logger.info("Spot %s — %s — skipping", spot_signal['type'], reentry_warn)
-                    phase3_actions.append(f"⏭ SPOT  {reentry_warn}")
+                    _block(phase3_actions, "spot", spot_signal, "reentry_first", reentry_warn)
 
                 # Gate 0b: initial confidence floor
                 elif not _confidence_at_least(actual_conf, min_initial):
-                    msg = f"Spot {spot_signal['type']} requires ≥{min_initial} confidence for first entry (got {actual_conf}) — skipping"
-                    logger.info(msg)
-                    phase3_actions.append(f"⏭ SPOT  {msg}")
+                    _block(phase3_actions, "spot", spot_signal, "confidence_first",
+                           f"Spot {spot_signal['type']} requires ≥{min_initial} confidence for first entry (got {actual_conf}) — skipping")
 
                 # Gate 0c: fakeout check
                 elif fakeout_warn:
-                    logger.info("Spot %s — %s — skipping", spot_signal['type'], fakeout_warn)
-                    phase3_actions.append(f"⏭ SPOT  {fakeout_warn}")
+                    _block(phase3_actions, "spot", spot_signal, "fakeout_first", fakeout_warn)
 
                 # Gate 0d: psychology-level SL vulnerability
                 elif psy_warn:
-                    logger.info("Spot %s — %s — skipping", spot_signal['type'], psy_warn)
-                    phase3_actions.append(f"⏭ SPOT  {psy_warn}")
+                    _block(phase3_actions, "spot", spot_signal, "psy_sl_first", psy_warn)
 
                 # Gate 0e: S/R entry proximity risk
                 elif sr_warn:
-                    logger.info("Spot %s — %s — skipping", spot_signal['type'], sr_warn)
-                    phase3_actions.append(f"⏭ SPOT  {sr_warn}")
+                    _block(phase3_actions, "spot", spot_signal, "sr_first", sr_warn)
 
                 # Gate 0f: regime filter — no BUY in bearish trend
                 elif _is_bearish_regime(spot_signal):
-                    msg = f"Spot BUY blocked — bearish trend regime"
-                    logger.info(msg)
-                    phase3_actions.append(f"⏭ SPOT  {msg}")
+                    _block(phase3_actions, "spot", spot_signal, "regime_bearish",
+                           "Spot BUY blocked — bearish trend regime")
 
                 # Gate 0g: trend confluence — need 2/3 bullish confirmations
                 elif not _trend_confluence_ok(spot_signal):
-                    msg = f"Spot BUY blocked — trend confluence < 2/3"
-                    logger.info(msg)
-                    phase3_actions.append(f"⏭ SPOT  {msg}")
+                    _block(phase3_actions, "spot", spot_signal, "trend_confluence",
+                           "Spot BUY blocked — trend confluence < 2/3")
 
                 # Gate 0h: pullback-only — avoid breakout chase
                 elif _is_breakout_chase(spot_signal):
-                    msg = f"Spot BUY blocked — breakout chase (price above VWAP, not near support)"
-                    logger.info(msg)
-                    phase3_actions.append(f"⏭ SPOT  {msg}")
+                    _block(phase3_actions, "spot", spot_signal, "breakout_chase",
+                           "Spot BUY blocked — breakout chase (price above VWAP, not near support)")
 
                 else:
                     pid = open_paper_position(spot_signal, mode="spot", pyramid_entry=1, size_factor=1.0)
@@ -450,43 +485,37 @@ def run_cycle():
 
                 # Safety: bail if positions vanished between queries (macro close race)
                 if not entry_prices:
-                    msg = f"Spot {spot_signal['type']} positions cleared — skipping"
-                    logger.info(msg)
-                    phase3_actions.append(f"⏭ SPOT  {msg}")
+                    _block(phase3_actions, "spot", spot_signal, "positions_cleared",
+                           f"Spot {spot_signal['type']} positions cleared — skipping")
 
                 # Gate 1: max entries
                 elif existing_count >= max_entries:
-                    msg = f"Spot {spot_signal['type']} pyramid max {max_entries} reached ({existing_count} open) — skipping"
-                    logger.info(msg)
-                    phase3_actions.append(f"⏭ SPOT  {msg}")
+                    _block(phase3_actions, "spot", spot_signal, "pyramid_max_entries",
+                           f"Spot {spot_signal['type']} pyramid max {max_entries} reached ({existing_count} open) — skipping")
 
                 # Gate 2: confidence (ordinal — STRONG > NORMAL > WEAK)
                 elif not _confidence_at_least(actual_conf, min_conf):
-                    msg = f"Spot {spot_signal['type']} pyramid requires ≥{min_conf} confidence (got {actual_conf}) — skipping"
-                    logger.info(msg)
-                    phase3_actions.append(f"⏭ SPOT  {msg}")
+                    _block(phase3_actions, "spot", spot_signal, "pyramid_confidence",
+                           f"Spot {spot_signal['type']} pyramid requires ≥{min_conf} confidence (got {actual_conf}) — skipping")
 
                 # Gate 3: min distance from last entry (prevent doubling down)
                 elif atr <= 0:
-                    msg = f"Spot {spot_signal['type']} pyramid ATR invalid ({atr}) — cannot check entry distance"
-                    logger.info(msg)
-                    phase3_actions.append(f"⏭ SPOT  {msg}")
+                    _block(phase3_actions, "spot", spot_signal, "pyramid_atr_invalid",
+                           f"Spot {spot_signal['type']} pyramid ATR invalid ({atr}) — cannot check entry distance")
                 elif abs(spot_signal["entry_price"] - entry_prices[-1]) / atr < pyramid_cfg.get("min_entry_distance_atr", 0.5):
                     last_entry = entry_prices[-1]
                     dist_pct = abs(spot_signal["entry_price"] - last_entry) / last_entry * 100
                     min_dist = pyramid_cfg.get("min_entry_distance_atr", 0.5)
-                    msg = f"Spot {spot_signal['type']} pyramid distance {dist_pct:.2f}% (< {min_dist}× ATR) — skipping"
-                    logger.info(msg)
-                    phase3_actions.append(f"⏭ SPOT  {msg}")
+                    _block(phase3_actions, "spot", spot_signal, "pyramid_min_distance",
+                           f"Spot {spot_signal['type']} pyramid distance {dist_pct:.2f}% (< {min_dist}× ATR) — skipping")
 
                 # Gate 4: max distance from first entry (risk/reward degraded)
                 elif abs(spot_signal["entry_price"] - entry_prices[0]) / entry_prices[0] * 100 > pyramid_cfg.get("max_entry_distance_pct", 6.0):
                     first_entry = entry_prices[0]
                     dist_pct = abs(spot_signal["entry_price"] - first_entry) / first_entry * 100
                     max_dist = pyramid_cfg.get("max_entry_distance_pct", 6.0)
-                    msg = f"Spot {spot_signal['type']} pyramid distance from 1st {dist_pct:.1f}% (> {max_dist}%) — skipping"
-                    logger.info(msg)
-                    phase3_actions.append(f"⏭ SPOT  {msg}")
+                    _block(phase3_actions, "spot", spot_signal, "pyramid_max_distance",
+                           f"Spot {spot_signal['type']} pyramid distance from 1st {dist_pct:.1f}% (> {max_dist}%) — skipping")
 
                 # Gate 5a: psychology-level SL vulnerability (stop-hunt risk)
                 elif (psy_warn := _check_psychology_sl_risk(
@@ -494,8 +523,7 @@ def run_cycle():
                     pyramid_cfg.get("psychology_level_step", 1000),
                     pyramid_cfg.get("psychology_buffer_pct", 0.15),
                 )):
-                    logger.info("Spot %s — %s — skipping", spot_signal['type'], psy_warn)
-                    phase3_actions.append(f"⏭ SPOT  {psy_warn}")
+                    _block(phase3_actions, "spot", spot_signal, "psy_sl_pyramid", psy_warn)
 
                 # Gate 5b: entry just above psychology level (false breakout risk)
                 elif (psy_entry_warn := _check_psychology_entry_risk(
@@ -503,8 +531,7 @@ def run_cycle():
                     pyramid_cfg.get("psychology_level_step", 1000),
                     pyramid_cfg.get("psychology_buffer_pct", 0.15),
                 )):
-                    logger.info("Spot %s — %s — skipping", spot_signal['type'], psy_entry_warn)
-                    phase3_actions.append(f"⏭ SPOT  {psy_entry_warn}")
+                    _block(phase3_actions, "spot", spot_signal, "psy_entry_pyramid", psy_entry_warn)
 
                 # Gate 6: S/R entry risk (entry too close to resistance for BUY)
                 elif (sr_warn := _check_sr_entry_risk(
@@ -513,15 +540,13 @@ def run_cycle():
                     spot_signal["type"], atr,
                     atr_mult=pyramid_cfg.get("sr_entry_risk_atr", 1.0),
                 )):
-                    logger.info("Spot %s — %s — skipping", spot_signal['type'], sr_warn)
-                    phase3_actions.append(f"⏭ SPOT  {sr_warn}")
+                    _block(phase3_actions, "spot", spot_signal, "sr_pyramid", sr_warn)
 
                 # Gate 7: fakeout / rejection pattern
                 elif (fakeout_warn := _detect_fakeout_rejection(
                     spot_signal, wick_ratio=pyramid_cfg.get("fakeout_wick_ratio", 0.6),
                 )):
-                    logger.info("Spot %s — %s — skipping", spot_signal['type'], fakeout_warn)
-                    phase3_actions.append(f"⏭ SPOT  {fakeout_warn}")
+                    _block(phase3_actions, "spot", spot_signal, "fakeout_pyramid", fakeout_warn)
 
                 else:
                     entry_number = existing_count + 1
@@ -531,9 +556,8 @@ def run_cycle():
                     base_size = calculate_position_size(spot_signal)["usdt_amount"]
 
                     if base_size * size_factor < min_size:
-                        msg = f"Spot {spot_signal['type']} pyramid #{entry_number} size ${base_size * size_factor:.2f} < ${min_size:.2f} min — skipping"
-                        logger.info(msg)
-                        phase3_actions.append(f"⏭ SPOT  {msg}")
+                        _block(phase3_actions, "spot", spot_signal, "pyramid_min_size",
+                               f"Spot {spot_signal['type']} pyramid #{entry_number} size ${base_size * size_factor:.2f} < ${min_size:.2f} min — skipping")
                     else:
                         # Tighten SL for pyramid entries using additive ATR step
                         # Entry #2: 1.5×ATR → 1.25×ATR, Entry #3: 1.25×ATR → 1.0×ATR (floor)
@@ -553,9 +577,8 @@ def run_cycle():
                             spot_signal["stop_loss"], size_factor, pyramid_cfg,
                         )
                         if agg_warn:
-                            msg = f"Spot {spot_signal['type']} pyramid #{entry_number} — {agg_warn}"
-                            logger.info(msg)
-                            phase3_actions.append(f"⏭ SPOT  {msg}")
+                            _block(phase3_actions, "spot", spot_signal, "pyramid_aggregate_risk",
+                                   f"Spot {spot_signal['type']} pyramid #{entry_number} — {agg_warn}")
                         else:
                             pid = open_paper_position(spot_signal, mode="spot", pyramid_entry=entry_number, size_factor=size_factor)
                             size_note = f" (size {size_factor * 100:.0f}% of base)" if size_factor < 1.0 else ""
@@ -569,9 +592,8 @@ def run_cycle():
                             ))
             else:
                 # Pyramid disabled — preserve existing skip behaviour
-                msg = f"Already have open {spot_signal['type']} spot — skipping"
-                logger.info(msg)
-                phase3_actions.append(f"⏭ SPOT  {msg}")
+                _block(phase3_actions, "spot", spot_signal, "already_open",
+                       f"Already have open {spot_signal['type']} spot — skipping")
 
         # Futures positions — close-and-flip on opposite signal
         if futures_signal and futures_signal["type"] != "HOLD":
@@ -608,16 +630,13 @@ def run_cycle():
 
                 # Gate: skip flip if loss > expected reward (can't recover)
                 if flip_pnl_total < -expected_reward:
-                    msg = f"FUT flip blocked: loss {flip_pnl_total:.2f}% > expected reward {expected_reward:.2f}% — skipping open"
-                    logger.info(msg)
-                    phase3_actions.append(f"⏭ FUT  {msg}")
+                    _block(phase3_actions, "futures", futures_signal, "flip_unprofitable",
+                           f"FUT flip blocked: loss {flip_pnl_total:.2f}% > expected reward {expected_reward:.2f}% — skipping open")
                 elif not _confidence_at_least(actual_conf, min_conf):
-                    msg = f"FUT flip requires ≥{min_conf} confidence (got {actual_conf}) — skipping open"
-                    logger.info(msg)
-                    phase3_actions.append(f"⏭ FUT  {msg}")
+                    _block(phase3_actions, "futures", futures_signal, "flip_confidence",
+                           f"FUT flip requires ≥{min_conf} confidence (got {actual_conf}) — skipping open")
                 elif fakeout_warn:
-                    logger.info("FUT %s — %s — skipping open", futures_signal['type'], fakeout_warn)
-                    phase3_actions.append(f"⏭ FUT  {fakeout_warn}")
+                    _block(phase3_actions, "futures", futures_signal, "flip_fakeout", fakeout_warn)
                 else:
                     pid = open_paper_position(futures_signal, mode="futures")
                     msg = f"FUT {futures_signal['type']} opened (#{pid}) @ ${futures_signal['entry_price']:,.0f} (flip)"
@@ -626,24 +645,20 @@ def run_cycle():
                     pending_tg.append((_format_open_notification(futures_signal, pid, "futures"), "position-open"))
 
             elif has_open_position_same_direction(futures_signal["type"], "futures"):
-                msg = f"Already have open {futures_signal['type']} futures — skipping"
-                logger.info(msg)
-                phase3_actions.append(f"⏭ FUT  {msg}")
+                _block(phase3_actions, "futures", futures_signal, "already_open",
+                       f"Already have open {futures_signal['type']} futures — skipping")
 
             else:
                 # First futures entry — quality gates
                 reentry_warn = _check_reentry_quality(futures_signal, "futures") \
                     if fut_entry_cfg.get("reentry_price_check", True) else None
                 if reentry_warn:
-                    logger.info("FUT %s — %s — skipping", futures_signal['type'], reentry_warn)
-                    phase3_actions.append(f"⏭ FUT  {reentry_warn}")
+                    _block(phase3_actions, "futures", futures_signal, "reentry_first", reentry_warn)
                 elif not _confidence_at_least(actual_conf, min_conf):
-                    msg = f"FUT {futures_signal['type']} requires ≥{min_conf} confidence (got {actual_conf}) — skipping"
-                    logger.info(msg)
-                    phase3_actions.append(f"⏭ FUT  {msg}")
+                    _block(phase3_actions, "futures", futures_signal, "confidence_first",
+                           f"FUT {futures_signal['type']} requires ≥{min_conf} confidence (got {actual_conf}) — skipping")
                 elif fakeout_warn:
-                    logger.info("FUT %s — %s — skipping", futures_signal['type'], fakeout_warn)
-                    phase3_actions.append(f"⏭ FUT  {fakeout_warn}")
+                    _block(phase3_actions, "futures", futures_signal, "fakeout_first", fakeout_warn)
                 else:
                     # Aggregate risk cap
                     agg_risk, agg_warn = _calc_aggregate_risk(
@@ -652,9 +667,8 @@ def run_cycle():
                         {"max_aggregate_risk_pct": fut_entry_cfg.get("max_aggregate_risk_pct", 8.0)},
                     )
                     if agg_warn:
-                        msg = f"FUT {futures_signal['type']} — {agg_warn}"
-                        logger.info(msg)
-                        phase3_actions.append(f"⏭ FUT  {msg}")
+                        _block(phase3_actions, "futures", futures_signal, "aggregate_risk",
+                               f"FUT {futures_signal['type']} — {agg_warn}")
                     else:
                         pid = open_paper_position(futures_signal, mode="futures")
                         msg = f"FUT {futures_signal['type']} opened (#{pid}) @ ${futures_signal['entry_price']:,.0f}"
