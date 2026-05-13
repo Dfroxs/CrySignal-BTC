@@ -214,6 +214,19 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         else:
             signal['reasons'].append(f"⚠️  HTF Disagreement ({htf_label}) — caution")
 
+        # Penalty for true HTF conflict (one timeframe BULLISH, other BEARISH).
+        # NEUTRAL vs anything is ambiguous — no penalty.
+        # Penalises the dominant buy/sell side by -1.0 so borderline signals don't fire
+        # against the longer-term trend.
+        htf_dirs = [htf.get(k) for k in htf_keys]
+        if not htf['aligned'] and 'BULLISH' in htf_dirs and 'BEARISH' in htf_dirs:
+            if buy_conditions >= sell_conditions:
+                buy_conditions = max(0, buy_conditions - 1.0)
+                signal['reasons'].append("⬇ HTF conflict penalty −1.0 (4H vs 1D opposing)")
+            else:
+                sell_conditions = max(0, sell_conditions - 1.0)
+                signal['reasons'].append("⬇ HTF conflict penalty −1.0 (4H vs 1D opposing)")
+
     # 8 — OBV slope (5-candle)
     obv_slope = df['OBV'].iloc[-1] - df['OBV'].iloc[-5]
     obv_denom = df['volume'].iloc[-5:].sum()

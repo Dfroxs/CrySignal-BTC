@@ -4,6 +4,16 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-14 — fix: VOL_EXIT too aggressive + HTF conflict penalty
+
+### Fixed
+
+- **VOL_EXIT multiplier too low** (`config.py`): `vol_expansion_exit_mult` raised 1.5 → 2.0. At 1.5×, futures positions were closed within 1–2 cycles whenever volatility expanded slightly (ATR 1.5× entry ATR), preventing trades from reaching TP1. All 3 futures positions in live data were VOL_EXIT at small losses. At 2.0× the threshold is more realistic — requires a true volatility spike (doubled ATR) before force-closing.
+
+- **HTF conflict no penalty** (`signals/engine.py`): When both HTF timeframes actively oppose each other (4H BULLISH vs 1D BEARISH or vice versa), the engine previously showed a "caution" note but did not reduce the signal score. In live data, 100% of signals fired with HTF misalignment. Fixed: when `aligned=False` and the two timeframes are directly opposing (BULLISH vs BEARISH — not just NEUTRAL), the dominant side (buy or sell) is penalised −1.0. This makes borderline signals drop below threshold rather than firing against the longer-term trend.
+
+---
+
 ## 2026-05-12 — fix: 2 paper-trading position bugs (gap-through P&L, return type)
 
 ### Fixed
