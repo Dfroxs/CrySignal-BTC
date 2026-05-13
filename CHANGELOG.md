@@ -4,6 +4,24 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-14 — fix: closed_at corruption + recent win-rate denominator
+
+### Fixed
+
+- **`closed_at` column corrupted with price strings** (`trading/history.py`, `trading/paper.py`, `run_bot.py`): Five call sites (`TIME_EXIT`, `VOL_EXIT`, two `FUNDING_EXIT`, `FLIP`, plus the newly added `BREAKER_CLOSE`) were passing the exit *price* as the `closed_at` argument to `close_paper_position()`. Because SQLite stores TEXT columns as-is, rows ended up with `closed_at = "80938.53"` instead of an ISO timestamp. This silently broke two queries that compare `closed_at` lexicographically:
+  1. `get_daily_pnl()` — daily-loss circuit breaker filter `closed_at >= "2026-05-14 00:00:00"`. Any numeric string starting with a digit `>= '2'` lexicographically wins, so historical VOL/TIME exits where BTC traded in the $30k–$99k range were always counted as "today's" P&L. The circuit breaker could fire incorrectly or fail to fire when it should.
+  2. `_get_recent_win_rate()` — adaptive threshold cutoff `closed_at >= cutoff_iso`. Same lexicographic trap → over-counted stale closes in the recent window, dragging win rate down and pushing the threshold up.
+
+  Fixes:
+  - Added `exit_price REAL` column to `paper_positions`.
+  - `close_paper_position()` now accepts `exit_price=` explicitly; numeric `closed_at` is auto-routed into `exit_price` and `closed_at` defaults to the ISO timestamp.
+  - Migration repairs historical rows: any `closed_at` that parses as a float is moved into `exit_price` and `closed_at` is set to NULL.
+  - All five call sites updated to pass `exit_price=` instead of `closed_at=`.
+
+- **`_get_recent_win_rate()` over-counted non-WIN/LOSS outcomes** (`signals/market_data.py`): The denominator included VOL_EXIT, TIME_EXIT, FUNDING_EXIT, MACRO_CLOSE, BREAKER_CLOSE, FLIP — so a flurry of VOL_EXITs at small losses (caused by the prior ATR-scale bug) dragged the win rate down and triggered aggressive +1.0 threshold raises in the 24h fast-window logic. Filter changed to `outcome IN ('WIN','LOSS')` matching `get_win_rate()`.
+
+---
+
 ## 2026-05-14 — fix: per-mode ATR + emergency-close P&L + trail outcome labels
 
 ### Fixed

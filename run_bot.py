@@ -362,7 +362,7 @@ def run_cycle():
                               else ((p["entry_price"] - breaker_px) / p["entry_price"] * 100)
             else:
                 breaker_pnl = 0
-            _h.close_paper_position(p["id"], "BREAKER_CLOSE", round(breaker_pnl, 2), closed_at=breaker_px)
+            _h.close_paper_position(p["id"], "BREAKER_CLOSE", round(breaker_pnl, 2), exit_price=breaker_px)
 
     try:
         # Spot positions — BUY-only (no short selling on spot)
@@ -589,7 +589,7 @@ def run_cycle():
                 entry = opp["entry_price"]
                 flip_px = futures_signal["entry_price"]
                 pnl = ((entry - flip_px) / entry * 100) if opp_dir == "SELL" else ((flip_px - entry) / entry * 100)
-                close_paper_position(opp["id"], "FLIP", round(pnl, 2), closed_at=flip_px)
+                close_paper_position(opp["id"], "FLIP", round(pnl, 2), exit_price=flip_px)
                 msg = f"FUT {opp['type']} flipped → {futures_signal['type']} (#{opp['id']} closed, P&L {pnl:+.2f}%)"
                 logger.info(msg)
                 phase3_actions.append(f"🔄 {msg}")

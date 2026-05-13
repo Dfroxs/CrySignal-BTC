@@ -135,6 +135,7 @@ def _migrate_paper_positions():
         ("mode",           "TEXT DEFAULT 'futures'"),
         ("pyramid_entry",  "INTEGER DEFAULT NULL"),
         ("size_factor",    "REAL DEFAULT 1.0"),
+        ("exit_price",     "REAL"),
     ]
     for col, coltype in new_cols:
         try:
@@ -149,6 +150,34 @@ def _migrate_paper_positions():
         WHERE tp1 IS NULL AND outcome IS NULL
     """)
     c.commit()
+
+    # ── Repair historical rows where closed_at was stored as a price string ──
+    # (TIME_EXIT/VOL_EXIT/FUNDING_EXIT used to pass exit_price as closed_at.)
+    # Move the numeric value into exit_price and clear closed_at so daily-PnL
+    # queries (closed_at >= today) stop matching them via lexicographic compare.
+    rows = c.execute(
+        "SELECT id, closed_at FROM paper_positions WHERE closed_at IS NOT NULL AND exit_price IS NULL"
+    ).fetchall()
+    repaired = 0
+    for r in rows:
+        raw = r["closed_at"]
+        if not raw:
+            continue
+        try:
+            exit_px = float(raw)
+        except (TypeError, ValueError):
+            continue  # already a timestamp
+        c.execute(
+            "UPDATE paper_positions SET exit_price = ?, closed_at = NULL WHERE id = ?",
+            (exit_px, r["id"]),
+        )
+        repaired += 1
+    if repaired:
+        c.commit()
+        logger.warning(
+            "Repaired %d paper_positions row(s): moved price-string closed_at → exit_price",
+            repaired,
+        )
 
 
 def migrate_from_csv():
@@ -446,18 +475,35 @@ def get_open_position_count_by_direction(direction, mode=None):
     return row[0]
 
 
-def close_paper_position(pos_id, outcome, pnl_pct, closed_at=None):
-    """Mark a paper position as closed, weighting P&L by size_factor for pyramid entries."""
+def close_paper_position(pos_id, outcome, pnl_pct, closed_at=None, exit_price=None):
+    """Mark a paper position as closed, weighting P&L by size_factor for pyramid entries.
+
+    `closed_at` is always a timestamp (ISO string); `exit_price` stores the fill
+    price separately so that day-bucketed queries on `closed_at` are not corrupted
+    by numeric values.
+    """
     c = _conn()
     row = c.execute("SELECT size_factor FROM paper_positions WHERE id=?", (pos_id,)).fetchone()
     sf = float(row["size_factor"] or 1.0) if row else 1.0
+
+    # Back-compat: callers used to pass a numeric `closed_at` meaning exit price.
+    # Detect that case and route it into the right column with a warning.
+    if closed_at is not None and not isinstance(closed_at, str):
+        try:
+            exit_price = exit_price if exit_price is not None else float(closed_at)
+        except (TypeError, ValueError):
+            pass
+        closed_at = None
+
     c.execute(
         """UPDATE paper_positions
-           SET outcome=?, pnl_pct=?, closed_at=?
+           SET outcome=?, pnl_pct=?, closed_at=?, exit_price=?
            WHERE id=?""",
         (
             outcome, round(pnl_pct * sf, 3),
-            closed_at or datetime.now(UTC).isoformat(), pos_id,
+            closed_at or datetime.now(UTC).isoformat(),
+            float(exit_price) if exit_price is not None else None,
+            pos_id,
         ),
     )
     c.commit()

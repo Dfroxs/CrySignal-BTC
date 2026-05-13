@@ -137,7 +137,7 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
                 age_hours = (datetime.now(UTC) - opened_dt).total_seconds() / 3600
                 if age_hours > max_hours:
                     exit_pnl = _calc_pnl(pos, current_price)
-                    sh.close_paper_position(pos_id, "TIME_EXIT", exit_pnl, closed_at=current_price)
+                    sh.close_paper_position(pos_id, "TIME_EXIT", exit_pnl, exit_price=current_price)
                     closed.append({
                         "type": pos["type"], "entry": entry,
                         "exit": current_price, "pnl": exit_pnl,
@@ -156,7 +156,7 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
         vol_mult = RISK_CONFIG.get("vol_expansion_exit_mult", 2.0)
         if entry_atr > 0 and current_atr > 0 and current_atr > entry_atr * vol_mult:
             exit_pnl = _calc_pnl(pos, current_price)
-            sh.close_paper_position(pos_id, "VOL_EXIT", exit_pnl, closed_at=current_price)
+            sh.close_paper_position(pos_id, "VOL_EXIT", exit_pnl, exit_price=current_price)
             closed.append({
                 "type": pos["type"], "entry": entry,
                 "exit": current_price, "pnl": exit_pnl,
@@ -176,7 +176,7 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
             close_short_rate = fe_cfg.get("close_short_rate", -0.05)
             if pos["type"] == "BUY" and funding_rate > close_long_rate:
                 exit_pnl = _calc_pnl(pos, current_price)
-                sh.close_paper_position(pos_id, "FUNDING_EXIT", exit_pnl, closed_at=current_price)
+                sh.close_paper_position(pos_id, "FUNDING_EXIT", exit_pnl, exit_price=current_price)
                 closed.append({
                     "type": pos["type"], "entry": entry,
                     "exit": current_price, "pnl": exit_pnl,
@@ -189,7 +189,7 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
                 continue
             elif pos["type"] == "SELL" and funding_rate < close_short_rate:
                 exit_pnl = _calc_pnl(pos, current_price)
-                sh.close_paper_position(pos_id, "FUNDING_EXIT", exit_pnl, closed_at=current_price)
+                sh.close_paper_position(pos_id, "FUNDING_EXIT", exit_pnl, exit_price=current_price)
                 closed.append({
                     "type": pos["type"], "entry": entry,
                     "exit": current_price, "pnl": exit_pnl,

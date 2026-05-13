@@ -450,14 +450,19 @@ def get_signal_confidence(strength, threshold):
 # ---------------------------------------------------------------------------
 
 def _get_recent_win_rate(mode, hours=72):
-    """Return win rate (0-1) for positions closed within the window, or None if < 3 trades."""
+    """Return win rate (0-1) for positions closed within the window, or None if < 3 trades.
+
+    Denominator only includes resolved WIN/LOSS outcomes — VOL_EXIT, TIME_EXIT,
+    FUNDING_EXIT, MACRO_CLOSE, BREAKER_CLOSE, FLIP are excluded so they don't
+    artificially deflate the rate (and trigger aggressive threshold raises).
+    """
     try:
         from trading.history import _conn
         c = _conn()
         cutoff = (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
         rows = c.execute(
             """SELECT outcome FROM paper_positions
-               WHERE outcome IS NOT NULL AND mode = ? AND closed_at >= ?""",
+               WHERE outcome IN ('WIN','LOSS') AND mode = ? AND closed_at >= ?""",
             (mode, cutoff),
         ).fetchall()
         if len(rows) < 3:
