@@ -4,6 +4,48 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-12 — fix: 2 paper-trading position bugs (gap-through P&L, return type)
+
+### Fixed
+
+- **Gap-through TP1+TP2 same-cycle P&L understatement** (`trading/paper.py`): When price gaps through both TP1 and TP2 in a single bot cycle, `pos.get("partial_pnl")` was returning the stale value from the loop-start snapshot (0 for fresh positions) because the `pos` dict was never updated after `sh.partial_close_position()`. Combined P&L was calculated as `0 × 0.5 + remaining_pnl × 0.5` instead of the correct blend. Fixed by adding `pos['partial_pnl'] = pnl` immediately after `sh.partial_close_position()` in both BUY (line 223) and SELL (line 290) TP1 blocks.
+- **`check_and_close_positions()` returns `None` instead of `[]`** (`trading/paper.py:117`): When no open positions exist, the function returned `None` implicitly. Callers used `or []` defensively so no crash occurred, but the implicit `None` was a latent bug. Fixed to `return []`.
+
+---
+
+## 2026-05-12 — fix: misleading "pyramid eligible" label in VERDICT display
+
+### Fixed
+
+- **"pyramid eligible" shown when no positions exist** (`signals/terminal.py`): The label `🧩 pyramid eligible` appeared in the VERDICT box for every SPOT STRONG signal, regardless of whether any positions were open. This was confusing because it implies pyramiding happened or should have happened, even when the first-entry gates (fakeout, trend confluence, S/R proximity, etc.) blocked the entry. Fixed: now checks `get_open_position_count_by_direction()` — if open positions exist, shows `🧩 pyramid eligible`; if none, shows `⭐ entry grade: STRONG` instead.
+
+---
+
+## 2026-05-12 — feat: 3 new analysis conditions (MFI, CMF, Taker Ratio) + MACD ADX gate
+
+### Added
+
+- **Condition 20 — MFI (Money Flow Index)** (`signals/engine.py`, `signals/indicators.py`, `signals/ohlcv.py`): Volume-weighted RSI combining price direction + volume to detect institutional flow. Oversold ≤20 → +1.5, buy zone 21–40 → +0.75, sell zone 60–79 → +0.75, overbought ≥80 → +1.5. Applies to both spot and futures.
+- **Condition 21 — CMF (Chaikin Money Flow)** (`signals/engine.py`, `signals/indicators.py`, `signals/ohlcv.py`): 20-period accumulation/distribution oscillator measuring institutional buying vs. selling pressure. Strong accumulation ≥+0.25 → +1.0, mild ≥+0.10 → +0.5, mild distribution ≤−0.10 → +0.5, strong ≤−0.25 → +1.0. Applies to both spot and futures.
+- **Condition 22 — Taker Buy/Sell Ratio** (`signals/engine.py`, `signals/market_data.py`, `signals/futures.py`): Binance futures aggressive order-flow metric. Ratio ≥1.2 (buyers dominant) → +1.0, ≤0.8 (sellers dominant) → +1.0 against. Futures-only condition.
+- **`compute_mfi()`** (`signals/indicators.py`): Money Flow Index calculation (14-period default).
+- **`compute_cmf()`** (`signals/indicators.py`): Chaikin Money Flow calculation (20-period default).
+- **`fetch_taker_buy_sell_ratio()`** (`signals/market_data.py`): Fetches Binance `/futures/data/takerlongshortRatio` and returns `{ratio, bias}` dict.
+- **MFI/CMF in terminal display** (`signals/terminal.py`): Both indicators shown in TECHNICALS section with color-coded oversold/overbought/accumulation tags.
+- **MFI/CMF in `_last` dict** (`signals/spot.py`, `signals/futures.py`): Added `mfi` and `cmf` keys for downstream display.
+
+### Improved
+
+- **MACD ADX gate** (`signals/engine.py`): MACD crossover now awards full 1.5 weight only when ADX ≥ 20 (trending market); reduced to 0.75 in ranging markets (ADX < 20) to suppress false signals. Reason appended: "(ADX N — reduced)".
+- **ADX pre-computation** (`signals/engine.py`): ADX computed once at the start of `generate_signals()` into `_adx_pre` so condition 3 (MACD) can use it before condition 18 (ADX) executes.
+
+### Config
+
+- **`SIGNAL_MAX_SCORE`** (`config.py`): Updated 22.25 → 25.75 (+1.5 MFI +1.0 CMF +1.0 taker ratio).
+- **`SPOT_MAX_SCORE`** (`config.py`): Updated 19.25 → 21.75 (+1.5 MFI +1.0 CMF).
+
+---
+
 ## 2026-05-12 — fix: Telegram SELL signal missing confidence label and action guidance
 
 ### Fixed

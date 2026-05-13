@@ -114,7 +114,7 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
     # ── Normal position management ──────────────────────────────────
     open_positions = sh.get_open_positions(mode)
     if not open_positions:
-        return
+        return []
 
     for pos in open_positions:
         pos_id  = pos["id"]
@@ -222,6 +222,7 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
                 pnl = (tp1 - entry) / entry * 100 - _costs
                 sh.partial_close_position(pos_id, pnl, new_sl=entry)
                 trail = entry  # breakeven
+                pos['partial_pnl'] = pnl  # keep pos dict in sync for same-cycle TP2 gap-through
                 closed.append({
                     "type": pos["type"], "entry": entry,
                     "exit": tp1, "pnl": pnl,
@@ -289,6 +290,7 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
                 pnl = (entry - tp1) / entry * 100 - _costs
                 sh.partial_close_position(pos_id, pnl, new_sl=entry)
                 trail = entry
+                pos['partial_pnl'] = pnl  # keep pos dict in sync for same-cycle TP2 gap-through
                 closed.append({
                     "type": pos["type"], "entry": entry,
                     "exit": tp1, "pnl": pnl,

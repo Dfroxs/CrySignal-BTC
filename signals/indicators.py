@@ -73,6 +73,29 @@ def calculate_vwap(df, period=24):
     return (typical_price * df['volume']).rolling(period).sum() / df['volume'].rolling(period).sum()
 
 
+def compute_mfi(df, period=14):
+    """Money Flow Index — volume-weighted RSI.
+    Combines price direction AND volume, detecting institutional accumulation/distribution.
+    Range 0-100: <20 oversold, >80 overbought."""
+    typical = (df['high'] + df['low'] + df['close']) / 3
+    raw_mf  = typical * df['volume']
+    pos_mf  = raw_mf.where(typical > typical.shift(1), 0.0)
+    neg_mf  = raw_mf.where(typical < typical.shift(1), 0.0)
+    pos_sum = pos_mf.rolling(period).sum()
+    neg_sum = neg_mf.rolling(period).sum()
+    mfi = 100 - (100 / (1 + pos_sum / neg_sum.replace(0, 1e-9)))
+    return mfi
+
+
+def compute_cmf(df, period=20):
+    """Chaikin Money Flow — accumulation/distribution oscillator.
+    Range -1 to +1: >+0.10 = accumulation (buying pressure), <-0.10 = distribution."""
+    hl  = (df['high'] - df['low']).replace(0, 1e-9)
+    mfv = ((df['close'] - df['low']) - (df['high'] - df['close'])) / hl * df['volume']
+    vol_sum = df['volume'].rolling(period).sum().replace(0, 1e-9)
+    return mfv.rolling(period).sum() / vol_sum
+
+
 def calculate_stoch_rsi(data, rsi_period=14, stoch_period=14, smooth_k=3, smooth_d=3):
     """Stochastic RSI — K and D lines, range 0-100.
     Crossover in oversold (<20) or overbought (>80) zones gives momentum signal."""

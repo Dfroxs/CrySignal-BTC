@@ -227,6 +227,14 @@ def display_analysis(df, signal, news_data, htf=None, market_structure=None, tim
     obv_slope = df["OBV"].iloc[-1] - df["OBV"].iloc[-5]
     obv_tag = f"{_C['grn']}▲{_C['rst']}" if obv_slope > 0 else f"{_C['red']}▼{_C['rst']}"
     _kv("OBV (5c)", f"{obv_slope:+,.0f}  {obv_tag}")
+    mfi_val = last.get("MFI_14")
+    if mfi_val is not None and not pd.isna(mfi_val):
+        mfi_tag = f" {_C['grn']}OS{_C['rst']}" if mfi_val <= 20 else (f" {_C['red']}OB{_C['rst']}" if mfi_val >= 80 else "")
+        _kv("MFI 14", f"{mfi_val:.0f}{mfi_tag}")
+    cmf_val = last.get("CMF_20")
+    if cmf_val is not None and not pd.isna(cmf_val):
+        cmf_col = "grn" if cmf_val > 0.10 else ("red" if cmf_val < -0.10 else "dim")
+        _kv("CMF 20", f"{_C[cmf_col]}{cmf_val:+.3f}{_C['rst']}")
     div = signal.get("rsi_divergence", "NONE")
     div_str = {"BULLISH": f"{_C['grn']}▲ BULL{_C['rst']}", "BEARISH": f"{_C['red']}▼ BEAR{_C['rst']}"}.get(div, "─")
     _kv("RSI Diverg", div_str)
@@ -579,6 +587,7 @@ def _section(title):
 
 def _combined_box(spot_signal, futures_signal):
     """Single verdict box with both signal lines."""
+    import trading.history as _sh
     box_w = _W + 2
     lines = []
 
@@ -660,7 +669,11 @@ def _combined_box(spot_signal, futures_signal):
             if conf:
                 det += f"  ·  {conf} conf"
                 if mode == "spot" and conf == "STRONG":
-                    det += "  ·  🧩 pyramid eligible"
+                    _existing = _sh.get_open_position_count_by_direction(stype, "spot")
+                    if _existing > 0:
+                        det += "  ·  🧩 pyramid eligible"
+                    else:
+                        det += "  ·  ⭐ entry grade: STRONG"
             lines.append(det)
 
     if not lines:
@@ -816,6 +829,18 @@ def display_combined(spot_signal, futures_signal):
         obv = last.get("obv_slope", 0)
         obv_dir = f"{_C['grn']}▲{_C['rst']}" if obv > 0 else f"{_C['red']}▼{_C['rst']}"
         _kv("OBV", f"{obv:+,.0f}{obv_dir}")
+
+        mfi = last.get("mfi")
+        if mfi is not None:
+            import pandas as _pd
+            if not _pd.isna(mfi):
+                mfi_tag = f" {_C['grn']}OS{_C['rst']}" if mfi <= 20 else (f" {_C['red']}OB{_C['rst']}" if mfi >= 80 else "")
+                _kv("MFI", f"{mfi:.0f}{mfi_tag}")
+        cmf = last.get("cmf")
+        if cmf is not None:
+            if not _pd.isna(cmf):
+                cmf_col = "grn" if cmf > 0.10 else ("red" if cmf < -0.10 else "dim")
+                _kv("CMF", f"{_C[cmf_col]}{cmf:+.3f}{_C['rst']}")
 
         # HTF
         htf = sig.get("_htf", {})

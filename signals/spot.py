@@ -114,6 +114,8 @@ def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
             'obv_slope': df['OBV'].iloc[-1] - df['OBV'].iloc[-5],
             'hi24': df['high'].tail(6).max(),
             'lo24': df['low'].tail(6).min(),
+            'mfi': last.get('MFI_14'),
+            'cmf': last.get('CMF_20'),
         }
         _spot_cache["timestamp"] = candle_ts
         _spot_cache["signal"] = signal
