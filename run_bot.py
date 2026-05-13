@@ -80,9 +80,16 @@ def _check_reentry_quality(signal, mode):
     most recent close of any kind) — a quick FLIP or VOL_EXIT isn't a meaningful
     benchmark for whether the current re-entry has improved.
 
+    Allows re-entry on any of:
+      - better entry price (lower for BUY, higher for SELL), or
+      - confidence tier upgrade (WEAK → NORMAL → STRONG), or
+      - raw strength gain ≥ +0.3 (was +0.5; threshold-scaled — most signals
+        only span 5.0–6.5, +0.5 was unreachable without an explicit tier jump).
+
     Returns (reason: str | None) — None means allow re-entry.
     """
     from trading.history import _conn
+    from signals.market_data import get_signal_confidence
     c = _conn()
     row = c.execute(
         """SELECT p.entry_price, p.type, s.strength
@@ -106,41 +113,72 @@ def _check_reentry_quality(signal, mode):
     # Price improved for BUY (lower) / SELL (higher)
     price_improved = (new_type == "BUY" and new_entry <= last_entry) or \
                      (new_type == "SELL" and new_entry >= last_entry)
-
     if price_improved:
-        return None  # better entry price → allow
+        return None
 
-    # Price is worse — require strength upgrade (at least +0.5)
-    if new_strength >= last_strength + 0.5:
-        return None  # significantly stronger signal → allow
+    # Confidence tier upgrade — uses current threshold as proxy for the historical
+    # one (adaptive thresholds drift slowly; close enough for tier comparison).
+    thr = signal.get("_threshold", 0) or 0
+    if thr > 0:
+        last_conf = get_signal_confidence(last_strength, thr)
+        new_conf  = signal.get("confidence") or get_signal_confidence(new_strength, thr)
+        if _CONFIDENCE_LEVEL.get(new_conf, -1) > _CONFIDENCE_LEVEL.get(last_conf, -1):
+            return None  # tier upgraded → allow
+
+    # Final fallback — significant raw strength gain
+    if new_strength >= last_strength + 0.3:
+        return None
 
     return f"entry ${new_entry:,.0f} worse than last ${last_entry:,.0f} with no confidence upgrade ({new_strength:.1f} vs {last_strength:.1f})"
 
 
-def _is_bearish_regime(signal):
-    """Block spot BUY in TRENDING or VOLATILE bearish regimes.
-    Ranging/transition markets with temporary DI- dominance are not blocked —
-    DI- > DI+ at low ADX is normal oscillation, not a trend."""
+def _is_counter_trend_regime(signal, direction):
+    """Block entry when the dominant regime opposes the signal direction.
+
+    Symmetric BUY/SELL — BUY blocked in trending BEARISH, SELL blocked in
+    trending BULLISH. RANGING / TRANSITION are not counter-trend; DI flips at
+    low ADX are noise, not signals to block on.
+    """
     regime = signal.get("_regime", {})
-    return (regime.get("regime") in ("TRENDING", "VOLATILE") and
-            regime.get("trend_dir") == "BEARISH")
+    if regime.get("regime") not in ("TRENDING", "VOLATILE"):
+        return False
+    trend = regime.get("trend_dir")
+    return (direction == "BUY" and trend == "BEARISH") or \
+           (direction == "SELL" and trend == "BULLISH")
+
+
+def _is_bearish_regime(signal):
+    """Back-compat wrapper — returns True if BUY would be entering a bearish trend."""
+    return _is_counter_trend_regime(signal, "BUY")
+
+
+def _trend_confluence_for_direction(signal, direction):
+    """Require ≥2/3 confirmations matching the signal direction.
+
+    Confirmations: price vs EMA200, ADX trend_dir, price vs VWAP.
+    BUY needs all three bullish; SELL needs all three bearish.
+    """
+    last = signal.get("_last", {})
+    regime = signal.get("_regime", {})
+    close = last.get("close", 0)
+    ema = last.get("ema200", 0)
+    vwap = last.get("vwap", 0)
+    trend = regime.get("trend_dir")
+    score = 0
+    if direction == "BUY":
+        if ema and close > ema:                  score += 1
+        if trend == "BULLISH":                   score += 1
+        if vwap and close > vwap:                score += 1
+    else:  # SELL
+        if ema and close < ema:                  score += 1
+        if trend == "BEARISH":                   score += 1
+        if vwap and close < vwap:                score += 1
+    return score >= 2
 
 
 def _trend_confluence_ok(signal):
-    """Require at least 2 of 3 bullish confirmations for spot entry."""
-    last = signal.get("_last", {})
-    regime = signal.get("_regime", {})
-    score = 0
-    # 1. EMA200 bullish
-    if last.get("close", 0) > last.get("ema200", 0):
-        score += 1
-    # 2. ADX trend bullish
-    if regime.get("trend_dir") == "BULLISH":
-        score += 1
-    # 3. Price above VWAP
-    if last.get("close", 0) > last.get("vwap", 0):
-        score += 1
-    return score >= 2
+    """Back-compat wrapper — bullish confluence for spot BUY."""
+    return _trend_confluence_for_direction(signal, "BUY")
 
 
 def _is_breakout_chase(signal):
@@ -178,17 +216,26 @@ def _get_psychology_levels(price, step=1000):
     return base, base + step
 
 
-def _check_psychology_sl_risk(entry, sl, step, buffer_pct):
+def _check_psychology_sl_risk(entry, sl, step, buffer_pct, direction="BUY"):
     """Return warning if SL is too close to a psychology level (stop-hunt target).
 
-    Checks distance from SL to the nearest round number ABOVE it —
-    the level that price must break to hit the stop.
+    BUY stops sit BELOW entry — vulnerable to a push DOWN through the nearest
+    round number ABOVE the SL (e.g. SL $79,950 with $80k below it = hunt down
+    past $80k triggers SL).
+
+    SELL stops sit ABOVE entry — vulnerable to a push UP through the nearest
+    round number BELOW the SL (e.g. SL $80,050 with $80k below it = hunt up
+    past $80k triggers SL).
     """
     sl_below, sl_above = _get_psychology_levels(sl, step)
-    # Distance from SL up to the next round thousand (the level above)
-    dist_to_above = (sl_above - sl) / sl * 100
-    if dist_to_above <= buffer_pct:
-        return f"SL ${sl:,.0f} sits {dist_to_above:.2f}% below psychology ${sl_above:,.0f} — vulnerable to stop hunt"
+    if direction == "BUY":
+        dist = (sl_above - sl) / sl * 100
+        if dist <= buffer_pct:
+            return f"SL ${sl:,.0f} sits {dist:.2f}% below psychology ${sl_above:,.0f} — vulnerable to stop hunt"
+    else:  # SELL / SHORT — round below is the magnet
+        dist = (sl - sl_below) / sl * 100 if sl > 0 else 0
+        if dist <= buffer_pct:
+            return f"SL ${sl:,.0f} sits {dist:.2f}% above psychology ${sl_below:,.0f} — vulnerable to stop hunt"
     return None
 
 
@@ -652,6 +699,21 @@ def run_cycle():
                 # First futures entry — quality gates
                 reentry_warn = _check_reentry_quality(futures_signal, "futures") \
                     if fut_entry_cfg.get("reentry_price_check", True) else None
+                # Reuse pyramid_cfg buffers for psy/sr — same magnitudes apply across modes
+                fut_psy_step  = RISK_CONFIG.get("pyramid", {}).get("psychology_level_step", 1000)
+                fut_psy_buf   = RISK_CONFIG.get("pyramid", {}).get("psychology_buffer_pct", 0.15)
+                fut_sr_atr    = RISK_CONFIG.get("pyramid", {}).get("sr_entry_risk_atr", 1.0)
+                fut_psy_warn  = _check_psychology_sl_risk(
+                    futures_signal["entry_price"], futures_signal["stop_loss"],
+                    fut_psy_step, fut_psy_buf, direction=futures_signal["type"],
+                )
+                fut_sr_warn = _check_sr_entry_risk(
+                    futures_signal["entry_price"],
+                    futures_signal.get("support_resistance", {}),
+                    futures_signal["type"], futures_signal.get("atr", 0),
+                    atr_mult=fut_sr_atr,
+                )
+
                 if reentry_warn:
                     _block(phase3_actions, "futures", futures_signal, "reentry_first", reentry_warn)
                 elif not _confidence_at_least(actual_conf, min_conf):
@@ -659,6 +721,17 @@ def run_cycle():
                            f"FUT {futures_signal['type']} requires ≥{min_conf} confidence (got {actual_conf}) — skipping")
                 elif fakeout_warn:
                     _block(phase3_actions, "futures", futures_signal, "fakeout_first", fakeout_warn)
+                elif fut_psy_warn:
+                    _block(phase3_actions, "futures", futures_signal, "psy_sl_first", fut_psy_warn)
+                elif fut_sr_warn:
+                    _block(phase3_actions, "futures", futures_signal, "sr_first", fut_sr_warn)
+                elif _is_counter_trend_regime(futures_signal, futures_signal["type"]):
+                    direction_word = "bullish" if futures_signal["type"] == "SELL" else "bearish"
+                    _block(phase3_actions, "futures", futures_signal, "regime_counter",
+                           f"FUT {futures_signal['type']} blocked — counter-trend {direction_word} regime")
+                elif not _trend_confluence_for_direction(futures_signal, futures_signal["type"]):
+                    _block(phase3_actions, "futures", futures_signal, "trend_confluence",
+                           f"FUT {futures_signal['type']} blocked — trend confluence < 2/3")
                 else:
                     # Aggregate risk cap
                     agg_risk, agg_warn = _calc_aggregate_risk(

@@ -4,6 +4,26 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-14 — feat: 4 entry-strategy improvements (psy_sl SHORT, regime/confluence for futures, reentry tier)
+
+### Fixed
+
+- **`_check_psychology_sl_risk` was BUY-only logic** (`run_bot.py`): The function checked "distance from SL up to the next round number ABOVE it" — correct for BUY (SL below entry, vulnerable to a push down through the round). For SHORT, SL is above entry and the relevant magnet is the round number BELOW the SL (push up through it triggers the stop). Now accepts `direction=` and uses the right side: `dist = sl_above - sl` for BUY, `dist = sl - sl_below` for SELL.
+
+### Added
+
+- **Counter-trend regime block, symmetric BUY/SELL** (`run_bot.py`): New `_is_counter_trend_regime(signal, direction)` blocks BUY in TRENDING/VOLATILE BEARISH AND SELL in TRENDING/VOLATILE BULLISH. Spot already had `_is_bearish_regime` for BUY; futures had **no equivalent for SHORT**, which meant a SELL hitting NORMAL confidence (≥1.2× threshold) could open into a strong bull. Now applied to futures first entry; spot continues to use the back-compat wrapper.
+
+- **Trend confluence for both directions** (`run_bot.py`): `_trend_confluence_for_direction(signal, direction)` requires ≥2/3 confirmations (price vs EMA200, ADX trend_dir, price vs VWAP) MATCHING the signal direction. Applied to futures first entry as a `trend_confluence` gate — previously only spot had a bullish confluence check; now SHORT also needs ≥2/3 bearish confirmations.
+
+- **psy_sl + sr_entry gates added to futures first entry** (`run_bot.py`): These existed only on the spot path. Now mirrored for futures, with `direction=` passed through correctly so SHORT SL checks use the round-number-below logic.
+
+### Changed
+
+- **Re-entry quality: confidence tier OR strength +0.3** (`run_bot.py:_check_reentry_quality`): Was `new_strength >= last_strength + 0.5`. With threshold 5.0 and typical scores 5.0–6.5, +0.5 was effectively unreachable without an explicit STRONG-tier jump. Now allows re-entry on any of (1) better price, (2) confidence tier upgrade (WEAK → NORMAL → STRONG), or (3) raw strength +0.3 fallback. Uses `get_signal_confidence(strength, threshold)` to compute the tier of the historical signal — current threshold is used as proxy (adaptive drifts slowly enough).
+
+---
+
 ## 2026-05-14 — feat: 5 strategy improvements (sample size, signal outcome, per-mode breaker, reentry filter, gate tracking)
 
 ### Changed
