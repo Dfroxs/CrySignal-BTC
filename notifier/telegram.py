@@ -249,12 +249,16 @@ def _format_close_notification(closed):
         pnl_s  = f"+{pnl:.2f}%" if pnl >= 0 else f"{pnl:.2f}%"
         outcome = c["outcome"]
         label = {
-            "TP1": "TP1 hit · trailing→BE",
-            "TP2": "TP2 hit · full win",
-            "Trail": "trailing stop",
-            "SL": "stop loss",
-            "MACRO_CLOSE": "macro force-close",
-            "FLIP": "signal reversed · flip",
+            "TP1":           "TP1 hit · trailing→BE",
+            "TP2":           "TP2 hit · full win",
+            "Trail":         "trailing stop",
+            "SL":            "stop loss",
+            "MACRO_CLOSE":   "macro force-close",
+            "FLIP":          "signal reversed · flip",
+            "TIME_EXIT":     "max hold time",
+            "VOL_EXIT":      "volatility expansion",
+            "FUNDING_EXIT":  "funding cost exit",
+            "BREAKER_CLOSE": "circuit breaker · equity",
         }.get(outcome, outcome)
 
         lines.append(
@@ -546,12 +550,19 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
             wins = bd.get("WIN", 0)
             loss = bd.get("LOSS", 0)
             mac  = bd.get("MACRO_CLOSE", 0)
+            ve   = bd.get("VOL_EXIT", 0)
+            te   = bd.get("TIME_EXIT", 0)
+            fe   = bd.get("FUNDING_EXIT", 0)
+            bc   = bd.get("BREAKER_CLOSE", 0)
             pf   = _sh.get_profit_factor(mode_str)
             wr   = _sh.get_win_rate(mode_str)
 
             outcomes = f"{wins} Wins · {loss} Losses"
-            if mac:
-                outcomes += f" · {mac} Macro"
+            if ve:  outcomes += f" · {ve} Vol"
+            if te:  outcomes += f" · {te} Time"
+            if fe:  outcomes += f" · {fe} Fund"
+            if mac: outcomes += f" · {mac} Macro"
+            if bc:  outcomes += f" · {bc} Breaker"
 
             lines.append(f"<b>📊 {label_str}</b>")
             lines.append(f"Total Trades  <code>{cnt}</code>")

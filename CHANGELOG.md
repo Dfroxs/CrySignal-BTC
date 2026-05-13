@@ -4,6 +4,16 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-14 — feat: complete outcome labels in Telegram + terminal display
+
+### Changed
+
+- **Telegram close notification labels** (`notifier/telegram.py`): Added human-readable labels for the four exit outcomes that previously fell through to raw `outcome` text: `TIME_EXIT` → "max hold time", `VOL_EXIT` → "volatility expansion", `FUNDING_EXIT` → "funding cost exit", `BREAKER_CLOSE` → "circuit breaker · equity".
+- **Terminal performance breakdown** (`trading/paper.py`): `print_open_status()` and `print_paper_summary()` now report counts for VOL/TIME/FUNDING exits and BREAKER_CLOSE in addition to W/L/MC/BE. Short labels in the open-status one-liner (`VX`/`TX`/`FX`/`BR`), long labels in the paper summary block (`N Vol`/`N Time`/`N Fund`/`N Breaker`).
+- **Telegram consolidated performance section** (`notifier/telegram.py`): Same outcome breakdown for spot/futures performance line — no more silent drops.
+
+---
+
 ## 2026-05-14 — fix: closed_at corruption + recent win-rate denominator
 
 ### Fixed

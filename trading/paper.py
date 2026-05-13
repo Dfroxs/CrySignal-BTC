@@ -383,14 +383,22 @@ def print_open_status(mode=None):
     total, count, avg = sh.get_closed_pnl(mode)
     if count > 0:
         bd = sh.get_outcome_breakdown(mode)
-        w = bd.get("WIN", 0)
-        l = bd.get("LOSS", 0)
-        m = bd.get("MACRO_CLOSE", 0)
+        w  = bd.get("WIN", 0)
+        l  = bd.get("LOSS", 0)
+        m  = bd.get("MACRO_CLOSE", 0)
         be = bd.get("BREAKEVEN", 0)
+        ve = bd.get("VOL_EXIT", 0)
+        te = bd.get("TIME_EXIT", 0)
+        fe = bd.get("FUNDING_EXIT", 0)
+        bc = bd.get("BREAKER_CLOSE", 0)
         parts = []
-        if w: parts.append(f"{w}W")
-        if l: parts.append(f"{l}L")
-        if m: parts.append(f"{m}MC")
+        if w:  parts.append(f"{w}W")
+        if l:  parts.append(f"{l}L")
+        if ve: parts.append(f"{ve}VX")
+        if te: parts.append(f"{te}TX")
+        if fe: parts.append(f"{fe}FX")
+        if m:  parts.append(f"{m}MC")
+        if bc: parts.append(f"{bc}BR")
         if be: parts.append(f"{be}BE")
         outcome_str = "  ".join(parts) if parts else ""
         wr_str = f"  WR {w/(w+l)*100:.0f}%" if (w + l) > 0 else ""
@@ -417,9 +425,21 @@ def print_paper_summary(mode=None):
         l  = bd.get("LOSS", 0)
         mc = bd.get("MACRO_CLOSE", 0)
         be = bd.get("BREAKEVEN", 0)
+        ve = bd.get("VOL_EXIT", 0)
+        te = bd.get("TIME_EXIT", 0)
+        fe = bd.get("FUNDING_EXIT", 0)
+        bc = bd.get("BREAKER_CLOSE", 0)
         parts = [f"{w} Wins", f"{l} Losses"]
+        if ve:
+            parts.append(f"{ve} Vol")
+        if te:
+            parts.append(f"{te} Time")
+        if fe:
+            parts.append(f"{fe} Fund")
         if mc:
             parts.append(f"{mc} Macro")
+        if bc:
+            parts.append(f"{bc} Breaker")
         if be:
             parts.append(f"{be} BE")
         print(f"   Outcomes:         {' · '.join(parts)}")
