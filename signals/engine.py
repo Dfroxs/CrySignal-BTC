@@ -523,18 +523,20 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         signal['reasons'].append("✗ RSI BEARISH DIVERGENCE — price higher high, RSI lower high")
 
     # 19 — Candlestick pattern recognition
-    cs = detect_candlestick_pattern(df)
+    cs = detect_candlestick_pattern(df) or {}
     signal['candlestick'] = cs
     _cs_weights = {'ENGULFING': 1.0, 'MORNING_STAR': 1.0, 'EVENING_STAR': 1.0,
                    'HAMMER': 0.75, 'SHOOTING_STAR': 0.75, 'HARAMI': 0.5}
-    if cs['bullish']:
-        w = _cs_weights.get(cs['bullish'], 0.5)
+    bullish_cs = cs.get('bullish')
+    bearish_cs = cs.get('bearish')
+    if bullish_cs:
+        w = _cs_weights.get(bullish_cs, 0.5)
         buy_conditions += w
-        signal['reasons'].append(f"✓ {cs['bullish'].replace('_', ' ')} pattern — bullish reversal")
-    if cs['bearish'] and mode == 'futures':
-        w = _cs_weights.get(cs['bearish'], 0.5)
+        signal['reasons'].append(f"✓ {bullish_cs.replace('_', ' ')} pattern — bullish reversal")
+    if bearish_cs and mode == 'futures':
+        w = _cs_weights.get(bearish_cs, 0.5)
         sell_conditions += w
-        signal['reasons'].append(f"✗ {cs['bearish'].replace('_', ' ')} pattern — bearish reversal")
+        signal['reasons'].append(f"✗ {bearish_cs.replace('_', ' ')} pattern — bearish reversal")
 
     # 20 — MFI (Money Flow Index) — volume-weighted RSI, detects institutional flow
     mfi = current.get('MFI_14')

@@ -41,7 +41,7 @@ RISK_CONFIG = {
     "trailing_post_tp1_factor":   0.8, # tighten trail 20% after TP1 hit (remaining 50%)
     "max_position_hours":      72,   # force-close futures position if open longer than this
     "max_position_hours_spot": 72,   # spot 4H: 72h = 18 candles; enough room for swing to develop
-    "vol_expansion_exit_mult": 2.0,  # close if current ATR > entry ATR × this
+    "vol_expansion_exit_mult": 2.0,  # close if current ATR > entry ATR × this (root cause was wrong-mode ATR, now per-mode)
     "max_positions":         2,     # max 1 BUY + 1 SELL (one per direction)
     "pyramid": {
         "enabled":                 True,       # allow adding to existing position on STRONG signals

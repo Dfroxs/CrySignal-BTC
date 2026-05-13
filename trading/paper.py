@@ -256,7 +256,9 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
             elif current_price <= trail:
                 _check_slippage(trail, current_price, pos_id)
                 exit_pnl = _calc_pnl(pos, trail)
-                outcome = "WIN" if trail >= entry else "LOSS"
+                # Label outcome by net P&L (post-fees), not raw trail vs entry —
+                # a trail at breakeven still nets negative after entry+exit fees.
+                outcome = "WIN" if exit_pnl > 0 else "LOSS"
                 sh.close_paper_position(pos_id, outcome, exit_pnl)
                 closed.append({
                     "type": pos["type"], "entry": entry,
@@ -323,7 +325,8 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
             elif current_price >= trail:
                 _check_slippage(trail, current_price, pos_id)
                 exit_pnl = _calc_pnl(pos, trail)
-                outcome = "WIN" if trail <= entry else "LOSS"
+                # Label outcome by net P&L (post-fees), not raw trail vs entry.
+                outcome = "WIN" if exit_pnl > 0 else "LOSS"
                 sh.close_paper_position(pos_id, outcome, exit_pnl)
                 closed.append({
                     "type": pos["type"], "entry": entry,

@@ -4,6 +4,20 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-14 — fix: per-mode ATR + emergency-close P&L + trail outcome labels
+
+### Fixed
+
+- **Wrong ATR scale passed to futures positions** (`run_bot.py`, `trading/paper.py`): `check_and_close_positions()` for `mode='futures'` was being called with `current_atr` taken from the SPOT signal (4H scale) whenever a spot signal existed. Live data shows spot 4H ATR (~700) is roughly 2× futures 1H ATR (~330), so the VOL_EXIT check `current_atr > entry_atr × 2.0` triggered on essentially every cycle for futures positions opened at 1H ATR. This was the root cause behind every futures position closing via VOL_EXIT in the May 9–13 live run — raising `vol_expansion_exit_mult` to 2.0 helped but did not address the underlying mismatch. Fixed by computing `spot_atr` and `fut_atr` separately and passing each mode its own ATR. Mid-cycle position check now caches per-mode (`_last_atr_spot`, `_last_atr_fut`).
+
+- **EMERGENCY close used `pnl=0`** (`run_bot.py:351-365`): When equity drops below `min_equity_pct` (50%), `close_paper_position()` was called with hard-coded `pnl=0`, masking the actual realised loss in the breaker. Fixed to compute P&L at the latest signal price (futures entry preferred, then spot) with direction-aware sign, and pass `closed_at` for accurate exit records.
+
+- **Trail outcome mislabelled "WIN" when net P&L negative** (`trading/paper.py`): When a trailing stop hit exactly at breakeven (trail = entry) with no partial taken, outcome was labelled `WIN` because the check was `trail >= entry`, but the net P&L after entry+exit fees (~0.18%) and slippage was actually negative. Outcome now labels by `exit_pnl > 0` (post-fee P&L) for both BUY and SELL exits.
+
+- **Candlestick pattern `KeyError` if dict malformed** (`signals/engine.py:530-537`): Direct `cs['bullish']` access would crash if `detect_candlestick_pattern()` ever returned a dict missing those keys. Defensive `.get()` used instead.
+
+---
+
 ## 2026-05-14 — fix: VOL_EXIT too aggressive + HTF conflict penalty
 
 ### Fixed

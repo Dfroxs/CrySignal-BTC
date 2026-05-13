@@ -64,7 +64,8 @@ def _section(title):
 atexit.register(close_db)
 
 _CONFIDENCE_LEVEL = {"WEAK": 0, "NORMAL": 1, "STRONG": 2}
-_last_atr = 0  # cached for mid-cycle vol-exit checks
+_last_atr_spot = 0  # cached for mid-cycle vol-exit checks (4H scale)
+_last_atr_fut  = 0  # cached for mid-cycle vol-exit checks (1H scale)
 
 
 def _confidence_at_least(actual, minimum):
@@ -352,9 +353,16 @@ def run_cycle():
         msg = f"🚨 EQUITY {100-total_dd:.0f}% < {min_eq}% — EMERGENCY close all"
         logger.critical(msg)
         phase3_actions.append(msg)
-        all_open = _h.get_open_positions()
-        for p in all_open:
-            _h.close_paper_position(p["id"], "BREAKER_CLOSE", 0)
+        # Use latest signal price for a meaningful exit P&L (was hard-coded 0).
+        breaker_px = (futures_signal or spot_signal or {}).get("entry_price")
+        for p in _h.get_open_positions():
+            if breaker_px:
+                breaker_pnl = ((breaker_px - p["entry_price"]) / p["entry_price"] * 100) \
+                              if p["type"] == "BUY" \
+                              else ((p["entry_price"] - breaker_px) / p["entry_price"] * 100)
+            else:
+                breaker_pnl = 0
+            _h.close_paper_position(p["id"], "BREAKER_CLOSE", round(breaker_pnl, 2), closed_at=breaker_px)
 
     try:
         # Spot positions — BUY-only (no short selling on spot)
@@ -664,14 +672,19 @@ def run_cycle():
             ticker = exchange.fetch_ticker("BTC/USDT")
             current_price = ticker["last"]
 
-        current_atr = (spot_signal or futures_signal or {}).get("atr", 0)
-        if current_atr > 0:
-            global _last_atr; _last_atr = current_atr
+        # Per-mode ATR — spot 4H ATR is ~2× futures 1H ATR, so a shared value
+        # triggers spurious VOL_EXITs on futures positions opened at 1H ATR.
+        spot_atr = (spot_signal or {}).get("atr", 0)
+        fut_atr  = (futures_signal or {}).get("atr", 0)
+        if spot_atr > 0:
+            global _last_atr_spot; _last_atr_spot = spot_atr
+        if fut_atr > 0:
+            global _last_atr_fut; _last_atr_fut = fut_atr
         fut_funding = 0
         if futures_signal and futures_signal.get("_market"):
             fut_funding = futures_signal["_market"].get("funding", {}).get("rate_pct", 0)
-        closed_spot = check_and_close_positions(current_price, mode="spot", current_atr=current_atr)
-        closed_fut   = check_and_close_positions(current_price, mode="futures", current_atr=current_atr, funding_rate=fut_funding)
+        closed_spot = check_and_close_positions(current_price, mode="spot", current_atr=spot_atr)
+        closed_fut   = check_and_close_positions(current_price, mode="futures", current_atr=fut_atr, funding_rate=fut_funding)
         all_closed   = (closed_spot or []) + (closed_fut or [])
 
         print_open_status("spot")
@@ -722,8 +735,8 @@ def run_position_check():
         print(f"  MID-CYCLE CHECK  ·  BTC ${price:,.0f}")
         print(f"  {'─' * 40}")
 
-        closed_spot = check_and_close_positions(price, mode="spot", current_atr=_last_atr)
-        closed_fut = check_and_close_positions(price, mode="futures", current_atr=_last_atr)
+        closed_spot = check_and_close_positions(price, mode="spot", current_atr=_last_atr_spot)
+        closed_fut = check_and_close_positions(price, mode="futures", current_atr=_last_atr_fut)
         all_closed = (closed_spot or []) + (closed_fut or [])
 
         print_open_status("spot")
