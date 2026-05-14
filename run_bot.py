@@ -600,37 +600,40 @@ def run_cycle():
                     entry_number = existing_count + 1
                     size_factor = get_pyramid_size_factor(entry_number, pyramid_cfg)
                     min_size = pyramid_cfg.get("min_size_usdt", 10.0)
-                    # Compute base size BEFORE SL tightening to get correct sizing
+
+                    # Tighten SL FIRST so the subsequent size calc reflects the
+                    # tighter risk distance — sizing with the original (wide) SL
+                    # would under-allocate capital relative to risk_per_trade.
+                    # Entry #2: 1.5×ATR → 1.25×ATR, Entry #3: 1.25×ATR → 1.0×ATR (floor)
+                    atr_step = pyramid_cfg.get("tighten_sl_atr_step", 0.25)
+                    base_atr_mult = RISK_CONFIG.get("atr_multiplier", 1.5)
+                    new_atr_mult = max(1.0, base_atr_mult - atr_step * (entry_number - 1))
+                    if atr > 0 and new_atr_mult < base_atr_mult:
+                        entry_px = spot_signal["entry_price"]
+                        new_sl_dist = atr * new_atr_mult
+                        spot_signal["stop_loss"] = round(entry_px - new_sl_dist, 2)
+                        raw_tp1 = entry_px + new_sl_dist * RISK_CONFIG["take_profit_rr"]
+                        raw_tp2 = entry_px + new_sl_dist * RISK_CONFIG["take_profit_rr"] * 2
+                        # Cap recomputed TPs at resistance — engine's original cap
+                        # was discarded when we rebuilt TP from scratch.
+                        resistance = (spot_signal.get("support_resistance") or {}).get("resistance")
+                        if resistance:
+                            ceiling = resistance * 0.995
+                            if entry_px < ceiling < raw_tp1:
+                                raw_tp1 = ceiling
+                            if entry_px < ceiling < raw_tp2:
+                                raw_tp2 = ceiling
+                        spot_signal["take_profit"] = round(raw_tp1, 2)
+                        spot_signal["tp2"] = round(raw_tp2, 2)
+
+                    # Compute size against the (now tightened) SL — keeps the
+                    # actual capital-at-risk in line with risk_per_trade.
                     base_size = calculate_position_size(spot_signal)["usdt_amount"]
 
                     if base_size * size_factor < min_size:
                         _block(phase3_actions, "spot", spot_signal, "pyramid_min_size",
                                f"Spot {spot_signal['type']} pyramid #{entry_number} size ${base_size * size_factor:.2f} < ${min_size:.2f} min — skipping")
                     else:
-                        # Tighten SL for pyramid entries using additive ATR step
-                        # Entry #2: 1.5×ATR → 1.25×ATR, Entry #3: 1.25×ATR → 1.0×ATR (floor)
-                        atr_step = pyramid_cfg.get("tighten_sl_atr_step", 0.25)
-                        base_atr_mult = RISK_CONFIG.get("atr_multiplier", 1.5)
-                        new_atr_mult = max(1.0, base_atr_mult - atr_step * (entry_number - 1))
-                        if atr > 0 and new_atr_mult < base_atr_mult:
-                            entry_px = spot_signal["entry_price"]
-                            new_sl_dist = atr * new_atr_mult
-                            spot_signal["stop_loss"] = round(entry_px - new_sl_dist, 2)
-                            raw_tp1 = entry_px + new_sl_dist * RISK_CONFIG["take_profit_rr"]
-                            raw_tp2 = entry_px + new_sl_dist * RISK_CONFIG["take_profit_rr"] * 2
-                            # Cap recomputed TPs at resistance — engine's original cap was
-                            # discarded when we rebuilt TP from scratch. Spot is BUY-only,
-                            # so only the upper resistance matters.
-                            resistance = (spot_signal.get("support_resistance") or {}).get("resistance")
-                            if resistance:
-                                ceiling = resistance * 0.995
-                                if entry_px < ceiling < raw_tp1:
-                                    raw_tp1 = ceiling
-                                if entry_px < ceiling < raw_tp2:
-                                    raw_tp2 = ceiling
-                            spot_signal["take_profit"] = round(raw_tp1, 2)
-                            spot_signal["tp2"] = round(raw_tp2, 2)
-
                         # Gate 8: aggregate risk cap
                         agg_risk, agg_warn = _calc_aggregate_risk(
                             "spot", spot_signal["entry_price"],
