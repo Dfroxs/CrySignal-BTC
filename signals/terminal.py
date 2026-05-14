@@ -830,17 +830,17 @@ def display_combined(spot_signal, futures_signal):
         obv_dir = f"{_C['grn']}▲{_C['rst']}" if obv > 0 else f"{_C['red']}▼{_C['rst']}"
         _kv("OBV", f"{obv:+,.0f}{obv_dir}")
 
+        # Import once for both indicators — previous version only imported in
+        # the mfi branch, so a None-mfi-but-present-cmf signal would NameError.
+        import pandas as _pd
         mfi = last.get("mfi")
-        if mfi is not None:
-            import pandas as _pd
-            if not _pd.isna(mfi):
-                mfi_tag = f" {_C['grn']}OS{_C['rst']}" if mfi <= 20 else (f" {_C['red']}OB{_C['rst']}" if mfi >= 80 else "")
-                _kv("MFI", f"{mfi:.0f}{mfi_tag}")
+        if mfi is not None and not _pd.isna(mfi):
+            mfi_tag = f" {_C['grn']}OS{_C['rst']}" if mfi <= 20 else (f" {_C['red']}OB{_C['rst']}" if mfi >= 80 else "")
+            _kv("MFI", f"{mfi:.0f}{mfi_tag}")
         cmf = last.get("cmf")
-        if cmf is not None:
-            if not _pd.isna(cmf):
-                cmf_col = "grn" if cmf > 0.10 else ("red" if cmf < -0.10 else "dim")
-                _kv("CMF", f"{_C[cmf_col]}{cmf:+.3f}{_C['rst']}")
+        if cmf is not None and not _pd.isna(cmf):
+            cmf_col = "grn" if cmf > 0.10 else ("red" if cmf < -0.10 else "dim")
+            _kv("CMF", f"{_C[cmf_col]}{cmf:+.3f}{_C['rst']}")
 
         # HTF
         htf = sig.get("_htf", {})
