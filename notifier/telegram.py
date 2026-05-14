@@ -68,11 +68,12 @@ def _format_compact_signal_telegram(signal):
         lines.append("")
         lines.append("<b>📊 Trade Setup</b>")
         lines.append(f"Entry     <code>${entry:,.0f}</code>")
-        lines.append(f"Stop SL   <code>${sl:,.0f}</code>  <code>{sl_pct:+.2f}%</code>")
-        lines.append(f"TP1 50%   <code>${tp1:,.0f}</code>  <code>{tp1_pct:+.2f}%</code>")
+        # SL is a loss → always render with minus prefix; TP is a gain → plus.
+        lines.append(f"Stop SL   <code>${sl:,.0f}</code>  <code>-{sl_pct:.2f}%</code>")
+        lines.append(f"TP1 50%   <code>${tp1:,.0f}</code>  <code>+{tp1_pct:.2f}%</code>")
         if tp2:
             tp2_pct = abs(tp2 - entry) / entry * 100
-            lines.append(f"TP2 50%   <code>${tp2:,.0f}</code>  <code>{tp2_pct:+.2f}%</code>")
+            lines.append(f"TP2 50%   <code>${tp2:,.0f}</code>  <code>+{tp2_pct:.2f}%</code>")
         lines.append(f"R/R       <b>1:{rr:.2f}</b>")
 
     # ── Price & Trend ────────────────────────────────────────
