@@ -5,7 +5,7 @@ from datetime import datetime
 
 from trading import history as _sh
 from config import FUTURES_CONFIG, RISK_CONFIG, SIGNAL_MAX_SCORE, SPOT_MAX_SCORE, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
-from core_analysis import calculate_futures_position, calculate_position_size
+from signals.sizing import calculate_futures_position, calculate_position_size
 from notifier.common import _dir, _esc, _max_score, _mode_label, _macro_banner, _send_telegram_message
 
 logger = logging.getLogger(__name__)
