@@ -79,9 +79,19 @@ def get_combined_sentiment(fng=None):
 
 
 def check_upcoming_macro_events():
-    """Returns (bool, event_name). True only when a HIGH impact USD event is <=2h away."""
+    """Returns (bool, event_name). True only when a HIGH impact USD event is <=2h away.
+
+    Per-event parse errors are logged at debug and skipped so one bad row
+    doesn't disable the whole check. CSV-level read errors log at WARNING
+    so the missing/corrupt-macro-CSV case is visible — silently returning
+    False would let the bot trade through macro windows unprotected.
+    """
     try:
         df = pd.read_csv(MACRO_CSV)
+    except Exception as e:
+        logger.warning("macro CSV unreadable (%s) — macro protection disabled this cycle", e)
+        return False, None
+    try:
         pending = df[(df['actual'].isna()) | (df['actual'] == 'N/A')]
         pending = pending[pending['impact'] == 'High']
         for _, row in pending.iterrows():
@@ -92,8 +102,9 @@ def check_upcoming_macro_events():
                 diff = event_dt - datetime.now(UTC)
                 if timedelta(0) <= diff <= timedelta(hours=2):
                     return True, row['event']
-            except Exception:
+            except Exception as e:
+                logger.debug("macro row parse skipped: %s", e)
                 continue
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("macro CSV schema unexpected (%s) — macro protection disabled this cycle", e)
     return False, None
