@@ -215,8 +215,11 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
     partial_pnl = 0
     exit_fee_pct = ec["futures_fee_pct"] if mode == "futures" else ec["spot_fee_pct"]
     exit_cost = (exit_fee_pct + slip) / 100
-    # Funding exit threshold for futures (proxy — no historical funding data in backtest)
-    funding_exit_gain_pct = 12.0  # close futures LONG if unrealized > 12% (high funding proxy)
+    # No FUNDING_EXIT in backtest — funding rate isn't available historically.
+    # The old 12% "proxy" arbitrarily capped winners and biased win rate down
+    # without modelling actual funding. Better to omit cleanly so backtest
+    # reflects the TA-only path; the disclaimer in the module docstring
+    # already notes that market structure exits don't apply in backtest.
 
     for j in range(entry_idx + 1, min(entry_idx + 1 + max_hold, len(df))):
         c = df.iloc[j]
@@ -248,13 +251,6 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
                 return _make_trade(df, entry_idx, j, signal, "VOL_EXIT", entry, exit_px, exit_pnl)
 
         if stype == "BUY":
-            # Funding exit proxy for futures — sustained large gain signals crowded longs
-            if mode == "futures" and not partial_closed:
-                unrealized = (c["close"] - entry) / entry * 100
-                if unrealized > funding_exit_gain_pct:
-                    exit_pnl = _calc_backtest_pnl(stype, entry, c["close"], partial_closed, partial_pnl, mode)
-                    return _make_trade(df, entry_idx, j, signal, "FUNDING_EXIT", entry, c["close"], exit_pnl)
-
             # Advance trailing stop (with minimum advance threshold)
             if atr_now > 0:
                 tf = base_trail_factor * (post_tp1_factor if partial_closed else 1.0)
@@ -284,13 +280,6 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
                 return _make_trade(df, entry_idx, j, signal, outcome, entry, trail, exit_pnl)
 
         else:  # SELL
-            # Funding exit proxy — sustained large short gain signals crowded shorts
-            if mode == "futures" and not partial_closed:
-                unrealized = (entry - c["close"]) / entry * 100
-                if unrealized > funding_exit_gain_pct:
-                    exit_pnl = _calc_backtest_pnl(stype, entry, c["close"], partial_closed, partial_pnl, mode)
-                    return _make_trade(df, entry_idx, j, signal, "FUNDING_EXIT", entry, c["close"], exit_pnl)
-
             if atr_now > 0:
                 tf = base_trail_factor * (post_tp1_factor if partial_closed else 1.0)
                 new_trail = c["close"] + atr_now * tf
