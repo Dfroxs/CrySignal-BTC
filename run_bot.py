@@ -853,12 +853,18 @@ def run_cycle():
         logger.error("Paper trading update failed: %s", e)
         _err(f"Phase 3  Failed  ({e})")
 
-    # Phase 4 — notifications
+    # Phase 4 — notifications (defensive: a Telegram hiccup should never
+    # crash the cycle loop. The send helpers already catch HTTP errors, but
+    # a malformed signal could still raise during formatting.)
     _loading("Phase 4  Sending Telegram notifications...")
-    send_signal_alert(spot_signal=spot_signal, futures_signal=futures_signal)
-    for msg, label in pending_tg:
-        _send_telegram_message(msg, label)
-    _ok("Phase 4  Telegram sent")
+    try:
+        send_signal_alert(spot_signal=spot_signal, futures_signal=futures_signal)
+        for msg, label in pending_tg:
+            _send_telegram_message(msg, label)
+        _ok("Phase 4  Telegram sent")
+    except Exception as e:
+        logger.error("Phase 4 failed: %s", e)
+        _err(f"Phase 4  Failed  ({e})")
 
 
 # ---------------------------------------------------------------------------
@@ -941,12 +947,21 @@ def main():
                 time.sleep(1)
                 continue  # already fired this minute
 
-            if minute == full_minute:
-                run_cycle()
-                next_min = check_minute if check_minute is not None else full_minute
-            else:
-                run_position_check()
-                next_min = full_minute
+            # Wrap each cycle in try/except so a single failing cycle (network
+            # blip, malformed signal, etc.) doesn't kill the long-running loop.
+            try:
+                if minute == full_minute:
+                    run_cycle()
+                    next_min = check_minute if check_minute is not None else full_minute
+                else:
+                    run_position_check()
+                    next_min = full_minute
+            except KeyboardInterrupt:
+                raise
+            except Exception as e:
+                logger.exception("Cycle failed: %s", e)
+                _err(f"Cycle failed: {e}")
+                next_min = check_minute if (minute == full_minute and check_minute is not None) else full_minute
             wait_sec = ((next_min - datetime.now().astimezone().minute - 1) % 60) * 60 + (60 - datetime.now().astimezone().second)
             fired.add(minute)
             _step(_DIM + "⟳" + _W, f"Next run at :{next_min:02d}  (~{max(1, wait_sec // 60)} min)")
