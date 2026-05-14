@@ -214,6 +214,19 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         else:
             signal['reasons'].append(f"⚠️  HTF Disagreement ({htf_label}) — caution")
 
+        # Penalty for true HTF conflict (one timeframe BULLISH, other BEARISH).
+        # NEUTRAL vs anything is ambiguous — no penalty.
+        # Penalises the dominant buy/sell side by -1.0 so borderline signals don't fire
+        # against the longer-term trend.
+        htf_dirs = [htf.get(k) for k in htf_keys]
+        if not htf['aligned'] and 'BULLISH' in htf_dirs and 'BEARISH' in htf_dirs:
+            if buy_conditions >= sell_conditions:
+                buy_conditions = max(0, buy_conditions - 1.0)
+                signal['reasons'].append("⬇ HTF conflict penalty −1.0 (4H vs 1D opposing)")
+            else:
+                sell_conditions = max(0, sell_conditions - 1.0)
+                signal['reasons'].append("⬇ HTF conflict penalty −1.0 (4H vs 1D opposing)")
+
     # 8 — OBV slope (5-candle)
     obv_slope = df['OBV'].iloc[-1] - df['OBV'].iloc[-5]
     obv_denom = df['volume'].iloc[-5:].sum()
@@ -510,18 +523,20 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         signal['reasons'].append("✗ RSI BEARISH DIVERGENCE — price higher high, RSI lower high")
 
     # 19 — Candlestick pattern recognition
-    cs = detect_candlestick_pattern(df)
+    cs = detect_candlestick_pattern(df) or {}
     signal['candlestick'] = cs
     _cs_weights = {'ENGULFING': 1.0, 'MORNING_STAR': 1.0, 'EVENING_STAR': 1.0,
                    'HAMMER': 0.75, 'SHOOTING_STAR': 0.75, 'HARAMI': 0.5}
-    if cs['bullish']:
-        w = _cs_weights.get(cs['bullish'], 0.5)
+    bullish_cs = cs.get('bullish')
+    bearish_cs = cs.get('bearish')
+    if bullish_cs:
+        w = _cs_weights.get(bullish_cs, 0.5)
         buy_conditions += w
-        signal['reasons'].append(f"✓ {cs['bullish'].replace('_', ' ')} pattern — bullish reversal")
-    if cs['bearish'] and mode == 'futures':
-        w = _cs_weights.get(cs['bearish'], 0.5)
+        signal['reasons'].append(f"✓ {bullish_cs.replace('_', ' ')} pattern — bullish reversal")
+    if bearish_cs and mode == 'futures':
+        w = _cs_weights.get(bearish_cs, 0.5)
         sell_conditions += w
-        signal['reasons'].append(f"✗ {cs['bearish'].replace('_', ' ')} pattern — bearish reversal")
+        signal['reasons'].append(f"✗ {bearish_cs.replace('_', ' ')} pattern — bearish reversal")
 
     # 20 — MFI (Money Flow Index) — volume-weighted RSI, detects institutional flow
     mfi = current.get('MFI_14')
@@ -635,42 +650,63 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
 def integrate_news_with_signal(signal, news_data):
     enhanced = signal.copy()
 
+    # MACRO block — always force HOLD when a HIGH-impact event is <2h away.
+    # The old code only deducted 2.0 from strength; if strength stayed above
+    # threshold the signal still fired, then trading/paper.py would
+    # immediately MACRO_CLOSE the new position in the same cycle. Wasted
+    # entry fees + slippage on every macro window. Force HOLD so the signal
+    # never opens a position that's about to be force-closed.
     has_macro, event_name = check_upcoming_macro_events()
     if has_macro:
         enhanced['strength'] = max(0, enhanced['strength'] - 2.0)
-        enhanced['reasons'].append(f"⚠️  MACRO CAUTION: HIGH impact event in <2h ({event_name}) — strength -2.0")
-        if enhanced['strength'] <= 0:
-            enhanced['type'] = 'HOLD'
+        enhanced['reasons'].append(
+            f"⚠️  MACRO CAUTION: HIGH impact event in <2h ({event_name}) — forced HOLD"
+        )
+        enhanced['type'] = 'HOLD'
 
     fng = news_data.get('fear_greed', {})
     fng_val = fng.get('value', 50)
+    stype = enhanced['type']
+    sentiment = news_data.get('sentiment')
 
-    if fng_val <= 20 and enhanced['type'] == 'BUY':
+    # F&G adjustment — independent from news sentiment.
+    # F&G is ALREADY weighted 50% into news_data['sentiment'] (see
+    # sentiment.py: combined = fng_score*0.50 + crypto*0.35 + geo*0.15),
+    # so applying both was triple-counting F&G influence.
+    fng_applied = False
+    if fng_val <= 20 and stype == 'BUY':
         enhanced['strength'] += 1.5
         enhanced['reasons'].append(f"🔴 EXTREME FEAR ({fng_val}) — contrarian BUY confirmed")
-    elif fng_val >= 80 and enhanced['type'] == 'SELL':
+        fng_applied = True
+    elif fng_val >= 80 and stype == 'SELL':
         enhanced['strength'] += 1.5
         enhanced['reasons'].append(f"🟢 EXTREME GREED ({fng_val}) — contrarian SELL confirmed")
-    elif fng_val >= 70 and enhanced['type'] == 'BUY':
-        # Buying into greed — risky, not contrarian
+        fng_applied = True
+    elif fng_val >= 70 and stype == 'BUY':
         enhanced['strength'] = max(0, enhanced['strength'] - 0.5)
         enhanced['reasons'].append(f"⚠️  F&G GREED ({fng_val}) contradicts BUY — chasing risk")
-    elif fng_val <= 30 and enhanced['type'] == 'SELL':
-        # Selling into fear — risky, not contrarian
+        fng_applied = True
+    elif fng_val <= 30 and stype == 'SELL':
         enhanced['strength'] = max(0, enhanced['strength'] - 0.5)
         enhanced['reasons'].append(f"⚠️  F&G FEAR ({fng_val}) contradicts SELL — panic risk")
-    elif news_data.get('sentiment') == 'BULLISH' and enhanced['type'] == 'BUY':
-        enhanced['strength'] += 0.75
-        enhanced['reasons'].append(f"📰 Sentiment BULLISH (F&G: {fng_val})")
-    elif news_data.get('sentiment') == 'BEARISH' and enhanced['type'] == 'SELL':
-        enhanced['strength'] += 0.75
-        enhanced['reasons'].append(f"📰 Sentiment BEARISH (F&G: {fng_val})")
-    elif news_data.get('sentiment') == 'BEARISH' and enhanced['type'] == 'BUY':
-        enhanced['strength'] = max(0, enhanced['strength'] - 0.5)
-        enhanced['reasons'].append(f"⚠️  Sentiment contradicts (BEARISH, F&G: {fng_val})")
-    elif news_data.get('sentiment') == 'BULLISH' and enhanced['type'] == 'SELL':
-        enhanced['strength'] = max(0, enhanced['strength'] - 0.5)
-        enhanced['reasons'].append(f"⚠️  Sentiment contradicts (BULLISH, F&G: {fng_val})")
+        fng_applied = True
+
+    # News-sentiment adjustment — independent path; only fires when F&G didn't.
+    # Reduced weight (0.75 → 0.5 / 0.5 → 0.35) because half of news_data['sentiment']
+    # is F&G — if F&G didn't trigger a tier, its contribution is weaker.
+    if not fng_applied:
+        if sentiment == 'BULLISH' and stype == 'BUY':
+            enhanced['strength'] += 0.5
+            enhanced['reasons'].append(f"📰 News sentiment BULLISH (F&G: {fng_val})")
+        elif sentiment == 'BEARISH' and stype == 'SELL':
+            enhanced['strength'] += 0.5
+            enhanced['reasons'].append(f"📰 News sentiment BEARISH (F&G: {fng_val})")
+        elif sentiment == 'BEARISH' and stype == 'BUY':
+            enhanced['strength'] = max(0, enhanced['strength'] - 0.35)
+            enhanced['reasons'].append(f"⚠️  News contradicts (BEARISH, F&G: {fng_val})")
+        elif sentiment == 'BULLISH' and stype == 'SELL':
+            enhanced['strength'] = max(0, enhanced['strength'] - 0.35)
+            enhanced['reasons'].append(f"⚠️  News contradicts (BULLISH, F&G: {fng_val})")
 
     enhanced['news_sentiment'] = news_data.get('sentiment', 'NEUTRAL')
     enhanced['news_confidence'] = news_data.get('confidence', 0)

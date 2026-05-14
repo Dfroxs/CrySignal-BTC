@@ -5,7 +5,7 @@ from datetime import datetime
 
 from trading import history as _sh
 from config import FUTURES_CONFIG, RISK_CONFIG, SIGNAL_MAX_SCORE, SPOT_MAX_SCORE, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
-from core_analysis import calculate_futures_position, calculate_position_size
+from signals.sizing import calculate_futures_position, calculate_position_size
 from notifier.common import _dir, _esc, _max_score, _mode_label, _macro_banner, _send_telegram_message
 
 logger = logging.getLogger(__name__)
@@ -68,11 +68,12 @@ def _format_compact_signal_telegram(signal):
         lines.append("")
         lines.append("<b>📊 Trade Setup</b>")
         lines.append(f"Entry     <code>${entry:,.0f}</code>")
-        lines.append(f"Stop SL   <code>${sl:,.0f}</code>  <code>{sl_pct:+.2f}%</code>")
-        lines.append(f"TP1 50%   <code>${tp1:,.0f}</code>  <code>{tp1_pct:+.2f}%</code>")
+        # SL is a loss → always render with minus prefix; TP is a gain → plus.
+        lines.append(f"Stop SL   <code>${sl:,.0f}</code>  <code>-{sl_pct:.2f}%</code>")
+        lines.append(f"TP1 50%   <code>${tp1:,.0f}</code>  <code>+{tp1_pct:.2f}%</code>")
         if tp2:
             tp2_pct = abs(tp2 - entry) / entry * 100
-            lines.append(f"TP2 50%   <code>${tp2:,.0f}</code>  <code>{tp2_pct:+.2f}%</code>")
+            lines.append(f"TP2 50%   <code>${tp2:,.0f}</code>  <code>+{tp2_pct:.2f}%</code>")
         lines.append(f"R/R       <b>1:{rr:.2f}</b>")
 
     # ── Price & Trend ────────────────────────────────────────
@@ -249,12 +250,16 @@ def _format_close_notification(closed):
         pnl_s  = f"+{pnl:.2f}%" if pnl >= 0 else f"{pnl:.2f}%"
         outcome = c["outcome"]
         label = {
-            "TP1": "TP1 hit · trailing→BE",
-            "TP2": "TP2 hit · full win",
-            "Trail": "trailing stop",
-            "SL": "stop loss",
-            "MACRO_CLOSE": "macro force-close",
-            "FLIP": "signal reversed · flip",
+            "TP1":           "TP1 hit · trailing→BE",
+            "TP2":           "TP2 hit · full win",
+            "Trail":         "trailing stop",
+            "SL":            "stop loss",
+            "MACRO_CLOSE":   "macro force-close",
+            "FLIP":          "signal reversed · flip",
+            "TIME_EXIT":     "max hold time",
+            "VOL_EXIT":      "volatility expansion",
+            "FUNDING_EXIT":  "funding cost exit",
+            "BREAKER_CLOSE": "circuit breaker · equity",
         }.get(outcome, outcome)
 
         lines.append(
@@ -546,12 +551,19 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
             wins = bd.get("WIN", 0)
             loss = bd.get("LOSS", 0)
             mac  = bd.get("MACRO_CLOSE", 0)
+            ve   = bd.get("VOL_EXIT", 0)
+            te   = bd.get("TIME_EXIT", 0)
+            fe   = bd.get("FUNDING_EXIT", 0)
+            bc   = bd.get("BREAKER_CLOSE", 0)
             pf   = _sh.get_profit_factor(mode_str)
             wr   = _sh.get_win_rate(mode_str)
 
             outcomes = f"{wins} Wins · {loss} Losses"
-            if mac:
-                outcomes += f" · {mac} Macro"
+            if ve:  outcomes += f" · {ve} Vol"
+            if te:  outcomes += f" · {te} Time"
+            if fe:  outcomes += f" · {fe} Fund"
+            if mac: outcomes += f" · {mac} Macro"
+            if bc:  outcomes += f" · {bc} Breaker"
 
             lines.append(f"<b>📊 {label_str}</b>")
             lines.append(f"Total Trades  <code>{cnt}</code>")

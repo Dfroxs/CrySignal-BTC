@@ -117,6 +117,21 @@ def _init_tables():
             partial_closed  INTEGER DEFAULT 0,
             partial_pnl     REAL
         );
+
+        CREATE TABLE IF NOT EXISTS signal_blocks (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp    TEXT    NOT NULL,
+            mode         TEXT    NOT NULL,
+            signal_type  TEXT    NOT NULL,
+            gate         TEXT    NOT NULL,
+            reason       TEXT,
+            strength     REAL,
+            confidence   TEXT,
+            signal_id    INTEGER REFERENCES signals(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_blocks_gate ON signal_blocks(gate);
+        CREATE INDEX IF NOT EXISTS idx_blocks_mode_gate ON signal_blocks(mode, gate);
     """)
     c.commit()
     _migrate_paper_positions()
@@ -135,6 +150,7 @@ def _migrate_paper_positions():
         ("mode",           "TEXT DEFAULT 'futures'"),
         ("pyramid_entry",  "INTEGER DEFAULT NULL"),
         ("size_factor",    "REAL DEFAULT 1.0"),
+        ("exit_price",     "REAL"),
     ]
     for col, coltype in new_cols:
         try:
@@ -149,6 +165,34 @@ def _migrate_paper_positions():
         WHERE tp1 IS NULL AND outcome IS NULL
     """)
     c.commit()
+
+    # ── Repair historical rows where closed_at was stored as a price string ──
+    # (TIME_EXIT/VOL_EXIT/FUNDING_EXIT used to pass exit_price as closed_at.)
+    # Move the numeric value into exit_price and clear closed_at so daily-PnL
+    # queries (closed_at >= today) stop matching them via lexicographic compare.
+    rows = c.execute(
+        "SELECT id, closed_at FROM paper_positions WHERE closed_at IS NOT NULL AND exit_price IS NULL"
+    ).fetchall()
+    repaired = 0
+    for r in rows:
+        raw = r["closed_at"]
+        if not raw:
+            continue
+        try:
+            exit_px = float(raw)
+        except (TypeError, ValueError):
+            continue  # already a timestamp
+        c.execute(
+            "UPDATE paper_positions SET exit_price = ?, closed_at = NULL WHERE id = ?",
+            (exit_px, r["id"]),
+        )
+        repaired += 1
+    if repaired:
+        c.commit()
+        logger.warning(
+            "Repaired %d paper_positions row(s): moved price-string closed_at → exit_price",
+            repaired,
+        )
 
 
 def migrate_from_csv():
@@ -362,6 +406,28 @@ def update_signal_outcome(signal_id, outcome, closed_at=None):
     c.commit()
 
 
+def log_signal_block(mode, signal_type, gate, reason, strength=None, confidence=None, signal_id=None):
+    """Record a Phase 3 gate block for retrospective analysis.
+
+    Lets us answer "which gate blocks the most signals" so we can tune the
+    pipeline — e.g. if 'confidence_first' fires 90% of the time, the
+    NORMAL floor may be too strict for the current market regime.
+    """
+    c = _conn()
+    c.execute(
+        """INSERT INTO signal_blocks
+           (timestamp, mode, signal_type, gate, reason, strength, confidence, signal_id)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        (
+            datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+            mode, signal_type, gate, reason,
+            float(strength) if strength is not None else None,
+            confidence, signal_id,
+        ),
+    )
+    c.commit()
+
+
 # ---------------------------------------------------------------------------
 # Paper position CRUD
 # ---------------------------------------------------------------------------
@@ -446,20 +512,54 @@ def get_open_position_count_by_direction(direction, mode=None):
     return row[0]
 
 
-def close_paper_position(pos_id, outcome, pnl_pct, closed_at=None):
-    """Mark a paper position as closed, weighting P&L by size_factor for pyramid entries."""
+def close_paper_position(pos_id, outcome, pnl_pct, closed_at=None, exit_price=None):
+    """Mark a paper position as closed, weighting P&L by size_factor for pyramid entries.
+
+    `closed_at` is always a timestamp (ISO string); `exit_price` stores the fill
+    price separately so that day-bucketed queries on `closed_at` are not corrupted
+    by numeric values.
+
+    Also propagates the outcome to the linked `signals` row when one exists, so
+    retrospective queries on the signals table (score vs realised outcome) work.
+    """
     c = _conn()
-    row = c.execute("SELECT size_factor FROM paper_positions WHERE id=?", (pos_id,)).fetchone()
+    row = c.execute(
+        "SELECT size_factor, signal_id FROM paper_positions WHERE id=?", (pos_id,)
+    ).fetchone()
     sf = float(row["size_factor"] or 1.0) if row else 1.0
+    signal_id = row["signal_id"] if row else None
+
+    # Back-compat: callers used to pass a numeric `closed_at` meaning exit price.
+    # Detect that case and route it into the right column with a warning.
+    if closed_at is not None and not isinstance(closed_at, str):
+        try:
+            exit_price = exit_price if exit_price is not None else float(closed_at)
+        except (TypeError, ValueError):
+            pass
+        closed_at = None
+
+    ts_iso = closed_at or datetime.now(UTC).isoformat()
     c.execute(
         """UPDATE paper_positions
-           SET outcome=?, pnl_pct=?, closed_at=?
+           SET outcome=?, pnl_pct=?, closed_at=?, exit_price=?
            WHERE id=?""",
         (
-            outcome, round(pnl_pct * sf, 3),
-            closed_at or datetime.now(UTC).isoformat(), pos_id,
+            outcome, round(pnl_pct * sf, 3), ts_iso,
+            float(exit_price) if exit_price is not None else None,
+            pos_id,
         ),
     )
+    # Propagate to the linked signal row — ONLY for WIN/LOSS. Non-organic
+    # closes (VOL_EXIT, TIME_EXIT, FUNDING_EXIT, MACRO_CLOSE, FLIP,
+    # BREAKER_CLOSE) cut the trade short before the signal had a chance to
+    # play out, so they don't reflect signal quality. Leaving signals.outcome
+    # NULL for those keeps retrospective queries clean (signal score vs
+    # realised outcome → only WIN/LOSS resolved trades).
+    if signal_id is not None and outcome in ("WIN", "LOSS"):
+        c.execute(
+            "UPDATE signals SET outcome=?, closed_at=? WHERE id=?",
+            (outcome, ts_iso, signal_id),
+        )
     c.commit()
 
 

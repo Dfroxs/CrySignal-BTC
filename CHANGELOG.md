@@ -4,6 +4,183 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-14 — fix: 4 audit pass — macro race, trail ATR, csv silent, signal outcome semantics
+
+### Fixed
+
+- **MACRO open-then-immediately-close in same cycle** (`signals/engine.py:integrate_news_with_signal`): The old code reduced strength by 2.0 on macro detection — if strength still cleared threshold, the signal fired → position opened in Phase 3 step 2 → `check_and_close_positions` at step 4 detected the same macro and MACRO_CLOSE'd it. Entry fee + exit fee + slippage burned for a zero-duration trade every macro window. Now forces type='HOLD' on macro detection regardless of strength.
+
+- **Live trail used ENTRY ATR but backtest used CURRENT ATR** (`trading/paper.py`): In expanding-vol regimes the live trail stayed at the (smaller) entry-ATR width while backtest correctly widened with current vol — live got whipsawed out of trades that backtest holds onto, so backtest overstated live performance. Live now uses `current_atr` from `check_and_close_positions` for the trail-width calculation, falling back to entry ATR when unavailable. Symmetric BUY/SELL.
+
+- **`check_upcoming_macro_events` silent fallback** (`signals/sentiment.py`): A blanket try/except returned `(False, None)` on any error. A missing or corrupt MACRO_CSV silently disabled macro protection — bot would trade through high-impact news with no force-close. Now logs WARNING on CSV-level failures so the operator can see protection is offline; per-row parse errors still skip at DEBUG.
+
+- **`signals.outcome` polluted with cut-short close labels** (`trading/history.py`): `close_paper_position` propagated every outcome label (VOL_EXIT, TIME_EXIT, FUNDING_EXIT, MACRO_CLOSE, FLIP, BREAKER_CLOSE) to the linked signals row. These don't reflect signal quality — they're "we force-closed for unrelated reasons". A retrospective query mixing them with WIN/LOSS drags the analysis. Now only WIN/LOSS propagates; cut-short closes leave `signals.outcome` NULL (unresolved). `paper_positions` still records the full outcome detail.
+
+---
+
+## 2026-05-14 — fix: backtest alignment + pyramid TP min-distance
+
+### Fixed
+
+- **Backtest VOL_EXIT diverged from live** (`backtest.py:238`): live just changed to only fire VOL_EXIT when underwater; backtest still closed any position on vol expansion. Backtest would underreport win rate vs what live now achieves. Now mirrors the underwater-only gate.
+
+- **Backtest trade timestamps always empty** (`backtest.py`): `fetch_ohlcv_df` sets `timestamp` as the DataFrame INDEX, but `_make_trade` and `_candle_utc_hour` accessed it as a COLUMN (`df.iloc[i]["timestamp"]` → KeyError → silently empty). Trades had blank entry_time/exit_time, and the US-session bump in classify_regime always saw hour=0. Now reads `df.index[i]`.
+
+- **Arbitrary 12% "funding exit proxy" in backtest** (`backtest.py`): With no historical funding data, the backtest invented a 12% unrealised-PnL cap and called the exit FUNDING_EXIT. This wasn't modelling funding — it was just capping winners, biasing avg P&L down and creating a phantom exit type. Removed cleanly; module docstring already disclaims that market-structure exits don't apply in backtest.
+
+- **Backtest entry gates asymmetric** (`backtest.py:_passes_entry_gates`): only checked fakeout on BUY upper-wick (not SELL lower-wick); quality gates (regime, confluence, breakout, psy_sl) applied to spot BUY only — futures SHORT skipped all of them. After the recent live changes that added counter-trend regime + confluence + psy_sl + sr to futures first-entry, backtest SHORT would over-report performance vs live. Now mirrors live: symmetric BUY/SELL fakeout, symmetric regime/confluence/psy_sl for both spot and futures.
+
+- **Pyramid TP cap could land just above entry** (`run_bot.py:618`): the recent S/R cap fix on the pyramid TP recompute lacked the engine's "min 1× ATR distance" check. If resistance was very close to entry (e.g. entry 80000, resistance 80050), TP1 would be capped to 80050 — pyramid would TP1 for negligible profit then trail-to-BE the other half, netting essentially zero. Now requires `ceiling - entry >= 1× ATR` before capping.
+
+---
+
+## 2026-05-14 — fix: 4 strategy bugs that bias toward losing money
+
+### Fixed
+
+- **Trail/SL exit P&L computed off trigger, fill reported as current** (`trading/paper.py`): When price gaps through the trail or original SL, the actual fill price is `current_price` (worse than the trigger). The old code computed `exit_pnl = _calc_pnl(pos, trail)` but reported `exit = current_price` in the close record — paper P&L systematically overstated wins (or understated losses) by the slippage gap on every trail/SL exit. False confidence in strategy performance. Now uses `current_price` for both the P&L and the recorded exit; `_check_slippage` warning still logs the trail-to-fill discrepancy.
+
+- **F&G double/triple-counted in news integration** (`signals/engine.py:integrate_news_with_signal`): `news_data['sentiment']` is computed as `combined = fng_score*0.50 + crypto_score*0.35 + geo_score*0.15` (see `sentiment.py:69`), so Fear & Greed is already weighted 50% INTO the news sentiment. The old code then applied a SECOND independent bump on F&G value (±1.5 / ±0.5). A BUY at F&G=15 with BULLISH sentiment got +1.5 (F&G direct) + 0.75 (sentiment) = +2.25, but 50% of that 0.75 was F&G being re-counted. Inflated scores promoted weak signals past the NORMAL confidence floor and into STRONG tier, bypassing entry gates. Now: F&G has its own tier check; news-sentiment only fires when F&G didn't trigger; news-sentiment weights reduced (0.75→0.5, 0.5→0.35) to reflect the remaining non-F&G signal.
+
+- **VOL_EXIT force-closed profitable positions** (`trading/paper.py`): When current ATR exceeded `entry_atr × vol_mult`, ALL open positions in that mode were closed regardless of P&L. A trade at +5% in expanding volatility got force-closed — throwing away winners. Now VOL_EXIT only fires when unrealised P&L is ≤ 0. Profitable positions in expanding vol keep running; the trailing stop logic naturally widens to current ATR on every cycle, so risk is still capped.
+
+- **Quadruple-dampened position size in high vol** (`signals/sizing.py:calculate_futures_position`): `vol_cap` multiplied BOTH `effective_risk = risk_pct × conf_mult × vol_cap` AND `effective_max = max_leverage × vol_cap`. Combined with `_compute_confidence` separately deducting 0.15 from `mult` when `atr_pct > 0.85`, position size collapsed to ~10% of base in extreme vol — missing the high-vol periods that often contain the best setups. Now `vol_cap` applies only to the leverage ceiling; risk-side dampening lives entirely in `_compute_confidence`. Position value across regimes smooths from $700 (low vol) → $300 (extreme vol) instead of collapsing.
+
+---
+
+## 2026-05-14 — fix: 7 audit pass (terminal pd scope, telegram SL sign, double-icon, cycle resilience, OHLCV validation, import cleanup)
+
+### Fixed
+
+- **`_pd` import scope in MFI/CMF display** (`signals/terminal.py`): `import pandas as _pd` was inside the `if mfi is not None:` branch, so a signal with `mfi=None` but `cmf` present would `NameError` when computing `_pd.isna(cmf)`. In practice MFI and CMF are computed together so it never tripped live, but the coupling was wrong. Hoisted import above both branches.
+
+- **SL displayed as `+5.00%` in compact Telegram** (`notifier/telegram.py`): `_format_compact_signal_telegram` used `{sl_pct:+.2f}%` where `sl_pct` is `abs(entry - sl)/entry * 100` (always positive). The `:+.2f` rendered "+5.00%" for a stop loss — implies a gain. Consolidated and open-notification formatters already used `-{sl_pct:.2f}%` correctly; compact card now aligned.
+
+- **Phase 3 actions printed with double-icon** (`run_bot.py`): The summary loop unconditionally prepended "✓" or "⏭" to every action, but breaker/emergency entries already carry their own icon ("⛔" / "🚨"), producing "⏭ ⛔ SPOT drawdown ...". Now detects self-iconed entries and prints them as-is in a colour matching the icon family.
+
+- **Phase 4 + main loop unguarded against exceptions** (`run_bot.py`): A malformed signal that crashed a Telegram formatter would propagate out of `run_cycle()` and stop the whole `while True` loop. Both the Phase 4 send block and the loop's cycle dispatch now wrap in try/except (KeyboardInterrupt still propagates so Ctrl+C works). One bad cycle no longer kills the bot.
+
+- **`_validate_ohlcv` was dead code** (`signals/ohlcv.py`): Function defined but never invoked. Empty bars or NaN in close/high/low/volume would silently flow into indicator calcs and produce nonsense EMA/RSI/MACD the engine would happily score from. `fetch_ohlcv_df` now calls the validator and raises `ValueError` on failure; the per-mode orchestrators already catch exceptions → bad fetch becomes HOLD rather than corrupt signal.
+
+### Changed
+
+- **notifier/telegram.py imports sizing directly** instead of through the `core_analysis` legacy shim. Removes coupling to the shim's continued existence.
+
+---
+
+## 2026-05-14 — fix: 5 post-audit issues (flip-path gates, display order, pyramid TP cap, pyramid size order, loop scheduling)
+
+### Fixed
+
+- **Flip path skipped 4 of the new quality gates** (`run_bot.py`): The futures FIRST-entry path got psy_sl + sr_entry + counter-trend regime + trend-confluence gates in the previous commit, but the FLIP path (signal reversed, opposite position auto-closed, new direction opened) ran only profitability + confidence + fakeout — bypassing the regime/structure protection. A SHORT flipping a LONG in TRENDING_BULLISH would open anyway. All four gates now mirror to the flip path with `flip_*` tags so `signal_blocks` distinguishes them.
+
+- **VERDICT box rendered before circuit breaker mutated signal type** (`run_bot.py`): Terminal showed "STRONG BUY" while Telegram (sent later) showed HOLD because `display_combined()` ran before the per-mode drawdown breaker. Display moved to after the breaker so VERDICT reflects the blocked state.
+
+- **Pyramid TP recompute ignored engine's resistance cap** (`run_bot.py`): When SL was tightened for pyramid entries, TP1 and TP2 were rebuilt from `entry + new_sl_dist × RR`, discarding the resistance cap the engine had applied to the original TP. A pyramid opened near resistance could land TP past it. Now caps recomputed TPs at `resistance × 0.995` when resistance sits between entry and the raw TP.
+
+- **Pyramid sized against wide SL then opened with tight SL** (`run_bot.py`): `calculate_position_size()` was called BEFORE SL tightening. Position size scales inversely with SL distance, so sizing for a wider SL gave a smaller position than warranted by the tighter SL — capital-at-risk per pyramid entry came in below the configured 2%. Currently masked by max_position_size cap at 10%, but the order was logically wrong. Reordered: tighten SL → compute size → check min_size → check aggregate risk → open.
+
+- **`--loop ≥ 120` collapsed mid-cycle check onto full-cycle minute** (`run_bot.py`): `half = args.loop // 2` then `check_minute = (full_minute + half) % 60` — for `loop=120` this gave `(1 + 60) % 60 = 1`, same as `full_minute`. Mid-cycle position check never ran for long intervals. Now sets `check_minute = None` (and skips the mid-cycle leg cleanly) when `half ≥ 60` or when the wrap collides.
+
+---
+
+## 2026-05-14 — feat: 4 entry-strategy improvements (psy_sl SHORT, regime/confluence for futures, reentry tier)
+
+### Fixed
+
+- **`_check_psychology_sl_risk` was BUY-only logic** (`run_bot.py`): The function checked "distance from SL up to the next round number ABOVE it" — correct for BUY (SL below entry, vulnerable to a push down through the round). For SHORT, SL is above entry and the relevant magnet is the round number BELOW the SL (push up through it triggers the stop). Now accepts `direction=` and uses the right side: `dist = sl_above - sl` for BUY, `dist = sl - sl_below` for SELL.
+
+### Added
+
+- **Counter-trend regime block, symmetric BUY/SELL** (`run_bot.py`): New `_is_counter_trend_regime(signal, direction)` blocks BUY in TRENDING/VOLATILE BEARISH AND SELL in TRENDING/VOLATILE BULLISH. Spot already had `_is_bearish_regime` for BUY; futures had **no equivalent for SHORT**, which meant a SELL hitting NORMAL confidence (≥1.2× threshold) could open into a strong bull. Now applied to futures first entry; spot continues to use the back-compat wrapper.
+
+- **Trend confluence for both directions** (`run_bot.py`): `_trend_confluence_for_direction(signal, direction)` requires ≥2/3 confirmations (price vs EMA200, ADX trend_dir, price vs VWAP) MATCHING the signal direction. Applied to futures first entry as a `trend_confluence` gate — previously only spot had a bullish confluence check; now SHORT also needs ≥2/3 bearish confirmations.
+
+- **psy_sl + sr_entry gates added to futures first entry** (`run_bot.py`): These existed only on the spot path. Now mirrored for futures, with `direction=` passed through correctly so SHORT SL checks use the round-number-below logic.
+
+### Changed
+
+- **Re-entry quality: confidence tier OR strength +0.3** (`run_bot.py:_check_reentry_quality`): Was `new_strength >= last_strength + 0.5`. With threshold 5.0 and typical scores 5.0–6.5, +0.5 was effectively unreachable without an explicit STRONG-tier jump. Now allows re-entry on any of (1) better price, (2) confidence tier upgrade (WEAK → NORMAL → STRONG), or (3) raw strength +0.3 fallback. Uses `get_signal_confidence(strength, threshold)` to compute the tier of the historical signal — current threshold is used as proxy (adaptive drifts slowly enough).
+
+---
+
+## 2026-05-14 — feat: 5 strategy improvements (sample size, signal outcome, per-mode breaker, reentry filter, gate tracking)
+
+### Changed
+
+- **Win-rate min sample raised 3 → 5** (`signals/market_data.py`): 3 trades = ±33% standard error; far too noisy to base ±0.5–1.0 threshold moves on. Adaptive threshold now waits until 5 resolved WIN/LOSS trades are in the window before reacting. (Wilson lower-bound smoothing was prototyped and rejected — too conservative for the "lower threshold" path at small n.)
+
+- **`signals.outcome` now updated when paper position closes** (`trading/history.py`): Previously dead code. `close_paper_position()` now propagates the outcome and timestamp to the linked `signals` row via its `signal_id` FK. Enables retrospective queries like "score 6.5 STRONG → WIN/LOSS distribution" that were impossible before because every `signals.outcome` was an empty string.
+
+- **Drawdown circuit breaker is per-mode** (`run_bot.py`): Previously combined spot+futures into `total_dd`. A 12% futures collapse was masked by a 5% spot gain. Spot and futures now block independently — only the offending mode pauses new entries. Daily-loss check is also per-mode (`get_daily_pnl("spot")` and `get_daily_pnl("futures")` separately). Telegram circuit-breaker card shows both modes' DD and daily P&L for transparency.
+
+- **Re-entry quality benchmark = last RESOLVED WIN/LOSS in same direction** (`run_bot.py:_check_reentry_quality`): Previously compared against the most recent close of any kind in the mode — a quick FLIP at +0.1% or a VOL_EXIT at −0.3% would set an arbitrary baseline for the next BUY entry. Now filtered to `outcome IN ('WIN','LOSS') AND type = ?` so the benchmark is a meaningful executed trade in the same direction.
+
+### Added
+
+- **`signal_blocks` table for gate-block tracking** (`trading/history.py`, `run_bot.py`): New table records every Phase 3 gate rejection — mode, signal type, gate tag (e.g. `confidence_first`, `fakeout_pyramid`, `regime_bearish`), reason, strength, confidence, and FK to the signal. 29 block sites in `run_bot.py` instrumented via a single `_block(phase3_actions, mode, signal, gate, reason)` helper that writes to DB, logger, and phase3 status in one call. Lets us answer "which gate blocks the most signals" so the strictest gates can be tuned.
+
+  Suggested SQL:
+  ```sql
+  SELECT gate, COUNT(*) FROM signal_blocks
+   WHERE timestamp >= date('now','-7 days')
+   GROUP BY gate ORDER BY 2 DESC;
+  ```
+
+---
+
+## 2026-05-14 — feat: complete outcome labels in Telegram + terminal display
+
+### Changed
+
+- **Telegram close notification labels** (`notifier/telegram.py`): Added human-readable labels for the four exit outcomes that previously fell through to raw `outcome` text: `TIME_EXIT` → "max hold time", `VOL_EXIT` → "volatility expansion", `FUNDING_EXIT` → "funding cost exit", `BREAKER_CLOSE` → "circuit breaker · equity".
+- **Terminal performance breakdown** (`trading/paper.py`): `print_open_status()` and `print_paper_summary()` now report counts for VOL/TIME/FUNDING exits and BREAKER_CLOSE in addition to W/L/MC/BE. Short labels in the open-status one-liner (`VX`/`TX`/`FX`/`BR`), long labels in the paper summary block (`N Vol`/`N Time`/`N Fund`/`N Breaker`).
+- **Telegram consolidated performance section** (`notifier/telegram.py`): Same outcome breakdown for spot/futures performance line — no more silent drops.
+
+---
+
+## 2026-05-14 — fix: closed_at corruption + recent win-rate denominator
+
+### Fixed
+
+- **`closed_at` column corrupted with price strings** (`trading/history.py`, `trading/paper.py`, `run_bot.py`): Five call sites (`TIME_EXIT`, `VOL_EXIT`, two `FUNDING_EXIT`, `FLIP`, plus the newly added `BREAKER_CLOSE`) were passing the exit *price* as the `closed_at` argument to `close_paper_position()`. Because SQLite stores TEXT columns as-is, rows ended up with `closed_at = "80938.53"` instead of an ISO timestamp. This silently broke two queries that compare `closed_at` lexicographically:
+  1. `get_daily_pnl()` — daily-loss circuit breaker filter `closed_at >= "2026-05-14 00:00:00"`. Any numeric string starting with a digit `>= '2'` lexicographically wins, so historical VOL/TIME exits where BTC traded in the $30k–$99k range were always counted as "today's" P&L. The circuit breaker could fire incorrectly or fail to fire when it should.
+  2. `_get_recent_win_rate()` — adaptive threshold cutoff `closed_at >= cutoff_iso`. Same lexicographic trap → over-counted stale closes in the recent window, dragging win rate down and pushing the threshold up.
+
+  Fixes:
+  - Added `exit_price REAL` column to `paper_positions`.
+  - `close_paper_position()` now accepts `exit_price=` explicitly; numeric `closed_at` is auto-routed into `exit_price` and `closed_at` defaults to the ISO timestamp.
+  - Migration repairs historical rows: any `closed_at` that parses as a float is moved into `exit_price` and `closed_at` is set to NULL.
+  - All five call sites updated to pass `exit_price=` instead of `closed_at=`.
+
+- **`_get_recent_win_rate()` over-counted non-WIN/LOSS outcomes** (`signals/market_data.py`): The denominator included VOL_EXIT, TIME_EXIT, FUNDING_EXIT, MACRO_CLOSE, BREAKER_CLOSE, FLIP — so a flurry of VOL_EXITs at small losses (caused by the prior ATR-scale bug) dragged the win rate down and triggered aggressive +1.0 threshold raises in the 24h fast-window logic. Filter changed to `outcome IN ('WIN','LOSS')` matching `get_win_rate()`.
+
+---
+
+## 2026-05-14 — fix: per-mode ATR + emergency-close P&L + trail outcome labels
+
+### Fixed
+
+- **Wrong ATR scale passed to futures positions** (`run_bot.py`, `trading/paper.py`): `check_and_close_positions()` for `mode='futures'` was being called with `current_atr` taken from the SPOT signal (4H scale) whenever a spot signal existed. Live data shows spot 4H ATR (~700) is roughly 2× futures 1H ATR (~330), so the VOL_EXIT check `current_atr > entry_atr × 2.0` triggered on essentially every cycle for futures positions opened at 1H ATR. This was the root cause behind every futures position closing via VOL_EXIT in the May 9–13 live run — raising `vol_expansion_exit_mult` to 2.0 helped but did not address the underlying mismatch. Fixed by computing `spot_atr` and `fut_atr` separately and passing each mode its own ATR. Mid-cycle position check now caches per-mode (`_last_atr_spot`, `_last_atr_fut`).
+
+- **EMERGENCY close used `pnl=0`** (`run_bot.py:351-365`): When equity drops below `min_equity_pct` (50%), `close_paper_position()` was called with hard-coded `pnl=0`, masking the actual realised loss in the breaker. Fixed to compute P&L at the latest signal price (futures entry preferred, then spot) with direction-aware sign, and pass `closed_at` for accurate exit records.
+
+- **Trail outcome mislabelled "WIN" when net P&L negative** (`trading/paper.py`): When a trailing stop hit exactly at breakeven (trail = entry) with no partial taken, outcome was labelled `WIN` because the check was `trail >= entry`, but the net P&L after entry+exit fees (~0.18%) and slippage was actually negative. Outcome now labels by `exit_pnl > 0` (post-fee P&L) for both BUY and SELL exits.
+
+- **Candlestick pattern `KeyError` if dict malformed** (`signals/engine.py:530-537`): Direct `cs['bullish']` access would crash if `detect_candlestick_pattern()` ever returned a dict missing those keys. Defensive `.get()` used instead.
+
+---
+
+## 2026-05-14 — fix: VOL_EXIT too aggressive + HTF conflict penalty
+
+### Fixed
+
+- **VOL_EXIT multiplier too low** (`config.py`): `vol_expansion_exit_mult` raised 1.5 → 2.0. At 1.5×, futures positions were closed within 1–2 cycles whenever volatility expanded slightly (ATR 1.5× entry ATR), preventing trades from reaching TP1. All 3 futures positions in live data were VOL_EXIT at small losses. At 2.0× the threshold is more realistic — requires a true volatility spike (doubled ATR) before force-closing.
+
+- **HTF conflict no penalty** (`signals/engine.py`): When both HTF timeframes actively oppose each other (4H BULLISH vs 1D BEARISH or vice versa), the engine previously showed a "caution" note but did not reduce the signal score. In live data, 100% of signals fired with HTF misalignment. Fixed: when `aligned=False` and the two timeframes are directly opposing (BULLISH vs BEARISH — not just NEUTRAL), the dominant side (buy or sell) is penalised −1.0. This makes borderline signals drop below threshold rather than firing against the longer-term trend.
+
+---
+
 ## 2026-05-12 — fix: 2 paper-trading position bugs (gap-through P&L, return type)
 
 ### Fixed

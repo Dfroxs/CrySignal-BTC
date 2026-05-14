@@ -47,6 +47,11 @@ def fetch_ohlcv_df(symbol='BTC/USDT', timeframe='1h', limit=500, vwap_period=24)
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df = df.set_index('timestamp')
 
+    # Sanity check upstream — bad OHLCV (empty / NaN in core cols) would
+    # produce nonsense indicators downstream that silently feed the engine.
+    if not _validate_ohlcv(df, timeframe):
+        raise ValueError(f"OHLCV validation failed for {symbol} {timeframe}")
+
     df['EMA_200'] = calculate_ema(df['close'], 200)
     df['RSI_14'] = calculate_rsi(df['close'])
     df['MACD'], df['MACD_Signal'], df['MACD_Histogram'] = calculate_macd(df['close'])

@@ -137,7 +137,7 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
                 age_hours = (datetime.now(UTC) - opened_dt).total_seconds() / 3600
                 if age_hours > max_hours:
                     exit_pnl = _calc_pnl(pos, current_price)
-                    sh.close_paper_position(pos_id, "TIME_EXIT", exit_pnl, closed_at=current_price)
+                    sh.close_paper_position(pos_id, "TIME_EXIT", exit_pnl, exit_price=current_price)
                     closed.append({
                         "type": pos["type"], "entry": entry,
                         "exit": current_price, "pnl": exit_pnl,
@@ -152,21 +152,34 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
                 pass
 
         # ── Exit 0b: volatility expansion ──
+        # Only force-close on vol expansion when the position is UNDERWATER —
+        # winning positions in expanding vol should keep running, with the
+        # trail tightened in the normal trail logic below. Force-closing a
+        # +5% trade because ATR doubled was throwing away winners.
         entry_atr = pos.get("atr") or 0
         vol_mult = RISK_CONFIG.get("vol_expansion_exit_mult", 2.0)
         if entry_atr > 0 and current_atr > 0 and current_atr > entry_atr * vol_mult:
-            exit_pnl = _calc_pnl(pos, current_price)
-            sh.close_paper_position(pos_id, "VOL_EXIT", exit_pnl, closed_at=current_price)
-            closed.append({
-                "type": pos["type"], "entry": entry,
-                "exit": current_price, "pnl": exit_pnl,
-                "outcome": "VOL_EXIT", "mode": pos.get("mode", "futures"),
-            })
-            logger.info(
-                "Paper %s %s → VOL_EXIT (ATR %.0f > %.0f ×%.1f, %.2f%%)",
-                pos["type"], pos_id, current_atr, entry_atr, vol_mult, exit_pnl,
-            )
-            continue
+            unrealized_pnl = _calc_pnl(pos, current_price, with_fees=False)
+            if unrealized_pnl <= 0:
+                exit_pnl = _calc_pnl(pos, current_price)
+                sh.close_paper_position(pos_id, "VOL_EXIT", exit_pnl, exit_price=current_price)
+                closed.append({
+                    "type": pos["type"], "entry": entry,
+                    "exit": current_price, "pnl": exit_pnl,
+                    "outcome": "VOL_EXIT", "mode": pos.get("mode", "futures"),
+                })
+                logger.info(
+                    "Paper %s %s → VOL_EXIT (ATR %.0f > %.0f ×%.1f, %.2f%%)",
+                    pos["type"], pos_id, current_atr, entry_atr, vol_mult, exit_pnl,
+                )
+                continue
+            else:
+                # Profitable in expanding vol — keep running but log so we know
+                # the trail logic below is doing the work of capping further risk.
+                logger.info(
+                    "Paper %s %s vol expansion ATR %.0f > %.0f ×%.1f but +%.2f%% — letting trail tighten instead",
+                    pos["type"], pos_id, current_atr, entry_atr, vol_mult, unrealized_pnl,
+                )
 
         # ── Exit 0c: funding-rate exit (futures only) ──
         if mode == "futures" and funding_rate != 0:
@@ -176,7 +189,7 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
             close_short_rate = fe_cfg.get("close_short_rate", -0.05)
             if pos["type"] == "BUY" and funding_rate > close_long_rate:
                 exit_pnl = _calc_pnl(pos, current_price)
-                sh.close_paper_position(pos_id, "FUNDING_EXIT", exit_pnl, closed_at=current_price)
+                sh.close_paper_position(pos_id, "FUNDING_EXIT", exit_pnl, exit_price=current_price)
                 closed.append({
                     "type": pos["type"], "entry": entry,
                     "exit": current_price, "pnl": exit_pnl,
@@ -189,7 +202,7 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
                 continue
             elif pos["type"] == "SELL" and funding_rate < close_short_rate:
                 exit_pnl = _calc_pnl(pos, current_price)
-                sh.close_paper_position(pos_id, "FUNDING_EXIT", exit_pnl, closed_at=current_price)
+                sh.close_paper_position(pos_id, "FUNDING_EXIT", exit_pnl, exit_price=current_price)
                 closed.append({
                     "type": pos["type"], "entry": entry,
                     "exit": current_price, "pnl": exit_pnl,
@@ -203,13 +216,18 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
 
         if pos["type"] == "BUY":
             # 1 — advance trailing stop
-            if atr:
+            # Use CURRENT ATR (when available) so the trail width adapts to
+            # the current volatility regime — was using entry ATR which kept
+            # the trail too tight in expanding-vol periods and whipsawed live
+            # positions out of trades that backtest holds onto.
+            trail_atr = current_atr if current_atr and current_atr > 0 else atr
+            if trail_atr:
                 mode_key = pos.get("mode", "futures")
                 trail_mult = _trail_factor(mode_key)
                 if partial:  # tighten 20% after TP1 — remaining half needs less room
                     trail_mult *= RISK_CONFIG.get("trailing_post_tp1_factor", 0.8)
-                new_trail = current_price - atr * trail_mult
-                min_adv = atr * trail_mult * RISK_CONFIG.get("trailing_advance_min_ratio", 0.5)
+                new_trail = current_price - trail_atr * trail_mult
+                min_adv = trail_atr * trail_mult * RISK_CONFIG.get("trailing_advance_min_ratio", 0.5)
                 if new_trail > trail + min_adv:
                     trail = new_trail
                     sh.update_trailing_stop(pos_id, trail)
@@ -255,9 +273,14 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
                 )
             elif current_price <= trail:
                 _check_slippage(trail, current_price, pos_id)
-                exit_pnl = _calc_pnl(pos, trail)
-                outcome = "WIN" if trail >= entry else "LOSS"
-                sh.close_paper_position(pos_id, outcome, exit_pnl)
+                # Use the actual fill price (current_price) for P&L, not the
+                # trigger price (trail). When price gaps through the trail,
+                # the real fill is current_price — pretending we got the
+                # trigger price overstates wins. The slippage warning above
+                # logs the discrepancy for diagnostics.
+                exit_pnl = _calc_pnl(pos, current_price)
+                outcome = "WIN" if exit_pnl > 0 else "LOSS"
+                sh.close_paper_position(pos_id, outcome, exit_pnl, exit_price=current_price)
                 closed.append({
                     "type": pos["type"], "entry": entry,
                     "exit": current_price, "pnl": exit_pnl,
@@ -271,13 +294,15 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
 
         elif pos["type"] == "SELL":
             # 1 — advance trailing stop (moves down for shorts)
-            if atr:
+            # Use CURRENT ATR — see BUY branch for rationale.
+            trail_atr = current_atr if current_atr and current_atr > 0 else atr
+            if trail_atr:
                 mode_key = pos.get("mode", "futures")
                 trail_mult = _trail_factor(mode_key)
                 if partial:
                     trail_mult *= RISK_CONFIG.get("trailing_post_tp1_factor", 0.8)
-                new_trail = current_price + atr * trail_mult
-                min_adv = atr * trail_mult * RISK_CONFIG.get("trailing_advance_min_ratio", 0.5)
+                new_trail = current_price + trail_atr * trail_mult
+                min_adv = trail_atr * trail_mult * RISK_CONFIG.get("trailing_advance_min_ratio", 0.5)
                 if new_trail < trail - min_adv:
                     trail = new_trail
                     sh.update_trailing_stop(pos_id, trail)
@@ -322,9 +347,10 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
                 )
             elif current_price >= trail:
                 _check_slippage(trail, current_price, pos_id)
-                exit_pnl = _calc_pnl(pos, trail)
-                outcome = "WIN" if trail <= entry else "LOSS"
-                sh.close_paper_position(pos_id, outcome, exit_pnl)
+                # Use actual fill price for P&L — see BUY branch for rationale.
+                exit_pnl = _calc_pnl(pos, current_price)
+                outcome = "WIN" if exit_pnl > 0 else "LOSS"
+                sh.close_paper_position(pos_id, outcome, exit_pnl, exit_price=current_price)
                 closed.append({
                     "type": pos["type"], "entry": entry,
                     "exit": current_price, "pnl": exit_pnl,
@@ -380,14 +406,22 @@ def print_open_status(mode=None):
     total, count, avg = sh.get_closed_pnl(mode)
     if count > 0:
         bd = sh.get_outcome_breakdown(mode)
-        w = bd.get("WIN", 0)
-        l = bd.get("LOSS", 0)
-        m = bd.get("MACRO_CLOSE", 0)
+        w  = bd.get("WIN", 0)
+        l  = bd.get("LOSS", 0)
+        m  = bd.get("MACRO_CLOSE", 0)
         be = bd.get("BREAKEVEN", 0)
+        ve = bd.get("VOL_EXIT", 0)
+        te = bd.get("TIME_EXIT", 0)
+        fe = bd.get("FUNDING_EXIT", 0)
+        bc = bd.get("BREAKER_CLOSE", 0)
         parts = []
-        if w: parts.append(f"{w}W")
-        if l: parts.append(f"{l}L")
-        if m: parts.append(f"{m}MC")
+        if w:  parts.append(f"{w}W")
+        if l:  parts.append(f"{l}L")
+        if ve: parts.append(f"{ve}VX")
+        if te: parts.append(f"{te}TX")
+        if fe: parts.append(f"{fe}FX")
+        if m:  parts.append(f"{m}MC")
+        if bc: parts.append(f"{bc}BR")
         if be: parts.append(f"{be}BE")
         outcome_str = "  ".join(parts) if parts else ""
         wr_str = f"  WR {w/(w+l)*100:.0f}%" if (w + l) > 0 else ""
@@ -414,9 +448,21 @@ def print_paper_summary(mode=None):
         l  = bd.get("LOSS", 0)
         mc = bd.get("MACRO_CLOSE", 0)
         be = bd.get("BREAKEVEN", 0)
+        ve = bd.get("VOL_EXIT", 0)
+        te = bd.get("TIME_EXIT", 0)
+        fe = bd.get("FUNDING_EXIT", 0)
+        bc = bd.get("BREAKER_CLOSE", 0)
         parts = [f"{w} Wins", f"{l} Losses"]
+        if ve:
+            parts.append(f"{ve} Vol")
+        if te:
+            parts.append(f"{te} Time")
+        if fe:
+            parts.append(f"{fe} Fund")
         if mc:
             parts.append(f"{mc} Macro")
+        if bc:
+            parts.append(f"{bc} Breaker")
         if be:
             parts.append(f"{be} BE")
         print(f"   Outcomes:         {' · '.join(parts)}")
