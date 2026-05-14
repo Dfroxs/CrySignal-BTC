@@ -127,52 +127,79 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
 # ---------------------------------------------------------------------------
 
 def _passes_entry_gates(signal, mode, window):
-    """Simulate entry gates with historical data."""
+    """Simulate entry gates with historical data — mirrors run_bot.py logic
+    for both BUY and SELL across spot/futures so backtest reflects live.
+    """
     conf = signal.get("confidence", "WEAK")
     min_conf = "NORMAL"
+    stype = signal["type"]
 
     # Confidence gate
     _CL = {"WEAK": 0, "NORMAL": 1, "STRONG": 2}
     if _CL.get(conf, -1) < _CL.get(min_conf, 0):
         return False
 
-    # Fakeout gate — check 24H wick on last candle
+    # Fakeout gate — symmetric on BUY upper-wick and SELL lower-wick
     last = window.iloc[-1]
     hi24 = window["high"].tail(24).max() if mode == "spot" else window["high"].tail(6).max()
     lo24 = window["low"].tail(24).min() if mode == "spot" else window["low"].tail(6).min()
     if hi24 and lo24 and hi24 != lo24:
         range_24h = hi24 - lo24
         upper_wick = (hi24 - last["close"]) / range_24h
-        if signal["type"] == "BUY" and upper_wick > 0.6:
+        lower_wick = (last["close"] - lo24) / range_24h
+        if stype == "BUY" and upper_wick > 0.6:
             return False  # fake bullish breakout
+        if stype == "SELL" and lower_wick > 0.6:
+            return False  # fake bearish breakdown
 
-    # Spot-only quality gates
-    if mode == "spot" and signal["type"] == "BUY":
-        regime = signal.get("_regime", {})
-        # Gate: regime filter — no BUY in bearish trend
-        if regime.get("trend_dir") == "BEARISH":
+    # Direction-symmetric quality gates — apply for BOTH spot BUY and futures
+    # SHORT (live applies these to futures first-entry too as of c5a5f04+ef5d55d).
+    regime = signal.get("_regime", {})
+    trend = regime.get("trend_dir")
+    regime_lbl = regime.get("regime", "")
+    ema200 = last.get("EMA_200", last.get("ema200", 0))
+    vwap = last.get("VWAP_24", last.get("vwap", 0))
+    atr = last.get("ATR_14", 0)
+    entry_px = signal.get("entry_price", 0)
+    close = last["close"]
+
+    # Counter-trend regime block — symmetric BUY/SELL
+    if regime_lbl in ("TRENDING", "VOLATILE"):
+        if stype == "BUY" and trend == "BEARISH":
             return False
-        # Gate: trend confluence — need 2/3 bullish confirmations
-        ema200 = last.get("EMA_200", last.get("ema200", 0))
-        vwap = last.get("VWAP_24", last.get("vwap", 0))
-        confluence = 0
-        if last["close"] > ema200: confluence += 1
-        if regime.get("trend_dir") == "BULLISH": confluence += 1
-        if last["close"] > vwap: confluence += 1
-        if confluence < 2:
+        if stype == "SELL" and trend == "BULLISH":
             return False
-        # Gate: breakout chase — block if price > VWAP+ATR and not near support
-        atr = last.get("ATR_14", 0)
-        sr_entry = signal.get("entry_price", 0)
-        if atr and vwap and sr_entry > vwap + atr:
+
+    # Trend confluence — 2/3 confirmations matching direction
+    confluence = 0
+    if stype == "BUY":
+        if ema200 and close > ema200: confluence += 1
+        if trend == "BULLISH": confluence += 1
+        if vwap and close > vwap: confluence += 1
+    else:
+        if ema200 and close < ema200: confluence += 1
+        if trend == "BEARISH": confluence += 1
+        if vwap and close < vwap: confluence += 1
+    if confluence < 2:
+        return False
+
+    # Breakout chase — applies to BUY only (spot lineage); SELL has its own
+    # over-extended check via wick gate above.
+    if stype == "BUY" and mode == "spot":
+        if atr and vwap and entry_px > vwap + atr:
             return False  # FOMO entry
 
-        # Gate: psychology SL vulnerability — SL within 0.15% below a $1k round number
-        sl = signal.get("stop_loss", 0)
-        if sl > 0:
-            step = 1000
+    # Psychology-SL vulnerability — symmetric direction
+    sl = signal.get("stop_loss", 0)
+    if sl > 0:
+        step = 1000
+        if stype == "BUY":
             next_round = (int(sl // step) + 1) * step
             if (next_round - sl) / sl * 100 <= 0.15:
+                return False
+        else:
+            prev_round = int(sl // step) * step
+            if (sl - prev_round) / sl * 100 <= 0.15:
                 return False
 
     return True
