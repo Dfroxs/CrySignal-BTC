@@ -4,6 +4,20 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-14 — fix: 4 audit pass — macro race, trail ATR, csv silent, signal outcome semantics
+
+### Fixed
+
+- **MACRO open-then-immediately-close in same cycle** (`signals/engine.py:integrate_news_with_signal`): The old code reduced strength by 2.0 on macro detection — if strength still cleared threshold, the signal fired → position opened in Phase 3 step 2 → `check_and_close_positions` at step 4 detected the same macro and MACRO_CLOSE'd it. Entry fee + exit fee + slippage burned for a zero-duration trade every macro window. Now forces type='HOLD' on macro detection regardless of strength.
+
+- **Live trail used ENTRY ATR but backtest used CURRENT ATR** (`trading/paper.py`): In expanding-vol regimes the live trail stayed at the (smaller) entry-ATR width while backtest correctly widened with current vol — live got whipsawed out of trades that backtest holds onto, so backtest overstated live performance. Live now uses `current_atr` from `check_and_close_positions` for the trail-width calculation, falling back to entry ATR when unavailable. Symmetric BUY/SELL.
+
+- **`check_upcoming_macro_events` silent fallback** (`signals/sentiment.py`): A blanket try/except returned `(False, None)` on any error. A missing or corrupt MACRO_CSV silently disabled macro protection — bot would trade through high-impact news with no force-close. Now logs WARNING on CSV-level failures so the operator can see protection is offline; per-row parse errors still skip at DEBUG.
+
+- **`signals.outcome` polluted with cut-short close labels** (`trading/history.py`): `close_paper_position` propagated every outcome label (VOL_EXIT, TIME_EXIT, FUNDING_EXIT, MACRO_CLOSE, FLIP, BREAKER_CLOSE) to the linked signals row. These don't reflect signal quality — they're "we force-closed for unrelated reasons". A retrospective query mixing them with WIN/LOSS drags the analysis. Now only WIN/LOSS propagates; cut-short closes leave `signals.outcome` NULL (unresolved). `paper_positions` still records the full outcome detail.
+
+---
+
 ## 2026-05-14 — fix: backtest alignment + pyramid TP min-distance
 
 ### Fixed
