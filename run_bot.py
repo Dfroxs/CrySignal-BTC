@@ -614,14 +614,16 @@ def run_cycle():
                         spot_signal["stop_loss"] = round(entry_px - new_sl_dist, 2)
                         raw_tp1 = entry_px + new_sl_dist * RISK_CONFIG["take_profit_rr"]
                         raw_tp2 = entry_px + new_sl_dist * RISK_CONFIG["take_profit_rr"] * 2
-                        # Cap recomputed TPs at resistance — engine's original cap
-                        # was discarded when we rebuilt TP from scratch.
+                        # Cap recomputed TPs at resistance — engine's original
+                        # cap requires min 1.0× ATR distance after capping so
+                        # TP can't land just above entry (degenerate R/R).
                         resistance = (spot_signal.get("support_resistance") or {}).get("resistance")
                         if resistance:
                             ceiling = resistance * 0.995
-                            if entry_px < ceiling < raw_tp1:
+                            min_tp_dist = atr * 1.0  # engine uses atr_stop, ours is atr × new_atr_mult≥1.0
+                            if entry_px < ceiling < raw_tp1 and (ceiling - entry_px) >= min_tp_dist:
                                 raw_tp1 = ceiling
-                            if entry_px < ceiling < raw_tp2:
+                            if entry_px < ceiling < raw_tp2 and (ceiling - entry_px) >= min_tp_dist:
                                 raw_tp2 = ceiling
                         spot_signal["take_profit"] = round(raw_tp1, 2)
                         spot_signal["tp2"] = round(raw_tp2, 2)
