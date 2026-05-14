@@ -4,6 +4,22 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-14 — fix: 5 post-audit issues (flip-path gates, display order, pyramid TP cap, pyramid size order, loop scheduling)
+
+### Fixed
+
+- **Flip path skipped 4 of the new quality gates** (`run_bot.py`): The futures FIRST-entry path got psy_sl + sr_entry + counter-trend regime + trend-confluence gates in the previous commit, but the FLIP path (signal reversed, opposite position auto-closed, new direction opened) ran only profitability + confidence + fakeout — bypassing the regime/structure protection. A SHORT flipping a LONG in TRENDING_BULLISH would open anyway. All four gates now mirror to the flip path with `flip_*` tags so `signal_blocks` distinguishes them.
+
+- **VERDICT box rendered before circuit breaker mutated signal type** (`run_bot.py`): Terminal showed "STRONG BUY" while Telegram (sent later) showed HOLD because `display_combined()` ran before the per-mode drawdown breaker. Display moved to after the breaker so VERDICT reflects the blocked state.
+
+- **Pyramid TP recompute ignored engine's resistance cap** (`run_bot.py`): When SL was tightened for pyramid entries, TP1 and TP2 were rebuilt from `entry + new_sl_dist × RR`, discarding the resistance cap the engine had applied to the original TP. A pyramid opened near resistance could land TP past it. Now caps recomputed TPs at `resistance × 0.995` when resistance sits between entry and the raw TP.
+
+- **Pyramid sized against wide SL then opened with tight SL** (`run_bot.py`): `calculate_position_size()` was called BEFORE SL tightening. Position size scales inversely with SL distance, so sizing for a wider SL gave a smaller position than warranted by the tighter SL — capital-at-risk per pyramid entry came in below the configured 2%. Currently masked by max_position_size cap at 10%, but the order was logically wrong. Reordered: tighten SL → compute size → check min_size → check aggregate risk → open.
+
+- **`--loop ≥ 120` collapsed mid-cycle check onto full-cycle minute** (`run_bot.py`): `half = args.loop // 2` then `check_minute = (full_minute + half) % 60` — for `loop=120` this gave `(1 + 60) % 60 = 1`, same as `full_minute`. Mid-cycle position check never ran for long intervals. Now sets `check_minute = None` (and skips the mid-cycle leg cleanly) when `half ≥ 60` or when the wrap collides.
+
+---
+
 ## 2026-05-14 — feat: 4 entry-strategy improvements (psy_sl SHORT, regime/confluence for futures, reentry tier)
 
 ### Fixed
