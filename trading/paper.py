@@ -152,21 +152,34 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
                 pass
 
         # ── Exit 0b: volatility expansion ──
+        # Only force-close on vol expansion when the position is UNDERWATER —
+        # winning positions in expanding vol should keep running, with the
+        # trail tightened in the normal trail logic below. Force-closing a
+        # +5% trade because ATR doubled was throwing away winners.
         entry_atr = pos.get("atr") or 0
         vol_mult = RISK_CONFIG.get("vol_expansion_exit_mult", 2.0)
         if entry_atr > 0 and current_atr > 0 and current_atr > entry_atr * vol_mult:
-            exit_pnl = _calc_pnl(pos, current_price)
-            sh.close_paper_position(pos_id, "VOL_EXIT", exit_pnl, exit_price=current_price)
-            closed.append({
-                "type": pos["type"], "entry": entry,
-                "exit": current_price, "pnl": exit_pnl,
-                "outcome": "VOL_EXIT", "mode": pos.get("mode", "futures"),
-            })
-            logger.info(
-                "Paper %s %s → VOL_EXIT (ATR %.0f > %.0f ×%.1f, %.2f%%)",
-                pos["type"], pos_id, current_atr, entry_atr, vol_mult, exit_pnl,
-            )
-            continue
+            unrealized_pnl = _calc_pnl(pos, current_price, with_fees=False)
+            if unrealized_pnl <= 0:
+                exit_pnl = _calc_pnl(pos, current_price)
+                sh.close_paper_position(pos_id, "VOL_EXIT", exit_pnl, exit_price=current_price)
+                closed.append({
+                    "type": pos["type"], "entry": entry,
+                    "exit": current_price, "pnl": exit_pnl,
+                    "outcome": "VOL_EXIT", "mode": pos.get("mode", "futures"),
+                })
+                logger.info(
+                    "Paper %s %s → VOL_EXIT (ATR %.0f > %.0f ×%.1f, %.2f%%)",
+                    pos["type"], pos_id, current_atr, entry_atr, vol_mult, exit_pnl,
+                )
+                continue
+            else:
+                # Profitable in expanding vol — keep running but log so we know
+                # the trail logic below is doing the work of capping further risk.
+                logger.info(
+                    "Paper %s %s vol expansion ATR %.0f > %.0f ×%.1f but +%.2f%% — letting trail tighten instead",
+                    pos["type"], pos_id, current_atr, entry_atr, vol_mult, unrealized_pnl,
+                )
 
         # ── Exit 0c: funding-rate exit (futures only) ──
         if mode == "futures" and funding_rate != 0:
