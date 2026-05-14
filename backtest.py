@@ -234,11 +234,18 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
             exit_pnl = _calc_backtest_pnl(stype, entry, exit_px, partial_closed, partial_pnl, mode)
             return _make_trade(df, entry_idx, j, signal, "TIME_EXIT", entry, exit_px, exit_pnl)
 
-        # Vol exit
+        # Vol exit — matches live: only force-close when underwater, otherwise
+        # let the trail tighten the stop. Without this gate, backtest closed
+        # winners on vol expansion that live now lets run.
         if atr_entry > 0 and atr_now > atr_entry * RISK_CONFIG.get("vol_expansion_exit_mult", 2.0):
-            exit_px = c["close"]
-            exit_pnl = _calc_backtest_pnl(stype, entry, exit_px, partial_closed, partial_pnl, mode)
-            return _make_trade(df, entry_idx, j, signal, "VOL_EXIT", entry, exit_px, exit_pnl)
+            if stype == "BUY":
+                gross = (c["close"] - entry) / entry * 100
+            else:
+                gross = (entry - c["close"]) / entry * 100
+            if gross <= 0:
+                exit_px = c["close"]
+                exit_pnl = _calc_backtest_pnl(stype, entry, exit_px, partial_closed, partial_pnl, mode)
+                return _make_trade(df, entry_idx, j, signal, "VOL_EXIT", entry, exit_px, exit_pnl)
 
         if stype == "BUY":
             # Funding exit proxy for futures — sustained large gain signals crowded longs
