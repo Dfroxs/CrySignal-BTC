@@ -4,6 +4,20 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-14 — fix: 4 strategy bugs that bias toward losing money
+
+### Fixed
+
+- **Trail/SL exit P&L computed off trigger, fill reported as current** (`trading/paper.py`): When price gaps through the trail or original SL, the actual fill price is `current_price` (worse than the trigger). The old code computed `exit_pnl = _calc_pnl(pos, trail)` but reported `exit = current_price` in the close record — paper P&L systematically overstated wins (or understated losses) by the slippage gap on every trail/SL exit. False confidence in strategy performance. Now uses `current_price` for both the P&L and the recorded exit; `_check_slippage` warning still logs the trail-to-fill discrepancy.
+
+- **F&G double/triple-counted in news integration** (`signals/engine.py:integrate_news_with_signal`): `news_data['sentiment']` is computed as `combined = fng_score*0.50 + crypto_score*0.35 + geo_score*0.15` (see `sentiment.py:69`), so Fear & Greed is already weighted 50% INTO the news sentiment. The old code then applied a SECOND independent bump on F&G value (±1.5 / ±0.5). A BUY at F&G=15 with BULLISH sentiment got +1.5 (F&G direct) + 0.75 (sentiment) = +2.25, but 50% of that 0.75 was F&G being re-counted. Inflated scores promoted weak signals past the NORMAL confidence floor and into STRONG tier, bypassing entry gates. Now: F&G has its own tier check; news-sentiment only fires when F&G didn't trigger; news-sentiment weights reduced (0.75→0.5, 0.5→0.35) to reflect the remaining non-F&G signal.
+
+- **VOL_EXIT force-closed profitable positions** (`trading/paper.py`): When current ATR exceeded `entry_atr × vol_mult`, ALL open positions in that mode were closed regardless of P&L. A trade at +5% in expanding volatility got force-closed — throwing away winners. Now VOL_EXIT only fires when unrealised P&L is ≤ 0. Profitable positions in expanding vol keep running; the trailing stop logic naturally widens to current ATR on every cycle, so risk is still capped.
+
+- **Quadruple-dampened position size in high vol** (`signals/sizing.py:calculate_futures_position`): `vol_cap` multiplied BOTH `effective_risk = risk_pct × conf_mult × vol_cap` AND `effective_max = max_leverage × vol_cap`. Combined with `_compute_confidence` separately deducting 0.15 from `mult` when `atr_pct > 0.85`, position size collapsed to ~10% of base in extreme vol — missing the high-vol periods that often contain the best setups. Now `vol_cap` applies only to the leverage ceiling; risk-side dampening lives entirely in `_compute_confidence`. Position value across regimes smooths from $700 (low vol) → $300 (extreme vol) instead of collapsing.
+
+---
+
 ## 2026-05-14 — fix: 7 audit pass (terminal pd scope, telegram SL sign, double-icon, cycle resilience, OHLCV validation, import cleanup)
 
 ### Fixed
