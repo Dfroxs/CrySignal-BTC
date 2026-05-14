@@ -4,6 +4,26 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-14 — fix: 7 audit pass (terminal pd scope, telegram SL sign, double-icon, cycle resilience, OHLCV validation, import cleanup)
+
+### Fixed
+
+- **`_pd` import scope in MFI/CMF display** (`signals/terminal.py`): `import pandas as _pd` was inside the `if mfi is not None:` branch, so a signal with `mfi=None` but `cmf` present would `NameError` when computing `_pd.isna(cmf)`. In practice MFI and CMF are computed together so it never tripped live, but the coupling was wrong. Hoisted import above both branches.
+
+- **SL displayed as `+5.00%` in compact Telegram** (`notifier/telegram.py`): `_format_compact_signal_telegram` used `{sl_pct:+.2f}%` where `sl_pct` is `abs(entry - sl)/entry * 100` (always positive). The `:+.2f` rendered "+5.00%" for a stop loss — implies a gain. Consolidated and open-notification formatters already used `-{sl_pct:.2f}%` correctly; compact card now aligned.
+
+- **Phase 3 actions printed with double-icon** (`run_bot.py`): The summary loop unconditionally prepended "✓" or "⏭" to every action, but breaker/emergency entries already carry their own icon ("⛔" / "🚨"), producing "⏭ ⛔ SPOT drawdown ...". Now detects self-iconed entries and prints them as-is in a colour matching the icon family.
+
+- **Phase 4 + main loop unguarded against exceptions** (`run_bot.py`): A malformed signal that crashed a Telegram formatter would propagate out of `run_cycle()` and stop the whole `while True` loop. Both the Phase 4 send block and the loop's cycle dispatch now wrap in try/except (KeyboardInterrupt still propagates so Ctrl+C works). One bad cycle no longer kills the bot.
+
+- **`_validate_ohlcv` was dead code** (`signals/ohlcv.py`): Function defined but never invoked. Empty bars or NaN in close/high/low/volume would silently flow into indicator calcs and produce nonsense EMA/RSI/MACD the engine would happily score from. `fetch_ohlcv_df` now calls the validator and raises `ValueError` on failure; the per-mode orchestrators already catch exceptions → bad fetch becomes HOLD rather than corrupt signal.
+
+### Changed
+
+- **notifier/telegram.py imports sizing directly** instead of through the `core_analysis` legacy shim. Removes coupling to the shim's continued existence.
+
+---
+
 ## 2026-05-14 — fix: 5 post-audit issues (flip-path gates, display order, pyramid TP cap, pyramid size order, loop scheduling)
 
 ### Fixed
