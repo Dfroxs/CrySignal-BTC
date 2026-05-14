@@ -825,10 +825,21 @@ def run_cycle():
 
         if phase3_actions:
             _section("Phase 3  Positions")
+            # Actions already carry their own leading icon (🚀 / 🧩 / 🔄 / ⏭ / ⛔ / 🚨)
+            # Strip the redundant prefix-icon prepend that produced lines like
+            # "⏭ ⛔ SPOT  drawdown ..." with two icons.
+            self_iconed = ("🚀", "🧩", "🔄", "⏭", "⛔", "🚨")
             for action in phase3_actions:
-                icon = "✓" if action.startswith("🚀") or action.startswith("🧩") or action.startswith("🔄") else "⏭"
-                color = _G if icon == "✓" else _DIM
-                print(f"  {color}{icon}{_W}  {action}")
+                if action.startswith(self_iconed):
+                    if action[:1] in "🚀🧩🔄":
+                        color = _G
+                    elif action[:1] in "⛔🚨":
+                        color = _R
+                    else:
+                        color = _DIM
+                    print(f"  {color}{action}{_W}")
+                else:
+                    print(f"  {_DIM}⏭{_W}  {action}")
         else:
             _ok("Phase 3  No position changes")
 
