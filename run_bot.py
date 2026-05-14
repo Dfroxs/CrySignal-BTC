@@ -675,6 +675,23 @@ def run_cycle():
                 new_tp = futures_signal.get("take_profit", flip_px)
                 expected_reward = abs(new_tp - flip_px) / flip_px * 100 if flip_px > 0 else 0
 
+                # Same quality gates as first-entry — a flip is opening a new
+                # position; if the regime opposes or structure is weak the flip
+                # should be skipped even though we already closed the opposite.
+                fut_psy_step = RISK_CONFIG.get("pyramid", {}).get("psychology_level_step", 1000)
+                fut_psy_buf  = RISK_CONFIG.get("pyramid", {}).get("psychology_buffer_pct", 0.15)
+                fut_sr_atr   = RISK_CONFIG.get("pyramid", {}).get("sr_entry_risk_atr", 1.0)
+                flip_psy_warn = _check_psychology_sl_risk(
+                    futures_signal["entry_price"], futures_signal["stop_loss"],
+                    fut_psy_step, fut_psy_buf, direction=futures_signal["type"],
+                )
+                flip_sr_warn = _check_sr_entry_risk(
+                    futures_signal["entry_price"],
+                    futures_signal.get("support_resistance", {}),
+                    futures_signal["type"], futures_signal.get("atr", 0),
+                    atr_mult=fut_sr_atr,
+                )
+
                 # Gate: skip flip if loss > expected reward (can't recover)
                 if flip_pnl_total < -expected_reward:
                     _block(phase3_actions, "futures", futures_signal, "flip_unprofitable",
@@ -684,6 +701,17 @@ def run_cycle():
                            f"FUT flip requires ≥{min_conf} confidence (got {actual_conf}) — skipping open")
                 elif fakeout_warn:
                     _block(phase3_actions, "futures", futures_signal, "flip_fakeout", fakeout_warn)
+                elif flip_psy_warn:
+                    _block(phase3_actions, "futures", futures_signal, "flip_psy_sl", flip_psy_warn)
+                elif flip_sr_warn:
+                    _block(phase3_actions, "futures", futures_signal, "flip_sr", flip_sr_warn)
+                elif _is_counter_trend_regime(futures_signal, futures_signal["type"]):
+                    direction_word = "bullish" if futures_signal["type"] == "SELL" else "bearish"
+                    _block(phase3_actions, "futures", futures_signal, "flip_regime_counter",
+                           f"FUT {futures_signal['type']} flip blocked — counter-trend {direction_word} regime")
+                elif not _trend_confluence_for_direction(futures_signal, futures_signal["type"]):
+                    _block(phase3_actions, "futures", futures_signal, "flip_trend_confluence",
+                           f"FUT {futures_signal['type']} flip blocked — trend confluence < 2/3")
                 else:
                     pid = open_paper_position(futures_signal, mode="futures")
                     msg = f"FUT {futures_signal['type']} opened (#{pid}) @ ${futures_signal['entry_price']:,.0f} (flip)"
