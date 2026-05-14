@@ -613,11 +613,23 @@ def run_cycle():
                         base_atr_mult = RISK_CONFIG.get("atr_multiplier", 1.5)
                         new_atr_mult = max(1.0, base_atr_mult - atr_step * (entry_number - 1))
                         if atr > 0 and new_atr_mult < base_atr_mult:
+                            entry_px = spot_signal["entry_price"]
                             new_sl_dist = atr * new_atr_mult
-                            new_sl = spot_signal["entry_price"] - new_sl_dist
-                            spot_signal["stop_loss"] = round(new_sl, 2)
-                            spot_signal["take_profit"] = round(spot_signal["entry_price"] + new_sl_dist * RISK_CONFIG["take_profit_rr"], 2)
-                            spot_signal["tp2"] = round(spot_signal["entry_price"] + new_sl_dist * RISK_CONFIG["take_profit_rr"] * 2, 2)
+                            spot_signal["stop_loss"] = round(entry_px - new_sl_dist, 2)
+                            raw_tp1 = entry_px + new_sl_dist * RISK_CONFIG["take_profit_rr"]
+                            raw_tp2 = entry_px + new_sl_dist * RISK_CONFIG["take_profit_rr"] * 2
+                            # Cap recomputed TPs at resistance — engine's original cap was
+                            # discarded when we rebuilt TP from scratch. Spot is BUY-only,
+                            # so only the upper resistance matters.
+                            resistance = (spot_signal.get("support_resistance") or {}).get("resistance")
+                            if resistance:
+                                ceiling = resistance * 0.995
+                                if entry_px < ceiling < raw_tp1:
+                                    raw_tp1 = ceiling
+                                if entry_px < ceiling < raw_tp2:
+                                    raw_tp2 = ceiling
+                            spot_signal["take_profit"] = round(raw_tp1, 2)
+                            spot_signal["tp2"] = round(raw_tp2, 2)
 
                         # Gate 8: aggregate risk cap
                         agg_risk, agg_warn = _calc_aggregate_risk(
