@@ -4,6 +4,22 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-05-14 — fix: backtest alignment + pyramid TP min-distance
+
+### Fixed
+
+- **Backtest VOL_EXIT diverged from live** (`backtest.py:238`): live just changed to only fire VOL_EXIT when underwater; backtest still closed any position on vol expansion. Backtest would underreport win rate vs what live now achieves. Now mirrors the underwater-only gate.
+
+- **Backtest trade timestamps always empty** (`backtest.py`): `fetch_ohlcv_df` sets `timestamp` as the DataFrame INDEX, but `_make_trade` and `_candle_utc_hour` accessed it as a COLUMN (`df.iloc[i]["timestamp"]` → KeyError → silently empty). Trades had blank entry_time/exit_time, and the US-session bump in classify_regime always saw hour=0. Now reads `df.index[i]`.
+
+- **Arbitrary 12% "funding exit proxy" in backtest** (`backtest.py`): With no historical funding data, the backtest invented a 12% unrealised-PnL cap and called the exit FUNDING_EXIT. This wasn't modelling funding — it was just capping winners, biasing avg P&L down and creating a phantom exit type. Removed cleanly; module docstring already disclaims that market-structure exits don't apply in backtest.
+
+- **Backtest entry gates asymmetric** (`backtest.py:_passes_entry_gates`): only checked fakeout on BUY upper-wick (not SELL lower-wick); quality gates (regime, confluence, breakout, psy_sl) applied to spot BUY only — futures SHORT skipped all of them. After the recent live changes that added counter-trend regime + confluence + psy_sl + sr to futures first-entry, backtest SHORT would over-report performance vs live. Now mirrors live: symmetric BUY/SELL fakeout, symmetric regime/confluence/psy_sl for both spot and futures.
+
+- **Pyramid TP cap could land just above entry** (`run_bot.py:618`): the recent S/R cap fix on the pyramid TP recompute lacked the engine's "min 1× ATR distance" check. If resistance was very close to entry (e.g. entry 80000, resistance 80050), TP1 would be capped to 80050 — pyramid would TP1 for negligible profit then trail-to-BE the other half, netting essentially zero. Now requires `ceiling - entry >= 1× ATR` before capping.
+
+---
+
 ## 2026-05-14 — fix: 4 strategy bugs that bias toward losing money
 
 ### Fixed
