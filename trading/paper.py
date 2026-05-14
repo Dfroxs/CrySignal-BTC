@@ -255,11 +255,14 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
                 )
             elif current_price <= trail:
                 _check_slippage(trail, current_price, pos_id)
-                exit_pnl = _calc_pnl(pos, trail)
-                # Label outcome by net P&L (post-fees), not raw trail vs entry —
-                # a trail at breakeven still nets negative after entry+exit fees.
+                # Use the actual fill price (current_price) for P&L, not the
+                # trigger price (trail). When price gaps through the trail,
+                # the real fill is current_price — pretending we got the
+                # trigger price overstates wins. The slippage warning above
+                # logs the discrepancy for diagnostics.
+                exit_pnl = _calc_pnl(pos, current_price)
                 outcome = "WIN" if exit_pnl > 0 else "LOSS"
-                sh.close_paper_position(pos_id, outcome, exit_pnl)
+                sh.close_paper_position(pos_id, outcome, exit_pnl, exit_price=current_price)
                 closed.append({
                     "type": pos["type"], "entry": entry,
                     "exit": current_price, "pnl": exit_pnl,
@@ -324,10 +327,10 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
                 )
             elif current_price >= trail:
                 _check_slippage(trail, current_price, pos_id)
-                exit_pnl = _calc_pnl(pos, trail)
-                # Label outcome by net P&L (post-fees), not raw trail vs entry.
+                # Use actual fill price for P&L — see BUY branch for rationale.
+                exit_pnl = _calc_pnl(pos, current_price)
                 outcome = "WIN" if exit_pnl > 0 else "LOSS"
-                sh.close_paper_position(pos_id, outcome, exit_pnl)
+                sh.close_paper_position(pos_id, outcome, exit_pnl, exit_price=current_price)
                 closed.append({
                     "type": pos["type"], "entry": entry,
                     "exit": current_price, "pnl": exit_pnl,
