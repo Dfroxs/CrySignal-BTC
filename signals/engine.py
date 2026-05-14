@@ -650,12 +650,19 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
 def integrate_news_with_signal(signal, news_data):
     enhanced = signal.copy()
 
+    # MACRO block — always force HOLD when a HIGH-impact event is <2h away.
+    # The old code only deducted 2.0 from strength; if strength stayed above
+    # threshold the signal still fired, then trading/paper.py would
+    # immediately MACRO_CLOSE the new position in the same cycle. Wasted
+    # entry fees + slippage on every macro window. Force HOLD so the signal
+    # never opens a position that's about to be force-closed.
     has_macro, event_name = check_upcoming_macro_events()
     if has_macro:
         enhanced['strength'] = max(0, enhanced['strength'] - 2.0)
-        enhanced['reasons'].append(f"⚠️  MACRO CAUTION: HIGH impact event in <2h ({event_name}) — strength -2.0")
-        if enhanced['strength'] <= 0:
-            enhanced['type'] = 'HOLD'
+        enhanced['reasons'].append(
+            f"⚠️  MACRO CAUTION: HIGH impact event in <2h ({event_name}) — forced HOLD"
+        )
+        enhanced['type'] = 'HOLD'
 
     fng = news_data.get('fear_greed', {})
     fng_val = fng.get('value', 50)
