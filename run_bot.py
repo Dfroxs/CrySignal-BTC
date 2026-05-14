@@ -894,13 +894,26 @@ def main():
     args = parser.parse_args()
 
     if args.loop > 0:
-        half = args.loop // 2
         full_minute = 1   # full cycle fires at :01 past the hour
-        check_minute = (full_minute + half) % 60
+        # Mid-cycle check only makes sense when loop ≤ 60 — for longer intervals
+        # (loop // 2 ≥ 60) the mod-60 wrap collides full_minute with check_minute,
+        # so positions would only get updated on full cycles. Disable cleanly.
+        half = args.loop // 2
+        if half < 1 or half >= 60:
+            check_minute = None
+        else:
+            check_minute = (full_minute + half) % 60
+            if check_minute == full_minute:
+                check_minute = None  # still colliding (e.g. loop=60×k → both at :01)
 
-        _ok(f"Loop mode — full cycle at :{full_minute:02d}, position check at :{check_minute:02d}  (Ctrl+C to stop)")
+        if check_minute is None:
+            _ok(f"Loop mode — full cycle at :{full_minute:02d} (no mid-cycle check; loop={args.loop}min)  (Ctrl+C to stop)")
+        else:
+            _ok(f"Loop mode — full cycle at :{full_minute:02d}, position check at :{check_minute:02d}  (Ctrl+C to stop)")
         fired = set()
         last_minute = None
+        # Set of minutes that should trigger something — filters out everything else.
+        active_minutes = {full_minute} if check_minute is None else {full_minute, check_minute}
         while True:
             now = datetime.now().astimezone()
             minute = now.minute
@@ -910,7 +923,7 @@ def main():
                 fired.clear()
                 last_minute = minute
 
-            if minute not in (full_minute, check_minute):
+            if minute not in active_minutes:
                 time.sleep(1)
                 continue
             if minute in fired:
@@ -919,12 +932,11 @@ def main():
 
             if minute == full_minute:
                 run_cycle()
-                next_min = check_minute
-                wait_sec = ((next_min - datetime.now().astimezone().minute - 1) % 60) * 60 + (60 - datetime.now().astimezone().second)
+                next_min = check_minute if check_minute is not None else full_minute
             else:
                 run_position_check()
                 next_min = full_minute
-                wait_sec = ((next_min - datetime.now().astimezone().minute - 1) % 60) * 60 + (60 - datetime.now().astimezone().second)
+            wait_sec = ((next_min - datetime.now().astimezone().minute - 1) % 60) * 60 + (60 - datetime.now().astimezone().second)
             fired.add(minute)
             _step(_DIM + "⟳" + _W, f"Next run at :{next_min:02d}  (~{max(1, wait_sec // 60)} min)")
     else:
