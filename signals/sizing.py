@@ -65,6 +65,13 @@ def calculate_futures_position(signal):
         return None
 
     # ── Volatility cap (ATR percentile) ──
+    # `vol_cap` is applied ONLY to the leverage ceiling (extreme vol → max 33%
+    # of base leverage). Risk-side dampening lives in `_compute_confidence`
+    # (which already deducts 0.15 from mult when atr_pct > 0.85). The old code
+    # multiplied `effective_risk = risk_pct × conf_mult × vol_cap`, stacking
+    # vol dampening on top of conf_mult's own vol penalty — position size in
+    # extreme vol could shrink to ~10% of base, missing the most profitable
+    # regimes. Keep vol_cap on leverage only.
     atr_pct = signal.get("_atr_percentile", 0.5)
     if atr_pct >= 0.90:
         vol_cap = 0.33
@@ -78,9 +85,10 @@ def calculate_futures_position(signal):
     # ── Confidence multiplier ──
     conf_mult = _compute_confidence(signal)
 
-    # Effective risk and leverage cap
-    effective_risk = risk_pct * conf_mult * vol_cap
-    effective_max = int(max_leverage * vol_cap)
+    # Effective risk uses conf_mult only (which already includes a vol
+    # penalty at extreme atr_pct). Leverage ceiling still uses vol_cap.
+    effective_risk = risk_pct * conf_mult
+    effective_max = max(1, int(max_leverage * vol_cap))
 
     risk_amount = balance * effective_risk
     max_margin = balance * max_margin_pct
