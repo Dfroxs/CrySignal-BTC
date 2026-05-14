@@ -549,8 +549,13 @@ def close_paper_position(pos_id, outcome, pnl_pct, closed_at=None, exit_price=No
             pos_id,
         ),
     )
-    # Propagate to the linked signal row (was dead code before this).
-    if signal_id is not None:
+    # Propagate to the linked signal row — ONLY for WIN/LOSS. Non-organic
+    # closes (VOL_EXIT, TIME_EXIT, FUNDING_EXIT, MACRO_CLOSE, FLIP,
+    # BREAKER_CLOSE) cut the trade short before the signal had a chance to
+    # play out, so they don't reflect signal quality. Leaving signals.outcome
+    # NULL for those keeps retrospective queries clean (signal score vs
+    # realised outcome → only WIN/LOSS resolved trades).
+    if signal_id is not None and outcome in ("WIN", "LOSS"):
         c.execute(
             "UPDATE signals SET outcome=?, closed_at=? WHERE id=?",
             (outcome, ts_iso, signal_id),
