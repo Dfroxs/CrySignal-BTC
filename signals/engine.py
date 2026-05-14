@@ -659,33 +659,47 @@ def integrate_news_with_signal(signal, news_data):
 
     fng = news_data.get('fear_greed', {})
     fng_val = fng.get('value', 50)
+    stype = enhanced['type']
+    sentiment = news_data.get('sentiment')
 
-    if fng_val <= 20 and enhanced['type'] == 'BUY':
+    # F&G adjustment — independent from news sentiment.
+    # F&G is ALREADY weighted 50% into news_data['sentiment'] (see
+    # sentiment.py: combined = fng_score*0.50 + crypto*0.35 + geo*0.15),
+    # so applying both was triple-counting F&G influence.
+    fng_applied = False
+    if fng_val <= 20 and stype == 'BUY':
         enhanced['strength'] += 1.5
         enhanced['reasons'].append(f"🔴 EXTREME FEAR ({fng_val}) — contrarian BUY confirmed")
-    elif fng_val >= 80 and enhanced['type'] == 'SELL':
+        fng_applied = True
+    elif fng_val >= 80 and stype == 'SELL':
         enhanced['strength'] += 1.5
         enhanced['reasons'].append(f"🟢 EXTREME GREED ({fng_val}) — contrarian SELL confirmed")
-    elif fng_val >= 70 and enhanced['type'] == 'BUY':
-        # Buying into greed — risky, not contrarian
+        fng_applied = True
+    elif fng_val >= 70 and stype == 'BUY':
         enhanced['strength'] = max(0, enhanced['strength'] - 0.5)
         enhanced['reasons'].append(f"⚠️  F&G GREED ({fng_val}) contradicts BUY — chasing risk")
-    elif fng_val <= 30 and enhanced['type'] == 'SELL':
-        # Selling into fear — risky, not contrarian
+        fng_applied = True
+    elif fng_val <= 30 and stype == 'SELL':
         enhanced['strength'] = max(0, enhanced['strength'] - 0.5)
         enhanced['reasons'].append(f"⚠️  F&G FEAR ({fng_val}) contradicts SELL — panic risk")
-    elif news_data.get('sentiment') == 'BULLISH' and enhanced['type'] == 'BUY':
-        enhanced['strength'] += 0.75
-        enhanced['reasons'].append(f"📰 Sentiment BULLISH (F&G: {fng_val})")
-    elif news_data.get('sentiment') == 'BEARISH' and enhanced['type'] == 'SELL':
-        enhanced['strength'] += 0.75
-        enhanced['reasons'].append(f"📰 Sentiment BEARISH (F&G: {fng_val})")
-    elif news_data.get('sentiment') == 'BEARISH' and enhanced['type'] == 'BUY':
-        enhanced['strength'] = max(0, enhanced['strength'] - 0.5)
-        enhanced['reasons'].append(f"⚠️  Sentiment contradicts (BEARISH, F&G: {fng_val})")
-    elif news_data.get('sentiment') == 'BULLISH' and enhanced['type'] == 'SELL':
-        enhanced['strength'] = max(0, enhanced['strength'] - 0.5)
-        enhanced['reasons'].append(f"⚠️  Sentiment contradicts (BULLISH, F&G: {fng_val})")
+        fng_applied = True
+
+    # News-sentiment adjustment — independent path; only fires when F&G didn't.
+    # Reduced weight (0.75 → 0.5 / 0.5 → 0.35) because half of news_data['sentiment']
+    # is F&G — if F&G didn't trigger a tier, its contribution is weaker.
+    if not fng_applied:
+        if sentiment == 'BULLISH' and stype == 'BUY':
+            enhanced['strength'] += 0.5
+            enhanced['reasons'].append(f"📰 News sentiment BULLISH (F&G: {fng_val})")
+        elif sentiment == 'BEARISH' and stype == 'SELL':
+            enhanced['strength'] += 0.5
+            enhanced['reasons'].append(f"📰 News sentiment BEARISH (F&G: {fng_val})")
+        elif sentiment == 'BEARISH' and stype == 'BUY':
+            enhanced['strength'] = max(0, enhanced['strength'] - 0.35)
+            enhanced['reasons'].append(f"⚠️  News contradicts (BEARISH, F&G: {fng_val})")
+        elif sentiment == 'BULLISH' and stype == 'SELL':
+            enhanced['strength'] = max(0, enhanced['strength'] - 0.35)
+            enhanced['reasons'].append(f"⚠️  News contradicts (BULLISH, F&G: {fng_val})")
 
     enhanced['news_sentiment'] = news_data.get('sentiment', 'NEUTRAL')
     enhanced['news_confidence'] = news_data.get('confidence', 0)
