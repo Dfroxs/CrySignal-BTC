@@ -339,9 +339,17 @@ def _calc_backtest_pnl(stype, entry, exit_px, partial_closed, partial_pnl, mode=
 
 
 def _make_trade(df, entry_idx, exit_idx, signal, outcome, entry, exit_px, pnl_pct):
+    # `timestamp` is the DataFrame INDEX (set in fetch_ohlcv_df), so
+    # df.iloc[i].get("timestamp") always returned "". Use df.index[i].
+    def _idx_ts(i):
+        try:
+            return str(df.index[i])
+        except Exception:
+            return ""
+
     return {
-        "entry_time": str(df.iloc[entry_idx].get("timestamp", "")),
-        "exit_time": str(df.iloc[exit_idx].get("timestamp", "")) if outcome != "OPEN" else "",
+        "entry_time": _idx_ts(entry_idx),
+        "exit_time": _idx_ts(exit_idx) if outcome != "OPEN" else "",
         "type": signal["type"],
         "entry_price": round(entry, 2),
         "exit_price": round(exit_px, 2),
@@ -357,9 +365,13 @@ def _make_trade(df, entry_idx, exit_idx, signal, outcome, entry, exit_px, pnl_pc
 
 
 def _candle_utc_hour(df, idx, timeframe):
-    """Estimate UTC hour from candle index."""
+    """Estimate UTC hour from candle index.
+
+    `timestamp` is the DataFrame INDEX (set by fetch_ohlcv_df), so the old
+    `df.iloc[idx]["timestamp"]` raised KeyError and the except returned 0.
+    """
     try:
-        ts = df.iloc[idx]["timestamp"]
+        ts = df.index[idx]
         if hasattr(ts, 'hour'):
             return ts.hour
         return datetime.fromisoformat(str(ts)).hour if ts else 0
