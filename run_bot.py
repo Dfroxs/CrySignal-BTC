@@ -380,9 +380,6 @@ def run_cycle():
         logger.error("Futures analysis failed: %s", e)
         _err(f"Phase 2  FUTURES failed  ({e})")
 
-    # Combined terminal display (once, not per-mode)
-    display_combined(spot_signal, futures_signal)
-
     # Phase 3 — paper trading
     _loading("Phase 3  Updating paper positions...")
     phase3_actions = []     # track what happened for summary
@@ -438,6 +435,10 @@ def run_cycle():
             f"Daily Spot <b>{daily_spot:+.1f}%</b>  ·  Daily Fut <b>{daily_fut:+.1f}%</b>",
             "circuit-breaker",
         ))
+
+    # Combined terminal display (run AFTER the breaker so VERDICT reflects the
+    # blocked state — otherwise terminal shows STRONG BUY while Telegram says HOLD).
+    display_combined(spot_signal, futures_signal)
 
     if total_dd > (100 - min_eq):
         msg = f"🚨 EQUITY {100-total_dd:.0f}% < {min_eq}% — EMERGENCY close all"
