@@ -436,9 +436,22 @@ def fetch_vix():
 # Signal confidence
 # ---------------------------------------------------------------------------
 
-def get_signal_confidence(strength, threshold):
-    """Return 'STRONG', 'NORMAL', or 'WEAK' based on how far score exceeds threshold."""
+def get_signal_confidence(strength, threshold, htf=None, signal_type=None):
+    """Return 'STRONG', 'NORMAL', or 'WEAK'.
+
+    STRONG now requires HTF agreement, not just raw score (audit #9). Backtest
+    showed STRONG WR 12.5% vs NORMAL 40% — high-score signals fire when *every*
+    condition aligns, which historically happens at local TOPS in a bull leg.
+    Requiring the 1D HTF to agree with the direction filters those out.
+    """
     if strength >= threshold * 1.5:
+        if htf and signal_type:
+            d1 = htf.get('1d')
+            if (signal_type == 'BUY' and d1 == 'BULLISH') or \
+               (signal_type == 'SELL' and d1 == 'BEARISH'):
+                return "STRONG"
+            # Score is in STRONG zone but HTF disagrees → downgrade.
+            return "NORMAL"
         return "STRONG"
     if strength >= threshold * 1.2:
         return "NORMAL"
