@@ -238,8 +238,18 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
                 _fee = _ec["futures_fee_pct"] if pos.get("mode") == "futures" else _ec["spot_fee_pct"]
                 _costs = (_fee + _ec.get("slippage_pct", 0.05)) * 2  # entry + exit
                 pnl = (tp1 - entry) / entry * 100 - _costs
-                sh.partial_close_position(pos_id, pnl, new_sl=entry)
-                trail = entry  # breakeven
+                # SPOT path: pull trail to entry − 0.5×ATR instead of exact entry.
+                # At true BE, fees made every remainder a fee-tax LOSS even when
+                # TP1 hit. Half-ATR cushion preserves the locked partial. Spot
+                # PF cleared 1.0 in 90-day backtest (audit #9). Futures path
+                # still snaps to entry — keep until futures PF clears 1.0.
+                if pos.get("mode") == "spot" and trail_atr and trail_atr > 0:
+                    new_sl = entry - 0.5 * trail_atr
+                    trail = max(trail, new_sl)
+                else:
+                    new_sl = entry
+                    trail = entry
+                sh.partial_close_position(pos_id, pnl, new_sl=new_sl)
                 pos['partial_pnl'] = pnl  # keep pos dict in sync for same-cycle TP2 gap-through
                 closed.append({
                     "type": pos["type"], "entry": entry,
@@ -247,8 +257,8 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
                     "outcome": "TP1", "mode": pos.get("mode", "futures"),
                 })
                 logger.info(
-                    "Paper BUY %s → PARTIAL WIN at TP1 $%.2f (+%.2f%%) — trailing to breakeven",
-                    pos_id, tp1, pnl,
+                    "Paper BUY %s → PARTIAL WIN at TP1 $%.2f (+%.2f%%) — trail %s",
+                    pos_id, tp1, pnl, "entry−0.5×ATR" if pos.get("mode") == "spot" else "breakeven",
                 )
                 partial = 1
 
@@ -313,8 +323,16 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
                 _fee = _ec["futures_fee_pct"] if pos.get("mode") == "futures" else _ec["spot_fee_pct"]
                 _costs = (_fee + _ec.get("slippage_pct", 0.05)) * 2  # entry + exit
                 pnl = (entry - tp1) / entry * 100 - _costs
-                sh.partial_close_position(pos_id, pnl, new_sl=entry)
-                trail = entry
+                # Mirror of BUY branch. Spot live currently has no SELL signals
+                # by design (spot is BUY-only) but keep the path symmetric in
+                # case the engine ever produces one through some edge case.
+                if pos.get("mode") == "spot" and trail_atr and trail_atr > 0:
+                    new_sl = entry + 0.5 * trail_atr
+                    trail = min(trail, new_sl)
+                else:
+                    new_sl = entry
+                    trail = entry
+                sh.partial_close_position(pos_id, pnl, new_sl=new_sl)
                 pos['partial_pnl'] = pnl  # keep pos dict in sync for same-cycle TP2 gap-through
                 closed.append({
                     "type": pos["type"], "entry": entry,
@@ -322,8 +340,8 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
                     "outcome": "TP1", "mode": pos.get("mode", "futures"),
                 })
                 logger.info(
-                    "Paper SELL %s → PARTIAL WIN at TP1 $%.2f (+%.2f%%) — trailing to breakeven",
-                    pos_id, tp1, pnl,
+                    "Paper SELL %s → PARTIAL WIN at TP1 $%.2f (+%.2f%%) — trail %s",
+                    pos_id, tp1, pnl, "entry+0.5×ATR" if pos.get("mode") == "spot" else "breakeven",
                 )
                 partial = 1
 

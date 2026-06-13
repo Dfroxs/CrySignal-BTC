@@ -36,7 +36,7 @@ RISK_CONFIG = {
     "max_position_size":     0.10,
     "atr_multiplier":        1.5,
     "take_profit_rr":        2.5,
-    "trailing_atr_factor":      1.0,  # trail distance = ATR × this (tighter than entry SL)
+    "trailing_atr_factor":      2.0,  # 1.0→2.0 (audit #8): backtest showed avg-hold=2 candles on spot 4H, paper-cuts dominated
     "trailing_advance_min_ratio": 0.5, # only advance trail if new trail > old + ATR×factor×this
     "trailing_post_tp1_factor":   0.8, # tighten trail 20% after TP1 hit (remaining 50%)
     "max_position_hours":      72,   # force-close futures position if open longer than this
@@ -75,7 +75,7 @@ FUTURES_CONFIG = {
         "fakeout_wick_ratio":     0.60,       # reject on >60% upper/lower wick
         "max_aggregate_risk_pct": 8.0,        # max total risk % across all futures positions
     },
-    "trailing_atr_factor":   0.9,    # reduced from 0.7 — 0.7× triggered on normal wicks at 1H
+    "trailing_atr_factor":   1.5,    # 0.9→1.5 (audit #8): backtest showed avg-hold=4 candles, SELLs that were directionally right got trailed out in 2c
     "funding_exit": {
         "close_long_rate":   0.10,   # close LONG if funding > 0.10% (expensive to hold)
         "close_short_rate": -0.10,   # close SHORT if funding < -0.10% (symmetric with long threshold)

@@ -77,6 +77,15 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
         return [], {}
 
     trades = []
+    # Track active positions per direction so we don't fire duplicate signals
+    # while a same-side trade is still open. Live caps at 1 BUY + 1 SELL via
+    # max_positions; without this, backtest over-counted by ~3× whenever HTF
+    # alignment kept firing the same BUY hourly through a bull leg.
+    open_until = {"BUY": -1, "SELL": -1}
+    # Same-side cooldown after exit (audit #9). Stops the bot from immediately
+    # re-entering the exact setup that just stopped out. 5 candles on 1H, 2 on 4H.
+    cooldown_n = 5 if timeframe == "1h" else 2
+    cooldown_until = {"BUY": -1, "SELL": -1}
     for i in range(MIN_WARMUP, len(df) - max_hold - 1):
         window = df.iloc[:i + 1].copy()
         sr = detect_support_resistance(window)
@@ -103,6 +112,14 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
         if signal["type"] == "HOLD":
             continue
 
+        # Skip if same-direction trade is still open (mirrors live max_positions).
+        if i <= open_until[signal["type"]]:
+            continue
+
+        # Same-side cooldown after exit.
+        if i < cooldown_until[signal["type"]]:
+            continue
+
         # ── Entry gate simulation ──
         if not _passes_entry_gates(signal, mode, window):
             continue
@@ -113,6 +130,9 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
         )
         if result:
             trades.append(result)
+            exit_idx = i + result["candles_held"]
+            open_until[signal["type"]] = exit_idx
+            cooldown_until[signal["type"]] = exit_idx + cooldown_n
 
     if not trades:
         logger.warning("No signals generated in backtest period.")
@@ -289,7 +309,11 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
             # Partial TP1 (50%)
             if not partial_closed and high >= tp1:
                 partial_pnl = (tp1 - entry) / entry * 100
-                trail = entry  # move to breakeven
+                # Pull trail to entry − 0.5×ATR (was: snap to entry). At exact
+                # BE, fees made every remainder a fee-tax LOSS even when TP1 hit.
+                # Half-ATR cushion above the SL preserves most of the locked
+                # gain while letting normal noise breathe.
+                trail = max(trail, entry - 0.5 * atr_now if atr_now > 0 else entry)
                 partial_closed = True
 
             # TP2 after partial
@@ -316,7 +340,8 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
 
             if not partial_closed and low <= tp1:
                 partial_pnl = (entry - tp1) / entry * 100
-                trail = entry
+                # Mirror of BUY path: cushion 0.5×ATR above entry instead of snapping to entry.
+                trail = min(trail, entry + 0.5 * atr_now if atr_now > 0 else entry)
                 partial_closed = True
 
             if partial_closed and tp2 and low <= tp2:
@@ -396,8 +421,16 @@ def _candle_utc_hour(df, idx, timeframe):
 
 
 def _compute_htf_from_df(df, idx, timeframe):
-    """Compute HTF trend + indicators from resampled data."""
-    small = df.iloc[:idx + 1].copy().set_index("timestamp")
+    """Compute HTF trend + indicators from resampled data.
+
+    `df.index` is already a DatetimeIndex (set by fetch_ohlcv_df), so the prior
+    `.set_index("timestamp")` raised KeyError every call → htf=None everywhere
+    in the backtest. That silently disabled the HTF block in the engine for
+    months. Fix: skip the redundant set_index.
+    """
+    small = df.iloc[:idx + 1].copy()
+    if not isinstance(small.index, pd.DatetimeIndex):
+        small.index = pd.to_datetime(small.index)
     if timeframe == "4h":
         tf_map = {"1d": "1D", "1w": "1W"}
     else:

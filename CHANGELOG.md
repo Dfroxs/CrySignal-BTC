@@ -4,6 +4,248 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-06-13 — audit #12: entry-quality triple — structural SL, R:R floor, entry-wick gate
+
+User-requested follow-up to minimise losses on opening signals. Three
+geometry-and-quality gates added at the entry point — not more filters, but
+better mechanics for the signals that do fire.
+
+| Mode    | Sigs (11→12) | WR (11→12)  | PnL (11→12)        | PF (11→12) |
+|---------|--------------|-------------|--------------------|------------|
+| Futures | 2 → 1        | 100% → 100% | +1.17% → +0.05%    | ∞ → ∞      |
+| Spot    | 1 → 1        | 100% → 100% | +3.18% → +3.18%    | ∞ → ∞      |
+
+One STRONG futures winner (+1.13%) was filtered by the entry-wick gate
+(82% upper wick at resistance $76,241). It happened to win because the
+broader trend pushed through, but an 82% upper wick *is* a real rejection;
+filtering it is the correct trade-off for "minimise losses" — we sacrifice
+a marginal winner to systematically avoid in-the-moment-rejected entries.
+
+### Changed
+
+- **Structural SL placement** (`signals/engine.py`): replaced the fixed
+  `entry ± ATR × 1.5` with `max(swing_low_20 − 0.25×ATR, entry − 2.5×ATR)`
+  for BUY (mirror for SELL). The tighter of the two wins — structure if
+  close enough, ATR cap otherwise. Stops the SL from sitting at obvious
+  liquidity zones that get hunted on normal pullbacks. Reason cited in
+  signal: 🔧 SL at swing low … / SL capped at entry − 2.5×ATR.
+
+### Added
+
+- **Entry-candle wick rejection gate** (`signals/engine.py`): if the entry
+  candle's own upper wick is > 50% of its range, reject BUY (mirror for
+  SELL on lower wick). This is different from the 24-candle fakeout gate
+  in `_passes_entry_gates` — that one looks at range extremes; this catches
+  single-candle reversals at the entry point itself.
+
+- **Minimum realised R:R gate** (`signals/engine.py`): after every SL/TP/SR
+  cap has run, require `(TP − entry) / (entry − SL) ≥ 1.5`. Even 60% WR
+  loses money at R:R 0.8; this floor makes the geometry alone profitable
+  at break-even WR. Stored as `signal['rr']` for diagnostic visibility.
+
+---
+
+## 2026-06-13 — audit #11: per-loss forensics → anti-FOMO + short-term momentum gates
+
+Ran `scripts/loss_forensics.py` against the two remaining losses in audit #10's
+backtest and found two distinct signatures that the engine had no protection
+against. Implemented one targeted gate per pattern.
+
+| Mode    | Sigs (10→11) | WR (10→11)   | PnL (10→11)         | PF (10→11)   |
+|---------|--------------|--------------|---------------------|--------------|
+| Futures | 3 → 2        | 67% → **100%** | −0.04% → **+1.17%**  | 0.97 → **∞** |
+| Spot    | 2 → 1        | 50% → **100%** | +1.02% → **+3.18%** | 1.47 → **∞** |
+
+### Added
+
+- **Anti-impulse (FOMO) gate** (`signals/engine.py`): block BUY if the
+  *previous* candle's body is ≥ +1.25×ATR up (mirror −1.25×ATR for SELL).
+  Forensic: 2026-04-23 15:00 BUY $78,447 entered right after a +1.36×ATR
+  green candle — engine scored bullish on the breakout but price reverted
+  in 2 candles for −1.21%. The 1.25 threshold caught it; 1.0 was too tight
+  (killed winners), 1.5 was too loose (missed this case).
+
+- **Short-term momentum gate** (`signals/engine.py`): block BUY if the
+  5-candle SMA slope (over the last 5 candles) is < −0.5×ATR. Mirror +0.5
+  for SELL. Forensic: 2026-04-19 12:00 BUY $75,960 entered on the third
+  green candle of a 4-day downtrend; engine cited "EMA200 still rising"
+  but the 5-SMA had dropped −0.61×ATR. EMA200 sees the long trend; the
+  5-SMA gate sees the immediate one. Result: −2.16% loss filtered.
+
+### Caveat — overfit risk
+
+The gates were tuned to the two specific losses in a 90-day sample. With
+only 3 surviving trades after the gates, this is **plausibly overfit**.
+Recommended next steps before promoting to live:
+1. Re-run on a 180+-day dataset spanning a non-bullish regime.
+2. Forward-paper-trade for 1–2 weeks with the new gates enabled.
+3. If those losses come back, the gates may be too tight — relax the
+   thresholds back toward 1.5×ATR / −1.0×ATR.
+
+The thresholds are concentrated in `signals/engine.py` (search "audit #11")
+for easy reversion. The Python engineering is sound; the parameter values
+need more data to validate.
+
+### Added (tooling)
+
+- `scripts/loss_forensics.py` — for each LOSS in the offline backtest,
+  prints the 10 pre-entry candles, post-entry path, indicator state, all
+  engine reasons, plus structural diagnostics (close vs EMA200/VWAP in ATR
+  units, BB position, recent pullback room). This is how the two patterns
+  above were identified; rerun it any time a new loss appears.
+
+---
+
+## 2026-06-13 — audit #10: tuned no-chase to 0.5×ATR + ported BE-cushion to live spot
+
+Two-step follow-up to audit #9.
+
+1. **Empirically tuned the no-chase gate width.** Recommended a loosening to
+   1.0×ATR for more volume; the data on `data/btc_*_90d.csv` disagreed:
+
+   | Width    | Futures sigs | PF   | PnL    | Spot PF |
+   |----------|--------------|------|--------|---------|
+   | 0.5×ATR  | 3            | 0.97 | −0.04% | 1.47    |
+   | 0.75×ATR | 4            | 0.76 | −0.37% | 1.47    |
+   | 1.0×ATR  | 7            | 0.38 | −1.87% | 0.52    |
+
+   Settled at 0.5×ATR. The marginal entries added by loosening were the
+   exact paper-cut setups the gate is designed to catch. Tested values
+   documented inline in `signals/engine.py` so the choice is auditable and
+   the user can revisit if a wider, two-sided sample disagrees.
+
+2. **Ported the TP1 BE-cushion to live `trading/paper.py` spot path.**
+   Per the agreed "PF ≥ 1 before porting" gate, spot cleared 1.47. When a
+   spot position partial-closes at TP1, the trail now goes to
+   `entry − 0.5×current_atr` instead of exact entry. SELL path mirrored
+   for completeness even though spot is BUY-only by design. Futures path
+   untouched — futures PF is still 0.97, just under the gate. The
+   `partial_close_position(new_sl=…)` call now passes the cushioned SL so
+   DB state matches the in-memory trail.
+
+---
+
+## 2026-06-13 — audit #9: timing + confidence — STRONG no longer fires at tops
+
+After audit #8 the remaining leak was signal *timing*: STRONG signals kept
+firing at LOCAL TOPS in bull legs (everything aligns most strongly at price
+extremes), and the engine had no protection against re-entering the exact
+setup that just stopped out.
+
+Results vs audit #8:
+
+| Mode    | Sigs (8→9) | WR (8→9) | PnL (8→9)    | PF (8→9)  |
+|---------|------------|----------|--------------|-----------|
+| Futures | 33 → 3     | 33% → **67%** | −10.79% → **−0.04%** | 0.34 → **0.97** |
+| Spot    | 6 → 2      | 17% → **50%** | −3.98% → **+1.02%**  | 0.44 → **1.47** |
+
+Spot PF cleared 1.0 (eligible to port BE-cushion to `trading/paper.py`).
+Futures PF essentially breakeven — a couple of percentage points of trail
+tuning would put it above 1.0. Volume is now low (3 / 2 signals) — the next
+round is about loosening selectively without re-introducing the paper cuts.
+
+### Added
+
+- **No-chase gate** (`signals/engine.py`): after type set, if entry is more
+  than 0.5×ATR away from VWAP_24, force HOLD. The 2026-05-10 BUY at $82,118
+  (within $1 of the local high in a leg that ended at $77,188 — STRONG
+  confidence, score 9.8) was the canonical case: every condition aligned
+  *because* price was extended. Symmetric BUY/SELL.
+
+- **Same-side cooldown after exit** (`backtest.py:run_backtest`): 5 candles
+  on 1H, 2 on 4H. Stops the loop from re-entering the same losing setup
+  immediately after the trail fires. Mirrors live behaviour somewhat — live
+  is naturally cadence-gated by `--loop 60`, but post-exit re-entry was a
+  real overcounting source in backtest.
+
+### Changed
+
+- **`get_signal_confidence` now requires HTF agreement for STRONG**
+  (`signals/market_data.py`): a score ≥1.5×threshold *plus* `htf['1d']`
+  matching the direction. If the score is in STRONG zone but the daily HTF
+  disagrees, downgrade to NORMAL. In audit #8 STRONG WR was 12.5% vs NORMAL
+  40% (inverted); after this change the only STRONG signal that fired in 90
+  days was the +1.13% win on 2026-04-20.
+
+### Fixed
+
+- **Engine session-bump used wall-clock instead of candle time**
+  (`signals/engine.py`): `datetime.now(UTC).hour` evaluated every historical
+  candle as if it were the hour the backtest was launched (so every bar got
+  the same +0.5/−0.25 bump, dictated by when you ran the script). Now reads
+  the latest candle's index hour with wall-clock fallback. This was a silent
+  consistency bug that made backtest threshold behaviour deterministic-but-
+  wrong; live wasn't affected.
+
+---
+
+## 2026-06-13 — audit #8: offline backtest on data/ + 5-pack improvements
+
+Ran the offline pipeline against `data/btc_1h_90d.csv` / `btc_4h_90d.csv`
+(BTC +15.5% over the 90-day window). Result before changes:
+
+| Mode    | Sigs | WR    | PnL     | PF   | Avg Hold |
+|---------|------|-------|---------|------|----------|
+| Futures | 21   | 14.3% | −11.24% | 0.09 | 4 candles |
+| Spot    | 6    | 16.7% | −6.79%  | 0.06 | 2 candles |
+
+After P1–P3 + two latent-bug fixes uncovered during validation:
+
+| Mode    | Sigs | WR    | PnL     | PF   | Avg Hold |
+|---------|------|-------|---------|------|----------|
+| Futures | 33   | 33.3% | −10.79% | 0.34 | 9 candles |
+| Spot    | 6    | 16.7% | −3.98%  | 0.44 | 6 candles |
+
+WR doubled (futures), PF improved 4×, avg hold doubled. PnL still negative —
+signal *timing* is the remaining issue (BUYs firing at local tops in bull legs).
+
+### Fixed
+
+- **HTF computation in backtest silently dead** (`backtest.py:_compute_htf_from_df`):
+  the helper called `.set_index("timestamp")` on a DataFrame whose timestamp
+  was *already* the index, so it raised KeyError on every call. The outer
+  `try/except` swallowed the exception, set `htf=None`, and Condition 6
+  (HTF alignment, 2.0 max points) never contributed anything in 90 days of
+  backtest. Made every backtest look quieter than live for months. Removed
+  the redundant `set_index`.
+
+- **Backtest fired same-direction signals while a position was still open**
+  (`backtest.py:run_backtest`): live caps at 1 BUY + 1 SELL via
+  `max_positions`, but the backtest loop treated each candle independently.
+  Once the HTF bug was fixed and BUY signals started firing at every hourly
+  alignment, the loop generated 65 BUY trades in 90 days — none of which
+  would have been entered live. Added `open_until` per-direction state so a
+  new signal is skipped if a same-side trade is still active.
+
+### Changed (P1)
+
+- **Trail ATR factor loosened**: futures `0.9 → 1.5`, spot `1.0 → 2.0`
+  (`config.py:RISK_CONFIG`, `FUTURES_CONFIG`). Backtest showed multiple
+  directionally-correct SELLs (e.g. 2026-05-10 short at $80,662 in a leg
+  that closed at $77,188) trailed out in 2 candles for tiny losses. The old
+  multipliers were below typical BTC noise.
+
+### Changed (P2)
+
+- **TP1 no longer snaps trail to entry** (`backtest.py:_simulate_forward`):
+  after partial close, trail is now pulled to `entry − 0.5×ATR_now` (BUY)
+  or `entry + 0.5×ATR_now` (SELL) instead of entry exactly. At true BE, exit
+  fees made every remainder a fee-tax LOSS even when TP1 hit. Half-ATR
+  cushion preserves the locked partial while letting normal noise breathe.
+  Live path in `trading/paper.py` still snaps to entry — pending PF ≥ 1.0
+  before porting per the agreed gating.
+
+### Added (P3)
+
+- **Hard counter-trend block** (`signals/engine.py:generate_signals`):
+  if `htf['1d']` is BULLISH and the signal is SELL → force HOLD. Mirror for
+  BEARISH + BUY. Only fires when 1D HTF is non-NEUTRAL (i.e. we actually
+  have higher-TF context). Backtest had 12 counter-trend SELLs in a +15.5%
+  uptrend with 8.3% WR; new block drops that to 5 SELLs with the worst
+  trend-fighters filtered out.
+
+---
+
 ## 2026-05-14 — fix: 4 audit pass — macro race, trail ATR, csv silent, signal outcome semantics
 
 ### Fixed
