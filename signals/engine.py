@@ -591,11 +591,35 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             sell_conditions += 1.0
             signal['reasons'].append(f"✗ Taker ratio {taker.get('ratio', 0):.2f} — aggressive sellers dominant")
 
+    # Structural SL helper (audit #12): place SL beyond the most recent
+    # 20-candle swing low/high with a small buffer, but cap at 2.5×ATR so risk
+    # doesn't explode in high-vol regimes. The tighter of the two wins for
+    # BUY (SL closest to entry); the wider — i.e. price-cap — applies when
+    # structure is too far. Mirror for SELL.
+    _atr_now = current['ATR_14']
+    _sl_buffer = 0.25 * _atr_now
+    _sl_atr_cap = 2.5 * _atr_now  # max distance from entry
+    _swing_low_20 = df['low'].tail(20).min()
+    _swing_high_20 = df['high'].tail(20).max()
+
     # Determine final signal
     if buy_conditions >= threshold and buy_conditions > sell_conditions:
         signal['type'] = 'BUY'
         signal['strength'] = buy_conditions
-        signal['stop_loss'] = current['close'] - atr_stop
+        # SL: below 20c swing low with buffer, but not more than 2.5×ATR away.
+        sl_struct = _swing_low_20 - _sl_buffer
+        sl_cap = current['close'] - _sl_atr_cap
+        # max() picks the SL closest to entry (tighter risk) when structure is
+        # within the cap; otherwise the cap holds.
+        signal['stop_loss'] = max(sl_struct, sl_cap)
+        if sl_struct >= sl_cap:
+            signal['reasons'].append(
+                f"🔧 SL at swing low ${_swing_low_20:,.0f} − 0.25×ATR"
+            )
+        else:
+            signal['reasons'].append(
+                f"🔧 SL capped at entry − 2.5×ATR (structure too far)"
+            )
         raw_tp = current['close'] + (atr_stop * RISK_CONFIG['take_profit_rr'])
         if sr and sr.get('resistance'):
             dist_sr = sr['resistance'] - current['close']
@@ -608,7 +632,18 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     elif mode != 'spot' and sell_conditions >= threshold and sell_conditions > buy_conditions:
         signal['type'] = 'SELL'
         signal['strength'] = sell_conditions
-        signal['stop_loss'] = current['close'] + atr_stop
+        # SL: above 20c swing high with buffer, but not more than 2.5×ATR away.
+        sl_struct = _swing_high_20 + _sl_buffer
+        sl_cap = current['close'] + _sl_atr_cap
+        signal['stop_loss'] = min(sl_struct, sl_cap)  # tighter for SELL = lower price
+        if sl_struct <= sl_cap:
+            signal['reasons'].append(
+                f"🔧 SL at swing high ${_swing_high_20:,.0f} + 0.25×ATR"
+            )
+        else:
+            signal['reasons'].append(
+                f"🔧 SL capped at entry + 2.5×ATR (structure too far)"
+            )
         raw_tp = current['close'] - (atr_stop * RISK_CONFIG['take_profit_rr'])
         if sr and sr.get('support'):
             dist_sr = current['close'] - sr['support']
@@ -699,6 +734,34 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             signal['stop_loss'] = None
             signal['take_profit'] = None
 
+    # ── Entry-candle wick rejection gate (audit #12) ──
+    # If the entry candle's own upper wick is >50% of its range, sellers have
+    # rejected this price level in real time — buying right under that
+    # rejection is asking to get stopped. Mirror for SELL on lower wicks.
+    # Separate from the 24-candle fakeout gate (which looks at range extremes);
+    # this catches single-candle reversals at the entry point itself.
+    if signal['type'] in ('BUY', 'SELL'):
+        c_range = current['high'] - current['low']
+        if c_range > 0:
+            body_top = max(current['open'], current['close'])
+            body_bot = min(current['open'], current['close'])
+            upper_wick_pct = (current['high'] - body_top) / c_range
+            lower_wick_pct = (body_bot - current['low']) / c_range
+            if signal['type'] == 'BUY' and upper_wick_pct > 0.5:
+                signal['reasons'].append(
+                    f"⛔ Entry wick: upper wick {upper_wick_pct:.0%} of candle — sellers rejected"
+                )
+                signal['type'] = 'HOLD'
+                signal['stop_loss'] = None
+                signal['take_profit'] = None
+            elif signal['type'] == 'SELL' and lower_wick_pct > 0.5:
+                signal['reasons'].append(
+                    f"⛔ Entry wick: lower wick {lower_wick_pct:.0%} of candle — buyers rejected"
+                )
+                signal['type'] = 'HOLD'
+                signal['stop_loss'] = None
+                signal['take_profit'] = None
+
     # ── Short-term momentum gate (audit #11) ──
     # Loss forensics on 2026-04-19 BUY $75,960: a 4-day downtrend with a small
     # bounce in the final candle. EMA200 condition still scored BUY (price > 200
@@ -752,6 +815,32 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
                 if capped < signal['take_profit']:  # only cap if capped value still exceeds TP1
                     tp2_raw = capped
             signal['tp2'] = round(tp2_raw, 2)
+
+    # ── Minimum realised R:R gate (audit #12) ──
+    # After all SL/TP/SR caps, compute the actual reward-to-risk. If TP1 was
+    # clipped near resistance (or SL is wide because structure is far), the
+    # practical R:R can collapse to <1. Even 60% WR loses money at R:R 0.8;
+    # require ≥1.5 so the geometry alone is profitable at break-even WR.
+    if signal['type'] in ('BUY', 'SELL') and signal.get('stop_loss') and signal.get('take_profit'):
+        entry = signal['entry_price']
+        sl = signal['stop_loss']
+        tp = signal['take_profit']
+        if signal['type'] == 'BUY':
+            risk = entry - sl
+            reward = tp - entry
+        else:
+            risk = sl - entry
+            reward = entry - tp
+        rr = reward / risk if risk > 0 else 0
+        if rr < 1.5:
+            signal['reasons'].append(
+                f"⛔ R:R {rr:.2f} below 1.5 minimum — geometry unfavourable"
+            )
+            signal['type'] = 'HOLD'
+            signal['stop_loss'] = None
+            signal['take_profit'] = None
+        else:
+            signal['rr'] = round(rr, 2)
 
     if signal['type'] != 'HOLD':
         signal['confidence'] = get_signal_confidence(

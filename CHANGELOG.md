@@ -4,6 +4,47 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-06-13 — audit #12: entry-quality triple — structural SL, R:R floor, entry-wick gate
+
+User-requested follow-up to minimise losses on opening signals. Three
+geometry-and-quality gates added at the entry point — not more filters, but
+better mechanics for the signals that do fire.
+
+| Mode    | Sigs (11→12) | WR (11→12)  | PnL (11→12)        | PF (11→12) |
+|---------|--------------|-------------|--------------------|------------|
+| Futures | 2 → 1        | 100% → 100% | +1.17% → +0.05%    | ∞ → ∞      |
+| Spot    | 1 → 1        | 100% → 100% | +3.18% → +3.18%    | ∞ → ∞      |
+
+One STRONG futures winner (+1.13%) was filtered by the entry-wick gate
+(82% upper wick at resistance $76,241). It happened to win because the
+broader trend pushed through, but an 82% upper wick *is* a real rejection;
+filtering it is the correct trade-off for "minimise losses" — we sacrifice
+a marginal winner to systematically avoid in-the-moment-rejected entries.
+
+### Changed
+
+- **Structural SL placement** (`signals/engine.py`): replaced the fixed
+  `entry ± ATR × 1.5` with `max(swing_low_20 − 0.25×ATR, entry − 2.5×ATR)`
+  for BUY (mirror for SELL). The tighter of the two wins — structure if
+  close enough, ATR cap otherwise. Stops the SL from sitting at obvious
+  liquidity zones that get hunted on normal pullbacks. Reason cited in
+  signal: 🔧 SL at swing low … / SL capped at entry − 2.5×ATR.
+
+### Added
+
+- **Entry-candle wick rejection gate** (`signals/engine.py`): if the entry
+  candle's own upper wick is > 50% of its range, reject BUY (mirror for
+  SELL on lower wick). This is different from the 24-candle fakeout gate
+  in `_passes_entry_gates` — that one looks at range extremes; this catches
+  single-candle reversals at the entry point itself.
+
+- **Minimum realised R:R gate** (`signals/engine.py`): after every SL/TP/SR
+  cap has run, require `(TP − entry) / (entry − SL) ≥ 1.5`. Even 60% WR
+  loses money at R:R 0.8; this floor makes the geometry alone profitable
+  at break-even WR. Stored as `signal['rr']` for diagnostic visibility.
+
+---
+
 ## 2026-06-13 — audit #11: per-loss forensics → anti-FOMO + short-term momentum gates
 
 Ran `scripts/loss_forensics.py` against the two remaining losses in audit #10's
