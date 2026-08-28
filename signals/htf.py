@@ -4,6 +4,7 @@ and spot (1D+1W) pipelines.
 
 import logging
 
+import numpy as np
 import pandas as pd
 
 from signals.indicators import calculate_ema, calculate_macd, calculate_rsi
@@ -12,51 +13,60 @@ from signals.market_data import exchange
 logger = logging.getLogger(__name__)
 
 
-def _htf_indicators(df):
-    """Compute multi-timeframe indicators from OHLCV DataFrame.
-    Returns dict with trend, RSI, MACD, volume trend, and price position."""
-    close = df['close']
+def htf_indicator_series(df):
+    """Per-bar HTF indicator frame: trend, RSI, MACD bias, volume trend, price
+    position relative to EMA200.
+
+    ``_htf_indicators()`` is simply the last row of this. The series form exists
+    so backtest.py can read the values **as of a past candle** instead of
+    resampling the base timeframe, which could not produce enough bars for a
+    real EMA200 (or, on weekly, for any trend at all).
+    """
+    close  = df['close']
     ema200 = calculate_ema(close, 200)
-    rsi14 = calculate_rsi(close, 14)
+    rsi14  = calculate_rsi(close, 14)
     macd, macd_sig, _ = calculate_macd(close)
 
-    last = close.iloc[-1]
-    ema_last = ema200.iloc[-1]
-    trend = 'BULLISH' if last > ema_last else 'BEARISH'
+    vol_ema20 = df['volume'].ewm(span=20, adjust=False).mean()
+    vol_ema5  = df['volume'].ewm(span=5,  adjust=False).mean()
 
-    rsi_val = rsi14.iloc[-1]
-    if rsi_val < 30:
-        rsi_zone = 'oversold'
-    elif rsi_val < 45:
-        rsi_zone = 'low'
-    elif rsi_val <= 55:
-        rsi_zone = 'neutral'
-    elif rsi_val <= 70:
-        rsi_zone = 'elevated'
-    else:
-        rsi_zone = 'overbought'
+    rsi_zone = np.select(
+        [rsi14.isna(), rsi14 < 30, rsi14 < 45, rsi14 <= 55, rsi14 <= 70],
+        ['neutral', 'oversold', 'low', 'neutral', 'elevated'],
+        default='overbought',
+    )
+    vol_trend = np.select(
+        [vol_ema5 > vol_ema20 * 1.3, vol_ema5 < vol_ema20 * 0.7],
+        ['RISING', 'FALLING'],
+        default='FLAT',
+    )
 
-    macd_bias = 'BULLISH' if macd.iloc[-1] > macd_sig.iloc[-1] else 'BEARISH'
-
-    vol_ema20 = df['volume'].ewm(span=20, adjust=False).mean().iloc[-1]
-    vol_ema5  = df['volume'].ewm(span=5,  adjust=False).mean().iloc[-1]
-    if vol_ema5 > vol_ema20 * 1.3:
-        vol_trend = 'RISING'
-    elif vol_ema5 < vol_ema20 * 0.7:
-        vol_trend = 'FALLING'
-    else:
-        vol_trend = 'FLAT'
-
-    pct_from_ema = (last - ema_last) / ema_last * 100
-
-    return {
-        'trend': trend,
-        'rsi': round(rsi_val, 1),
-        'rsi_zone': rsi_zone,
-        'macd': macd_bias,
+    return pd.DataFrame({
+        'trend':     np.where(close > ema200, 'BULLISH', 'BEARISH'),
+        'rsi':       rsi14.round(1),
+        'rsi_zone':  rsi_zone,
+        'macd':      np.where(macd > macd_sig, 'BULLISH', 'BEARISH'),
         'vol_trend': vol_trend,
-        'pct_ema': round(pct_from_ema, 2),
+        'pct_ema':   ((close - ema200) / ema200 * 100).round(2),
+    }, index=df.index)
+
+
+def indicators_from_row(row):
+    """Convert one row of htf_indicator_series() into the plain-python dict the
+    engine, notifiers and cycle_log JSON expect."""
+    return {
+        'trend':     str(row['trend']),
+        'rsi':       float(row['rsi']) if pd.notna(row['rsi']) else 50.0,
+        'rsi_zone':  str(row['rsi_zone']),
+        'macd':      str(row['macd']),
+        'vol_trend': str(row['vol_trend']),
+        'pct_ema':   float(row['pct_ema']),
     }
+
+
+def _htf_indicators(df):
+    """Indicator snapshot for the most recent bar."""
+    return indicators_from_row(htf_indicator_series(df).iloc[-1])
 
 
 def _htf_aligned(ind_fast, ind_slow, direction):

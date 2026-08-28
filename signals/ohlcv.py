@@ -41,8 +41,42 @@ def _validate_ohlcv(df, timeframe):
     return True
 
 
+_MAX_BARS_PER_CALL = 1000  # Binance caps a single fetch_ohlcv() and returns fewer silently
+
+
+def _fetch_ohlcv_paged(symbol, timeframe, limit):
+    """Assemble *limit* candles, paging backwards through the exchange cap.
+
+    A single fetch_ohlcv() call returns at most _MAX_BARS_PER_CALL rows and does
+    NOT signal truncation, so backtest.py asking for 2360 hourly candles silently
+    got 1000 (42 days) and reported itself as a 90-day run.
+    """
+    if limit <= _MAX_BARS_PER_CALL:
+        return exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+
+    tf_ms = exchange.parse_timeframe(timeframe) * 1000
+    bars, end = [], None
+    while len(bars) < limit:
+        need = min(_MAX_BARS_PER_CALL, limit - len(bars))
+        since = end - need * tf_ms if end is not None else None
+        chunk = exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=since, limit=need)
+        if end is not None:
+            chunk = [c for c in chunk if c[0] < end]
+        if not chunk:
+            break                      # exchange has no more history
+        bars = chunk + bars
+        end = bars[0][0]
+        if len(chunk) < need:
+            break
+    if len(bars) < limit:
+        logger.warning(
+            "Requested %d %s candles, exchange only had %d", limit, timeframe, len(bars)
+        )
+    return bars[-limit:]
+
+
 def fetch_ohlcv_df(symbol='BTC/USDT', timeframe='1h', limit=500, vwap_period=24):
-    bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+    bars = _fetch_ohlcv_paged(symbol, timeframe, limit)
     df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df = df.set_index('timestamp')

@@ -833,6 +833,159 @@ def test_run_bot_refuses_entry_on_cached_spot_signal():
     assert '"stale_cache"' in src, "the skip must be logged to signal_blocks"
 
 
+# ── 12. Backtest fidelity & risk accounting ──────────────────────────────────
+
+def _gate_window(n=60, spike_at=-15):
+    """Flat range with one tall spike 15 bars back — inside a 24-bar window,
+    outside a 6-bar one."""
+    import numpy as np
+    import pandas as pd
+    close = np.full(n, 80_000.0)
+    high, low = close + 100, close - 100
+    high[spike_at] = 84_000.0
+    df = pd.DataFrame({"open": close, "high": high, "low": low, "close": close,
+                       "volume": np.full(n, 1000.0)})
+    df["EMA_200"], df["VWAP_24"], df["ATR_14"] = 79_000.0, 79_900.0, 300.0
+    return df
+
+def _gate_signal():
+    return {"type": "BUY", "confidence": "NORMAL", "strength": 6.0, "_threshold": 5.2,
+            "entry_price": 80_000.0, "stop_loss": 79_400.0, "take_profit": 81_500.0,
+            "support_resistance": {},
+            "_regime": {"regime": "TRENDING", "trend_dir": "BULLISH"}}
+
+def test_wick_gate_measures_24_hours_in_both_modes():
+    """The fakeout gate looks back 24 HOURS: 6 bars on spot 4H, 24 on futures 1H.
+    They were swapped, so spot measured 96h and futures 6h."""
+    from backtest import _passes_entry_gates
+    w = _gate_window()
+    assert _passes_entry_gates(_gate_signal(), "spot", w) is True, \
+        "spot must look at 6 bars (4H × 6 = 24h) — the spike is outside it"
+    assert _passes_entry_gates(_gate_signal(), "futures", w) is False, \
+        "futures must look at 24 bars (1H × 24 = 24h) — the spike is inside it"
+
+def test_backtest_cost_model_matches_live():
+    """backtest._net_pnl must agree with trading/paper.py::_calc_pnl — the old
+    harness charged TP2 once and trailing exits twice."""
+    from backtest import _net_pnl
+    from trading.paper import _calc_pnl
+    entry = 80_000.0
+    for mode in ("spot", "futures"):
+        for stype, exit_px in (("BUY", 81_500.0), ("BUY", 79_200.0),
+                               ("SELL", 78_500.0), ("SELL", 80_900.0)):
+            for partial, ppnl in ((0, 0.0), (1, 1.85)):
+                pos = {"entry_price": entry, "type": stype, "mode": mode,
+                       "partial_closed": partial, "partial_pnl": ppnl}
+                live = _calc_pnl(pos, exit_px)
+                bt   = _net_pnl(stype, entry, exit_px, bool(partial), ppnl, mode)
+                assert abs(live - bt) < 1e-9, \
+                    f"{mode} {stype} partial={partial}: live {live:.6f} vs backtest {bt:.6f}"
+
+def test_drawdown_is_peak_to_trough():
+    """An account up 30% that gives back 18% is in an 18% drawdown even though
+    cumulative P&L is still positive — the old breaker read max(0, -total) = 0."""
+    import os
+    import sqlite3
+    import tempfile
+    import trading.history as h
+    saved_path, saved_db = h.SIGNAL_HISTORY_DB, h.DB
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        h.SIGNAL_HISTORY_DB, h.DB = path, None
+        c = h._conn()
+        for i, pnl in enumerate([12.0, 18.0, -10.0, -8.0]):     # peak +30, ends +12
+            c.execute(
+                "INSERT INTO paper_positions "
+                "(type,entry_price,stop_loss,take_profit,opened_at,closed_at,outcome,pnl_pct,mode) "
+                "VALUES ('BUY',80000,79000,82000,?,?,?,?,'spot')",
+                (f"2026-08-2{i}T00:00:00", f"2026-08-2{i}T06:00:00",
+                 "WIN" if pnl > 0 else "LOSS", pnl),
+            )
+        c.commit()
+        total, _, _ = h.get_closed_pnl("spot")
+        cur_dd, max_dd = h.get_drawdown("spot")
+        assert abs(total - 12.0) < 1e-6, f"cumulative P&L should stay positive, got {total}"
+        assert abs(cur_dd - 18.0) < 1e-6, f"current drawdown should be 18%, got {cur_dd}"
+        assert abs(max_dd - 18.0) < 1e-6, f"max drawdown should be 18%, got {max_dd}"
+        assert max(0, -total) == 0, "the old measure saw no drawdown at all"
+    finally:
+        try:
+            h.DB.close()
+        except Exception:
+            pass
+        h.SIGNAL_HISTORY_DB, h.DB = saved_path, saved_db
+        os.unlink(path)
+
+def _htf_frame(trends, freq, start="2026-01-01"):
+    import pandas as pd
+    idx = pd.date_range(start, periods=len(trends), freq=freq)
+    n = len(trends)
+    return pd.DataFrame({"trend": trends, "rsi": [50.0] * n, "rsi_zone": ["neutral"] * n,
+                         "macd": ["BULLISH"] * n, "vol_trend": ["FLAT"] * n,
+                         "pct_ema": [1.0] * n}, index=idx)
+
+def test_htf_at_ignores_the_still_forming_bar():
+    """Replaying the current (unfinished) HTF bar would leak its remainder
+    backwards in time. Only bars that had already closed may be read."""
+    import pandas as pd
+    from backtest import _htf_at
+    daily  = _htf_frame(["BULLISH", "BULLISH", "BEARISH"], "1D")   # 01-01, 01-02, 01-03
+    weekly = _htf_frame(["BULLISH"], "1W")
+    frames = {"1d": (daily, pd.Timedelta(days=1)),
+              "1w": (weekly, pd.Timedelta(weeks=1))}
+    htf = _htf_at(frames, pd.Timestamp("2026-01-03 12:00"))
+    assert htf["1d"] == "BULLISH", \
+        f"the 01-03 bar had not closed at 12:00 — got {htf['1d']} (look-ahead)"
+
+def test_htf_at_alignment_matches_live_rule():
+    """aligned = both timeframes agree, are non-NEUTRAL, and are not both at the
+    same RSI extreme — the same rule signals/htf.py applies live."""
+    import pandas as pd
+    from backtest import _htf_at
+    week = pd.Timedelta(weeks=1)
+    day  = pd.Timedelta(days=1)
+    ts   = pd.Timestamp("2026-03-01")
+
+    agree  = {"1d": (_htf_frame(["BULLISH"] * 40, "1D"), day),
+              "1w": (_htf_frame(["BULLISH"] * 8, "1W"), week)}
+    differ = {"1d": (_htf_frame(["BULLISH"] * 40, "1D"), day),
+              "1w": (_htf_frame(["BEARISH"] * 8, "1W"), week)}
+    assert _htf_at(agree, ts)["aligned"] is True
+    assert _htf_at(differ, ts)["aligned"] is False
+
+def test_ohlcv_pagination_beats_the_exchange_cap():
+    """A single fetch_ohlcv() silently truncates at 1000 rows, so the futures
+    backtest asked for 2360 candles and simulated 42 days calling it 90."""
+    import signals.ohlcv as oh
+    STEP, TOTAL, CAP = 3_600_000, 5_000, 1_000
+    hist = [[i * STEP, 1.0, 1.0, 1.0, 1.0, 1.0] for i in range(TOTAL)]
+
+    class _CappedExchange:
+        calls = 0
+        def parse_timeframe(self, tf):
+            return STEP // 1000
+        def fetch_ohlcv(self, symbol, timeframe=None, since=None, limit=None):
+            _CappedExchange.calls += 1
+            n = min(limit or CAP, CAP)
+            if since is None:
+                return hist[-n:]
+            start = next((i for i, b in enumerate(hist) if b[0] >= since), len(hist))
+            return hist[start:start + n]
+
+    saved = oh.exchange
+    try:
+        oh.exchange = _CappedExchange()
+        bars = oh._fetch_ohlcv_paged("BTC/USDT", "1h", 2360)
+        ts = [b[0] for b in bars]
+        assert len(bars) == 2360, f"expected 2360 candles, got {len(bars)}"
+        assert ts == sorted(ts) and len(set(ts)) == len(ts), "pages must not overlap or reorder"
+        assert ts[-1] == hist[-1][0], "the newest candle must still be the last row"
+        assert _CappedExchange.calls >= 3, "2360 candles needs more than one capped call"
+    finally:
+        oh.exchange = saved
+
+
 if __name__ == "__main__":
     print("\n══ Pipeline Dummy-Data Tests ══\n")
 
@@ -905,6 +1058,14 @@ if __name__ == "__main__":
     run("cancelled RSI leaves the cluster",       test_cancelled_rsi_extreme_leaves_the_cluster)
     run("cached spot signal flagged stale",       test_spot_cache_hit_is_flagged_stale)
     run("run_bot refuses cached spot entry",      test_run_bot_refuses_entry_on_cached_spot_signal)
+
+    print("\n── 12. Backtest fidelity & risk accounting ──")
+    run("wick gate = 24h in both modes",          test_wick_gate_measures_24_hours_in_both_modes)
+    run("backtest costs match live",              test_backtest_cost_model_matches_live)
+    run("drawdown is peak-to-trough",             test_drawdown_is_peak_to_trough)
+    run("HTF ignores the forming bar",            test_htf_at_ignores_the_still_forming_bar)
+    run("HTF alignment matches live",             test_htf_at_alignment_matches_live_rule)
+    run("OHLCV pagination beats the cap",         test_ohlcv_pagination_beats_the_exchange_cap)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

@@ -99,7 +99,8 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
             )
             for pos in all_open:
                 exit_pnl = _calc_pnl(pos, current_price)
-                sh.close_paper_position(pos["id"], "MACRO_CLOSE", exit_pnl)
+                sh.close_paper_position(pos["id"], "MACRO_CLOSE", exit_pnl,
+                                        exit_price=current_price)
                 closed.append({
                     "type": pos["type"], "entry": pos["entry_price"],
                     "exit": current_price, "pnl": exit_pnl,

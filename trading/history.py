@@ -576,8 +576,9 @@ def update_trailing_stop(pos_id, new_sl):
 def partial_close_position(pos_id, pnl_pct, new_sl):
     """Record the first-half exit at TP1.
 
-    Marks partial_closed=1, stores partial_pnl, and moves
-    trailing_stop to breakeven (*new_sl* = entry price).
+    Marks partial_closed=1, stores partial_pnl, and moves trailing_stop to
+    *new_sl* — the caller decides where: futures snaps to breakeven, spot uses
+    entry − 0.5×ATR so fees don't turn the remaining half into a loss.
     """
     c = _conn()
     c.execute(
@@ -664,6 +665,31 @@ def get_daily_pnl(mode=None):
         [today + " 00:00:00"] + (mp if isinstance(mp, list) else [mp] if mp else []),
     ).fetchall()
     return sum(r["pnl_pct"] for r in rows) if rows else 0.0
+
+
+def get_drawdown(mode=None):
+    """Return (current_drawdown_pct, max_drawdown_pct) from the closed-trade
+    equity curve.
+
+    `get_closed_pnl()` returns the SUM of realised returns — cumulative P&L, not
+    drawdown. An account up 30% that gives back 18% sits in an 18% drawdown while
+    its cumulative return is still +12%, so a breaker reading `max(0, -total)`
+    saw 0 and never fired. Peak starts at 0, so an account that has only ever
+    lost still reports its full loss, exactly as before.
+    """
+    c = _conn()
+    mf, mp = ("AND mode = ?", [mode]) if mode else ("", [])
+    rows = c.execute(
+        f"SELECT pnl_pct FROM paper_positions WHERE pnl_pct IS NOT NULL {mf} "
+        f"ORDER BY COALESCE(closed_at, ''), id",
+        mp,
+    ).fetchall()
+    cum = peak = max_dd = 0.0
+    for r in rows:
+        cum += r["pnl_pct"]
+        peak = max(peak, cum)
+        max_dd = max(max_dd, peak - cum)
+    return round(peak - cum, 3), round(max_dd, 3)
 
 
 def get_closed_pnl(mode=None):

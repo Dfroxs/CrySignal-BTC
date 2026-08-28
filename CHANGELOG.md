@@ -4,6 +4,86 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-29 — fix: backtest fidelity (10 findings) + real drawdown breaker
+
+A full re-audit of the modules not covered by the earlier passes — persistence,
+the loop, notifiers, scraper and the backtest harness — turned up ten defects.
+Most of them sit in `backtest.py`, the tool every tuned parameter in this repo
+was measured against.
+
+### Fixed
+- **The futures backtest simulated ~30 days and called it 90.** Binance caps a
+  single `fetch_ohlcv()` at 1000 rows and does not signal truncation, so the
+  request for `90 × 24 + 200 = 2360` hourly candles quietly returned 1000
+  (42 days of data, ~30 days of simulation after warmup and the max-hold
+  margin). `signals/ohlcv.py:_fetch_ohlcv_paged()` now pages backwards through
+  the cap. Verified: 2360 candles / 98 days, sorted, no overlap.
+- **The backtest's HTF was structurally disabled.** `_compute_htf_from_df()`
+  resampled the base timeframe, which cannot hold enough bars: 90 days of 4H is
+  ~18 weekly bars against a 50-bar minimum, so the spot backtest's 1W trend was
+  NEUTRAL at *every* index and `aligned` was permanently False — condition 6 is
+  worth up to +2.0, the largest weight after divergence. The daily "EMA200" was
+  an EMA50 for the same reason, and futures' 1D was NEUTRAL for the first half
+  of every run. The harness now fetches the same 1D/1W (spot) and 4H/1D
+  (futures) series live uses and reads per-bar indicators from
+  `signals/htf.py:htf_indicator_series()` — one implementation for both paths,
+  verified byte-identical to the previous live output on fixed data. Only bars
+  that had already **closed** are read, so the replay cannot see into a forming
+  bar.
+- **The 24-hour wick window was swapped between modes.** `_passes_entry_gates()`
+  used 24 bars on spot (= 96 hours) and 6 on futures (= 6 hours); live uses 6
+  and 24 respectively, both meaning 24 hours.
+- **Execution costs were charged inconsistently per exit path.** Entry/SL/TP
+  prices were shifted by the round-trip cost *and* an exit cost was deducted
+  again on the trailing/time/vol paths, while TP2 was charged nothing. That
+  flattered every TP2 win and double-charged every trailed exit — precisely the
+  trade-off the trailing factors were tuned on. One model now, `_net_pnl()`,
+  asserted equal to `trading/paper.py::_calc_pnl` across modes, directions and
+  partial states.
+- **The backtest skipped two gates live applies.** S/R entry proximity and
+  re-entry quality were missing, so the harness passed trades live rejects —
+  the opposite direction from the "conservative" disclaimer.
+- **The circuit breaker never measured drawdown.** It read
+  `max(0, -get_closed_pnl())`, which is cumulative net P&L: an account up 30%
+  that gives back 18% reported a 0% drawdown and kept trading through a
+  `max_drawdown_pct` of 15. `trading/history.get_drawdown()` walks the
+  closed-trade equity curve and returns (current, max) peak-to-trough. The
+  equity check is now expressed directly as `100 + total < min_equity_pct`
+  rather than via the same conflated quantity.
+- **The mid-cycle check could not fire a funding exit.** `run_position_check()`
+  called `check_and_close_positions()` without `funding_rate`, so the gate was
+  dead outside full cycles and a position could sit through an expensive
+  funding window.
+- **MACRO_CLOSE left `exit_price` NULL** — the only close path that did not
+  record the fill.
+
+### Removed
+- `backtest.py:_candle_utc_hour()` — dead since the engine started reading
+  `df.index[-1].hour` itself. The indicator import block went with it; every
+  name in it was already unused because `fetch_ohlcv_df()` computes the columns.
+
+### Changed
+- `trading/history.partial_close_position()` docstring claimed the trail moves
+  to breakeven; spot moves it to entry − 0.5×ATR and the caller decides.
+- `CLAUDE.md` backtest-limitations section rewritten — it documented the
+  resampling approach that caused the HTF defect.
+
+### Effect
+Before this commit both backtests produced **zero** signals on the current
+window. After it, futures runs a real 90-day window and produces 3 trades
+(0W/3L, −2.40%, all SELL). Spot still produces none — consistent with the
+stacked-filter question raised in the previous audit, which needs the paper run
+to answer.
+
+### Tests
+- `test_pipelines.py` section 12 — six regression tests: the per-mode wick
+  window, cost parity with the live P&L function, peak-to-trough drawdown, the
+  closed-bar-only HTF read, the HTF alignment rule, and pagination past a
+  stubbed exchange cap. All six verified to fail against the pre-fix tree.
+  Suite: 54/54.
+
+---
+
 ## 2026-08-29 — fix: cancelled RSI extreme no longer penalised as a cluster member
 
 ### Fixed

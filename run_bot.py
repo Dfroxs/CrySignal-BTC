@@ -396,9 +396,10 @@ def run_cycle():
     import trading.history as _h
     spot_pnl, _, _ = _h.get_closed_pnl("spot")
     fut_pnl, _, _ = _h.get_closed_pnl("futures")
-    spot_dd = max(0, -spot_pnl)
-    fut_dd  = max(0, -fut_pnl)
-    total_dd = max(0, -(spot_pnl + fut_pnl))
+    # Peak-to-trough, not cumulative P&L — see trading/history.get_drawdown().
+    spot_dd, _ = _h.get_drawdown("spot")
+    fut_dd, _  = _h.get_drawdown("futures")
+    equity_pct = 100 + spot_pnl + fut_pnl
     max_dd = RISK_LIMITS.get("max_drawdown_pct", 15.0)
     min_eq = RISK_LIMITS.get("min_equity_pct", 50.0)
 
@@ -444,8 +445,8 @@ def run_cycle():
     # blocked state — otherwise terminal shows STRONG BUY while Telegram says HOLD).
     display_combined(spot_signal, futures_signal)
 
-    if total_dd > (100 - min_eq):
-        msg = f"🚨 EQUITY {100-total_dd:.0f}% < {min_eq}% — EMERGENCY close all"
+    if equity_pct < min_eq:
+        msg = f"🚨 EQUITY {equity_pct:.0f}% < {min_eq}% — EMERGENCY close all"
         logger.critical(msg)
         phase3_actions.append(msg)
         # Use latest signal price for a meaningful exit P&L (was hard-coded 0).
@@ -901,8 +902,14 @@ def run_position_check():
         print(f"  MID-CYCLE CHECK  ·  BTC ${price:,.0f}")
         print(f"  {'─' * 40}")
 
+        # Without this the funding exit could only ever fire on a full cycle,
+        # so a position could sit through an expensive funding window untouched.
+        from signals.market_data import fetch_funding_rate
+        funding = fetch_funding_rate().get("rate_pct", 0)
+
         closed_spot = check_and_close_positions(price, mode="spot", current_atr=_last_atr_spot)
-        closed_fut = check_and_close_positions(price, mode="futures", current_atr=_last_atr_fut)
+        closed_fut = check_and_close_positions(price, mode="futures", current_atr=_last_atr_fut,
+                                               funding_rate=funding)
         all_closed = (closed_spot or []) + (closed_fut or [])
 
         print_open_status("spot")
