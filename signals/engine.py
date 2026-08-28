@@ -4,7 +4,7 @@ integrate_news_with_signal() for macro/sentiment overlay.
 
 import pandas as pd
 
-from config import RISK_CONFIG
+from config import RISK_CONFIG, SPOT_THRESHOLD_MIN, THRESHOLD_MIN
 from signals.indicators import (calculate_adx, classify_regime,
                                 detect_candlestick_pattern, detect_rsi_divergence)
 from signals.market_data import get_signal_confidence
@@ -480,8 +480,16 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         session_bump = -0.25  # US session: highest volume, lower threshold
     else:
         session_bump = 0.0
-    # Floor at 3.0 so session/regime bumps can't push threshold below the spot minimum.
-    threshold = max(threshold + regime.get("threshold_bump", 0) + session_bump, 3.0)
+    # Floor at the PER-MODE minimum so session/regime bumps can't push the
+    # threshold below it. The old hard-coded 3.0 was the *spot* minimum applied
+    # to both modes, so futures could gate at 3.5 (4.0 base − 0.25 TRENDING
+    # − 0.25 US session) despite THRESHOLD_MIN = 4.0. An explicit env override
+    # that already sits below the minimum is respected — the floor guards the
+    # bumps, not the operator's chosen base.
+    mode_min = SPOT_THRESHOLD_MIN if mode == 'spot' else THRESHOLD_MIN
+    if threshold > 0:
+        mode_min = min(mode_min, threshold)
+    threshold = max(threshold + regime.get("threshold_bump", 0) + session_bump, mode_min)
 
     # ── OI × Price directional analysis ──
     if mode == 'futures' and market_structure:
@@ -852,7 +860,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     return signal
 
 
-def integrate_news_with_signal(signal, news_data):
+def integrate_news_with_signal(signal, news_data, htf=None):
     enhanced = signal.copy()
 
     # MACRO block — always force HOLD when a HIGH-impact event is <2h away.
@@ -927,8 +935,14 @@ def integrate_news_with_signal(signal, news_data):
             f"⚠️  Post-news strength ({enhanced['strength']:.2f}) below threshold ({thr:.2f}) — downgraded to HOLD"
         )
 
-    # Always recalculate confidence after news adjustments — strength may have changed
+    # Always recalculate confidence after news adjustments — strength may have
+    # changed. htf/signal_type must be passed so the STRONG-requires-HTF-agreement
+    # rule (audit #9) survives the recalculation: without them, a signal the
+    # engine had deliberately downgraded to NORMAL was promoted back to STRONG,
+    # which unlocks spot pyramiding (min_confidence = STRONG).
     if enhanced['type'] != 'HOLD':
-        enhanced['confidence'] = get_signal_confidence(enhanced['strength'], thr)
+        enhanced['confidence'] = get_signal_confidence(
+            enhanced['strength'], thr, htf=htf, signal_type=enhanced['type']
+        )
 
     return enhanced

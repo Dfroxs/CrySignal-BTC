@@ -651,6 +651,102 @@ def test_combined_telegram_returns_zero_without_credentials():
 
 
 
+# ── 10. Threshold & confidence consistency ───────────────────────────────────
+
+def _synthetic_df(n=320, end="2026-01-14 14:00"):
+    """OHLCV frame carrying every indicator column generate_signals() needs.
+
+    Seeded uptrend → deterministic TRENDING regime (bump −0.25); the index ends
+    at 14:00 UTC so the session bump is the US −0.25. No network, no DB.
+    """
+    import numpy as np
+    import pandas as pd
+    from signals.indicators import (calculate_atr, calculate_bollinger_bands,
+                                    calculate_ema, calculate_macd, calculate_obv,
+                                    calculate_rsi, calculate_stoch_rsi,
+                                    calculate_vwap, compute_cmf, compute_mfi)
+    rng   = np.random.default_rng(7)
+    close = 80_000 + np.arange(n) * 25 + rng.normal(0, 60, n)
+    df = pd.DataFrame({
+        "open":   close - rng.normal(0, 20, n),
+        "high":   close + np.abs(rng.normal(80, 20, n)),
+        "low":    close - np.abs(rng.normal(80, 20, n)),
+        "close":  close,
+        "volume": np.abs(rng.normal(1000, 100, n)),
+    }, index=pd.date_range(end=end, periods=n, freq="1h"))
+    df['EMA_200'] = calculate_ema(df['close'], 200)
+    df['RSI_14']  = calculate_rsi(df['close'])
+    df['MACD'], df['MACD_Signal'], df['MACD_Histogram'] = calculate_macd(df['close'])
+    df['BB_Upper'], df['BB_Middle'], df['BB_Lower'] = calculate_bollinger_bands(df['close'])
+    df['ATR_14']  = calculate_atr(df)
+    df['OBV']     = calculate_obv(df)
+    df['StochRSI_K'], df['StochRSI_D'] = calculate_stoch_rsi(df['close'])
+    df['VWAP_24'] = calculate_vwap(df, period=24)
+    df['MFI_14']  = compute_mfi(df)
+    df['CMF_20']  = compute_cmf(df)
+    return df
+
+def _engine_threshold(mode, override):
+    from signals.engine import generate_signals
+    sig = generate_signals(_synthetic_df(), htf=None, market_structure=None,
+                           sr=None, mode=mode, threshold_override=override)
+    assert sig["_regime"]["threshold_bump"] < 0, \
+        "fixture must produce a negative regime bump for the floor to be exercised"
+    return sig["_threshold"]
+
+def test_futures_threshold_floor_is_futures_minimum():
+    """Session + regime bumps must not push futures below THRESHOLD_MIN.
+
+    Was: floor hard-coded to 3.0 (the SPOT minimum), so futures gated at 3.5.
+    """
+    from config import THRESHOLD_MIN
+    thr = _engine_threshold("futures", THRESHOLD_MIN)
+    assert thr >= THRESHOLD_MIN, f"futures threshold {thr} below THRESHOLD_MIN {THRESHOLD_MIN}"
+
+def test_spot_threshold_floor_is_spot_minimum():
+    """Spot keeps its own floor — this path must not regress with the futures fix."""
+    from config import SPOT_THRESHOLD_MIN
+    thr = _engine_threshold("spot", SPOT_THRESHOLD_MIN)
+    assert thr >= SPOT_THRESHOLD_MIN, f"spot threshold {thr} below SPOT_THRESHOLD_MIN"
+
+def test_explicit_sub_minimum_override_is_respected():
+    """An env override already below the mode minimum is a deliberate choice —
+    the floor guards the bumps, not the operator's chosen base."""
+    override = 3.5   # below THRESHOLD_MIN (4.0)
+    thr = _engine_threshold("futures", override)
+    assert thr == override, f"override {override} was clamped up to {thr}"
+
+def test_news_overlay_preserves_htf_confidence_downgrade():
+    """STRONG requires 1D HTF agreement (audit #9). The post-news recalculation
+    must not promote a downgraded signal back to STRONG — that would unlock spot
+    pyramiding (min_confidence = STRONG) on an unconfirmed setup."""
+    import signals.engine as eng
+    orig = eng.check_upcoming_macro_events
+    eng.check_upcoming_macro_events = lambda: (False, None)   # no macro window
+    try:
+        news = {"fear_greed": {"value": 50, "label": "Neutral"},
+                "sentiment": "NEUTRAL", "confidence": 0}
+        def _sig():   # strength 7.0 vs threshold 4.3 → STRONG zone on score alone
+            return {"type": "BUY", "strength": 7.0, "_threshold": 4.3,
+                    "reasons": [], "confidence": "NORMAL"}
+        agrees = eng.integrate_news_with_signal(_sig(), news, {"1d": "BULLISH"})
+        assert agrees["confidence"] == "STRONG", "1D agreement should stay STRONG"
+        unknown = eng.integrate_news_with_signal(_sig(), news, {"1d": "NEUTRAL"})
+        assert unknown["confidence"] == "NORMAL", \
+            f"1D not confirming must downgrade to NORMAL, got {unknown['confidence']}"
+    finally:
+        eng.check_upcoming_macro_events = orig
+
+def test_pipelines_keep_effective_threshold():
+    """spot.py / futures.py must not overwrite the engine's effective _threshold
+    with the raw adaptive base — sizing and re-entry checks read this key."""
+    for path in ("signals/spot.py", "signals/futures.py"):
+        with open(path) as f:
+            src = f.read()
+        assert "signal['_threshold'] = threshold" not in src, \
+            f"{path} overwrites the effective threshold set by generate_signals()"
+
+
 if __name__ == "__main__":
     print("\n══ Pipeline Dummy-Data Tests ══\n")
 
@@ -710,6 +806,13 @@ if __name__ == "__main__":
     run("no signals → 0 delivered",               test_send_signal_alert_returns_zero_when_no_signals)
     run("delivered count is honest",              test_send_signal_alert_counts_delivered)
     run("no credentials → 0, not None",           test_combined_telegram_returns_zero_without_credentials)
+
+    print("\n── 10. Threshold & confidence consistency ──")
+    run("futures floor = THRESHOLD_MIN",          test_futures_threshold_floor_is_futures_minimum)
+    run("spot floor = SPOT_THRESHOLD_MIN",        test_spot_threshold_floor_is_spot_minimum)
+    run("sub-minimum override respected",         test_explicit_sub_minimum_override_is_respected)
+    run("news overlay keeps HTF downgrade",       test_news_overlay_preserves_htf_confidence_downgrade)
+    run("pipelines keep effective _threshold",    test_pipelines_keep_effective_threshold)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

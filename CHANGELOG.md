@@ -4,6 +4,54 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-29 — fix: threshold propagation, HTF confidence, per-mode floor
+
+### Fixed
+- **The threshold the engine gated on was thrown away.** `generate_signals()`
+  stores the *effective* threshold in `signal['_threshold']` — adaptive base
+  plus the regime bump and the session bump. `signals/spot.py` and
+  `signals/futures.py` then overwrote that key with the raw adaptive base
+  immediately after the news overlay, so every downstream consumer measured
+  strength against a number the engine never used:
+  `sizing._compute_confidence()` (factor 1 is `strength / _threshold`, and it
+  drives leverage), `run_bot._check_reentry_quality()` (confidence-tier
+  comparison), the Telegram/terminal "≥ thr" line, and the `threshold` column
+  of `cycle_log`. In a RANGING regime during the Asia session the two values
+  differ by up to 1.0. Both pipelines now leave the engine's value alone.
+  Note for analysis: `cycle_log.threshold` (and therefore `analyze.py`'s
+  ADAPTIVE THRESHOLD DRIFT section) now records the effective threshold, so
+  drift includes session/regime bumps, not just adaptive movement.
+- **The news overlay silently promoted signals back to STRONG.**
+  `get_signal_confidence()` takes `htf` / `signal_type` so that STRONG requires
+  the 1D timeframe to agree with the direction (audit #9 — STRONG scored 12.5%
+  WR vs NORMAL 40% because top-of-move signals score highest).
+  `integrate_news_with_signal()` recalculates confidence after adjusting
+  strength but called it with two arguments, dropping the HTF rule and
+  re-upgrading a signal the engine had deliberately downgraded to NORMAL. The
+  counter-trend block already rejects directions that oppose a non-NEUTRAL 1D,
+  so the live exposure was the HTF-fetch-failure path (`1d = NEUTRAL`) — where
+  a promoted STRONG unlocks spot pyramiding, whose `min_confidence` is STRONG.
+  `integrate_news_with_signal(signal, news_data, htf=None)` now accepts the HTF
+  dict and forwards it; both pipelines pass it.
+- **Futures could gate below `THRESHOLD_MIN`.** The floor applied after the
+  regime and session bumps was hard-coded to `3.0` — the *spot* minimum —
+  for both modes, so futures in a TRENDING regime during the US session gated
+  at 3.5 (4.0 − 0.25 − 0.25) despite `THRESHOLD_MIN = 4.0`. The floor is now
+  per-mode (`SPOT_THRESHOLD_MIN` / `THRESHOLD_MIN`). An explicit env override
+  that already sits below its mode minimum is still honoured — the floor
+  guards the bumps, not the operator's chosen base. No effect on the default
+  config (5.2 − 0.5 = 4.7, already above the floor); it only bites when the
+  adaptive threshold has walked down toward the minimum.
+
+### Tests
+- `test_pipelines.py` section 10 — 5 regression tests: per-mode floors for both
+  modes, sub-minimum override respected, HTF downgrade surviving the news
+  overlay, and a source guard against re-adding the `_threshold` overwrite.
+  Verified to fail against the pre-fix sources (4/5; the spot-floor test passes
+  in both, guarding the path that was already correct). Suite: 44/44.
+
+---
+
 ## 2026-08-29 — fix: Phase 2 and Phase 4 error reporting
 
 ### Fixed

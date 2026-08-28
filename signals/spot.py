@@ -82,7 +82,7 @@ def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
         if include_news:
             logger.info("Computing spot combined sentiment...")
             news_data = get_combined_sentiment(fng=fng)
-            signal = integrate_news_with_signal(signal, news_data)
+            signal = integrate_news_with_signal(signal, news_data, htf)
 
         if display:
             display_analysis(df, signal, news_data, htf, market_structure, timeframe='4H', mode='spot')
@@ -90,7 +90,11 @@ def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
         update_spot_threshold_state(signal['type'])
 
         signal['mode'] = 'spot'
-        signal['_threshold'] = threshold
+        # `_threshold` is left as generate_signals() set it: the EFFECTIVE
+        # threshold, session + regime bumps included — the bar this signal
+        # actually had to clear. Overwriting it with the raw adaptive base made
+        # sizing (_compute_confidence) and run_bot._check_reentry_quality
+        # measure strength against a different number than the engine gated on.
         log_cycle(signal, df, market_structure, htf, 'spot')
         from signals.indicators import compute_atr_percentile
         signal['_atr_percentile'] = round(compute_atr_percentile(df), 3)
