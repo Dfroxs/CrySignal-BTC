@@ -509,13 +509,37 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             sell_conditions += 0.5
             signal['reasons'].append(f"✓ OI↓ ({oi_change:+.1f}%) + Price↓ — liquidation cascade")
 
+    # 20 — MFI (Money Flow Index) — volume-weighted RSI, detects institutional flow.
+    # Scored here, ahead of the diminishing-returns block, because an MFI extreme
+    # reads the SAME price extreme as RSI / BB / StochRSI: left below the block it
+    # stacked a full +1.5 on top of conditions that had already been discounted.
+    mfi = current.get('MFI_14')
+    _mfi_os = False
+    _mfi_ob = False
+    if mfi is not None and not pd.isna(mfi):
+        if mfi <= 20:
+            buy_conditions += 1.5
+            _mfi_os = True
+            signal['reasons'].append(f"✓ MFI OVERSOLD ({mfi:.0f}) — strong buying pressure")
+        elif mfi <= 40:
+            buy_conditions += 0.75
+            signal['reasons'].append(f"✓ MFI in buy zone ({mfi:.0f}) — accumulation building")
+        elif mfi >= 80:
+            sell_conditions += 1.5
+            _mfi_ob = True
+            signal['reasons'].append(f"✗ MFI OVERBOUGHT ({mfi:.0f}) — strong selling pressure")
+        elif mfi >= 60:
+            sell_conditions += 0.75
+            signal['reasons'].append(f"✗ MFI in sell zone ({mfi:.0f}) — distribution detected")
+
     # ── Diminishing returns on correlated oversold/overbought conditions ──
-    # RSI OS/OB, BB lower/upper, StochRSI OS/OB crossover all fire from the
-    # same price extreme.  First condition = full weight, second = 0.5×, third = 0.25×.
-    buy_extremes = sum([_rsi_os, _bb_lower, _stoch_os_cross])
-    sell_extremes = sum([_rsi_ob, _bb_upper, _stoch_ob_cross])
+    # RSI OS/OB, BB lower/upper, StochRSI OS/OB crossover and MFI OS/OB all fire
+    # from the same price extreme.  First condition = full weight, each further
+    # one is discounted.
+    buy_extremes = sum([_rsi_os, _bb_lower, _stoch_os_cross, _mfi_os])
+    sell_extremes = sum([_rsi_ob, _bb_upper, _stoch_ob_cross, _mfi_ob])
     if buy_extremes >= 2:
-        penalty = (buy_extremes - 1) * 0.75  # 2→-0.75, 3→-1.5
+        penalty = (buy_extremes - 1) * 0.75  # 2→-0.75, 3→-1.5, 4→-2.25
         buy_conditions -= penalty
         signal['reasons'].append(f"⚠️  {buy_extremes} oversold conditions clustered — diminishing returns applied (-{penalty:.2f})")
     if sell_extremes >= 2:
@@ -556,22 +580,6 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         w = _cs_weights.get(bearish_cs, 0.5)
         sell_conditions += w
         signal['reasons'].append(f"✗ {bearish_cs.replace('_', ' ')} pattern — bearish reversal")
-
-    # 20 — MFI (Money Flow Index) — volume-weighted RSI, detects institutional flow
-    mfi = current.get('MFI_14')
-    if mfi is not None and not pd.isna(mfi):
-        if mfi <= 20:
-            buy_conditions += 1.5
-            signal['reasons'].append(f"✓ MFI OVERSOLD ({mfi:.0f}) — strong buying pressure")
-        elif mfi <= 40:
-            buy_conditions += 0.75
-            signal['reasons'].append(f"✓ MFI in buy zone ({mfi:.0f}) — accumulation building")
-        elif mfi >= 80:
-            sell_conditions += 1.5
-            signal['reasons'].append(f"✗ MFI OVERBOUGHT ({mfi:.0f}) — strong selling pressure")
-        elif mfi >= 60:
-            sell_conditions += 0.75
-            signal['reasons'].append(f"✗ MFI in sell zone ({mfi:.0f}) — distribution detected")
 
     # 21 — CMF (Chaikin Money Flow) — accumulation/distribution pressure
     cmf = current.get('CMF_20')

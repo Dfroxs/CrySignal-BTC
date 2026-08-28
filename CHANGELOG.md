@@ -4,6 +4,63 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-29 — fix: dead config, scoring double-count, stale spot cache, gate analytics
+
+### Fixed
+- **`.env` was switching the adaptive threshold off.** `.env.example` shipped
+  `SIGNAL_THRESHOLD=5.0` / `SPOT_THRESHOLD=4.0` uncommented, and
+  `_get_adaptive_threshold()` returns any env value immediately — so every
+  deployment that copied the example ran with a pinned threshold and no
+  frequency or win-rate control at all, at a *looser* bar than the tuned
+  defaults (5.2 / 4.3). Both lines are now commented out in `.env.example`
+  (with the consequence spelled out) and in this repo's `.env`. Also dropped
+  `DISCORD_WEBHOOK_URL` from the example — Discord support was deleted in
+  2026-05 and nothing reads it.
+- **MFI double-counted the price extreme.** The diminishing-returns block
+  discounts RSI OS/OB, BB lower/upper and the StochRSI crossover because they
+  all fire off the same extreme, but MFI ≤20 / ≥80 (±1.5) sat outside the
+  cluster and stacked on top. Condition 20 now runs ahead of the block and
+  contributes `_mfi_os` / `_mfi_ob`; the penalty scales to 4 members
+  (2→−0.75, 3→−1.5, 4→−2.25). Measured on a synthetic flush with RSI 6.2 and
+  MFI 0.0: spot buy score 3.60 → 2.85. **This changes scoring** — fewer and
+  later entries at extremes — and wants re-validation on fresh data.
+- **Spot entries could open at a 3h-old price.** `analyze_spot_signal()` caches
+  its result per 4H candle, so with `--loop 60` three of every four cycles
+  replayed a stale `entry_price` and stale gate inputs into Phase 3. Cached
+  results are now flagged `_cached` and Phase 3 records a `stale_cache` block
+  instead of opening; display, notifications and exit management are unaffected
+  (exits already run off the live price fetched in `run_cycle()`).
+
+### Changed
+- **`analyze.py` entry-gate analysis reads the database.** `section_skip_gates()`
+  regex-matched `spotsignal.log` against a hand-maintained pattern table, while
+  `run_bot._block()` has been writing structured rows to `signal_blocks` (indexed
+  on `gate` and `(mode, gate)`) that nothing queried. It now groups that table by
+  gate, respects `--mode`, shows a representative reason for each gate above 10%,
+  and derives entry conversion from `paper_positions`. New gates appear
+  automatically instead of falling into "other:".
+- **`SIGNAL_MAX_SCORE` 25.75 → 26.50, `SPOT_MAX_SCORE` 21.75 → 22.50.** These are
+  display denominators only (the "score X / max" line). Both had drifted from the
+  weights actually in `generate_signals()`. `config.py` now carries the per-block
+  derivation table so the next condition change can be checked against it.
+
+### Removed
+- **`RISK_CONFIG["max_positions"]` and `FUTURES_CONFIG["max_positions"]`** — never
+  read by any module, and both descriptions were wrong. Spot is capped by
+  `pyramid.max_entries` (3); futures holds at most **one** position at a time,
+  because `run_bot.py` closes an opposite position before opening (close-and-flip)
+  and skips a same-direction one. `CLAUDE.md` corrected — it claimed 2 futures
+  positions (1 LONG + 1 SHORT), a state the code cannot reach.
+- **Unused `SPOT_THRESHOLD` / `SPOT_MAX_SCORE` import** in `signals/spot.py`.
+
+### Tests
+- `test_pipelines.py` section 11 — MFI joining the correlated-extreme cluster,
+  the stale-cache flag on a replayed spot analysis (and that the stored copy
+  stays unflagged), and a guard that Phase 3 consults the flag. Verified to fail
+  against the pre-fix sources. Suite: 47/47.
+
+---
+
 ## 2026-08-29 — fix: threshold propagation, HTF confidence, per-mode floor
 
 ### Fixed

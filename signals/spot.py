@@ -4,7 +4,6 @@ import copy
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
-from config import SPOT_THRESHOLD, SPOT_MAX_SCORE
 from trading.history import log_cycle, log_signal
 from signals.ohlcv import fetch_ohlcv_df
 from signals.htf import get_spot_htf_trend
@@ -39,7 +38,13 @@ def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
 
     if _spot_cache["timestamp"] == candle_ts and _spot_cache["signal"] is not None:
         logger.info("[SPOT] Cache hit — reusing 4H candle %d result", candle_ts)
-        return copy.deepcopy(_spot_cache["signal"])
+        cached = copy.deepcopy(_spot_cache["signal"])
+        # Flagged so Phase 3 never OPENS from a replayed analysis: on the 2nd–4th
+        # cycle of a 4H candle (--loop 60) entry_price and every gate input are up
+        # to 3h old. Display, notifications and exit management still use it —
+        # exits run off the live price fetched in run_cycle(), not off this dict.
+        cached['_cached'] = True
+        return cached
 
     logger.info("[SPOT] Analyzing %s (4H)...", symbol)
     try:
@@ -121,6 +126,7 @@ def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
             'mfi': last.get('MFI_14'),
             'cmf': last.get('CMF_20'),
         }
+        signal['_cached'] = False
         _spot_cache["timestamp"] = candle_ts
         _spot_cache["signal"] = signal
         return signal

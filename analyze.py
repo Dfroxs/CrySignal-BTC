@@ -264,74 +264,43 @@ def section_conditions(conn, mode_filter):
 
 # ── Section 5: Skip Gate Analysis ────────────────────────────────────────────
 
-def section_skip_gates(log_path):
-    _h("ENTRY GATE ANALYSIS (from log)")
+def section_skip_gates(conn, mode_filter):
+    _h("ENTRY GATE ANALYSIS")
 
-    if not Path(log_path).exists():
-        _info(f"Log not found: {log_path}")
+    where, params = "", []
+    if mode_filter:
+        where, params = " WHERE mode = ?", [mode_filter]
+
+    rows = _rows(conn, f"SELECT mode, gate, signal_type, reason FROM signal_blocks{where}", params)
+    if not rows:
+        _info("signal_blocks is empty — run_bot.py writes one row per gate rejection")
         return
 
-    with open(log_path) as f:
-        lines = f.readlines()
+    counts = Counter(r["gate"] for r in rows)
+    total  = sum(counts.values())
 
-    gate_patterns = {
-        "re-entry quality (worse price)":    r"worse than last.*no confidence",
-        "fakeout / wick rejection":           r"fakeout|rejection wick",
-        "psychology level SL risk":           r"psychology.*SL|SL.*psychology",
-        "S/R entry proximity":                r"S/R proximity|near.*resistance|near.*support",
-        "bearish regime":                     r"bearish.*regime|bearish trend",
-        "trend confluence < 2/3":             r"confluence.*2/3|< 2/3",
-        "breakout chase":                     r"breakout chase",
-        "confidence floor (first entry)":     r"requires.*confidence.*first entry",
-        "already have open position":         r"already have open",
-        "pyramid: confidence < STRONG":       r"pyramid requires.*STRONG",
-        "pyramid: max entries reached":       r"pyramid max.*reached",
-        "pyramid: distance too small":        r"pyramid distance.*ATR",
-        "aggregate risk cap":                 r"aggregate risk",
-        "cache stale":                        r"cache stale",
-    }
+    by_mode = Counter(r["mode"] for r in rows)
+    split   = "  ".join(f"{m} {n}" for m, n in sorted(by_mode.items()))
+    print(f"  Gate blocks : {total}   {DIM}({split}){RST}")
 
-    counts = Counter()
-    for line in lines:
-        lower = line.lower()
-        if 'skipping' not in lower and 'blocked' not in lower and 'skipped' not in lower:
-            continue
-        matched = False
-        for label, pattern in gate_patterns.items():
-            if re.search(pattern, line, re.IGNORECASE):
-                counts[label] += 1
-                matched = True
-                break
-        if not matched:
-            # Extract concise reason
-            parts = line.split(' — ')
-            msg = parts[-1].strip()[:55] if len(parts) > 1 else line.strip()[-55:]
-            counts[f"other: {msg}"] += 1
+    # One representative reason per gate — the counters alone lose the detail
+    # that makes a gate actionable ("distance 0.12% (< 0.5× ATR)").
+    sample = {}
+    for r in rows:
+        sample.setdefault(r["gate"], r["reason"] or "")
 
-    if not counts:
-        _info("No skip events found in log")
-        return
-
-    # Exclude noise (cache stale is infrastructure, not a trading gate)
-    trading_skips = {k: v for k, v in counts.items() if 'cache stale' not in k}
-    cache_skips   = counts.get('cache stale', 0)
-
-    total_skips = sum(trading_skips.values())
-    print(f"  Trading gate skips : {total_skips}")
-    if cache_skips:
-        print(f"  Cache stale skips  : {cache_skips}  {DIM}(infrastructure, excluded from %)${RST}")
-
-    for label, n in Counter(trading_skips).most_common():
-        pct = n / total_skips * 100 if total_skips else 0
+    for gate, n in counts.most_common():
+        pct = n / total * 100
         bar = '█' * min(int(pct / 3), 30)
         col = Y if pct > 30 else DIM
-        print(f"  {n:3d}  {_c(bar, col)}  {label}  ({pct:.0f}%)")
+        print(f"  {n:3d}  {_c(bar, col)}  {gate}  ({pct:.0f}%)")
+        if pct > 10:
+            print(f"       {DIM}{sample[gate][:70]}{RST}")
 
-    # Entries actually opened
-    opened = sum(1 for l in lines if re.search(r'Paper (BUY|SELL).+opened', l))
+    opened = _rows(conn, f"SELECT COUNT(*) AS n FROM paper_positions{where}", params)[0]["n"]
     print(f"\n  Positions opened : {opened}")
-    if total_skips + opened > 0:
-        hit_rate = opened / (total_skips + opened) * 100
+    if total + opened > 0:
+        hit_rate = opened / (total + opened) * 100
         col = G if hit_rate > 30 else (Y if hit_rate > 10 else R)
         print(f"  Entry conversion : {_c(f'{hit_rate:.0f}%', col)}")
 
@@ -581,7 +550,7 @@ def main():
     if not args.section or args.section == "conditions":
         section_conditions(conn, args.mode)
     if not args.section or args.section == "gates":
-        section_skip_gates(LOG_PATH)
+        section_skip_gates(conn, args.mode)
     if not args.section or args.section == "context":
         section_market_context(conn, args.mode)
     if not args.section or args.section == "threshold":

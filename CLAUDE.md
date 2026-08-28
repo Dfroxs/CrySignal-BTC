@@ -47,7 +47,8 @@ After scoring, `integrate_news_with_signal()` applies the macro hold gate (HIGH-
   - P&L blended: `partial_pnl * 0.5 + remaining_pnl * 0.5`
   - MACRO_CLOSE outcome when all positions force-closed ahead of HIGH-impact event
 - **Spot pyramiding:** on STRONG BUY with an open BUY position, opens a pyramid entry (max 3 total). Each level uses tighter SL (×0.8) and smaller size (×0.5), with 11 safety gates.
-- Max positions: 3 spot (1 initial + 2 pyramid), 2 futures (1 LONG + 1 SHORT).
+- Max positions: 3 spot (1 initial + 2 pyramid). Futures holds **one** position
+  at a time — an opposite signal closes and flips, a same-direction one is skipped.
 
 **Phase 4 — `notifier/` package**
 - `notifier/common.py` — shared helpers + `send_signal_alert()` dispatcher

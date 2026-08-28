@@ -461,7 +461,13 @@ def run_cycle():
 
     try:
         # Spot positions — BUY-only (no short selling on spot)
-        if spot_signal and spot_signal["type"] != "HOLD":
+        if spot_signal and spot_signal["type"] != "HOLD" and spot_signal.get("_cached"):
+            # Replayed 4H analysis — see signals/spot.py. Acting on it would open
+            # at a price up to 3h old, against gates evaluated on that old data.
+            _block(phase3_actions, "spot", spot_signal, "stale_cache",
+                   f"Spot {spot_signal['type']} from cached 4H analysis — stale entry data, not acted on")
+
+        elif spot_signal and spot_signal["type"] != "HOLD":
             pyramid_cfg = RISK_CONFIG.get("pyramid", {})
             existing_count = get_open_position_count_by_direction(spot_signal["type"], "spot")
 

@@ -653,26 +653,24 @@ def test_combined_telegram_returns_zero_without_credentials():
 
 # ── 10. Threshold & confidence consistency ───────────────────────────────────
 
-def _synthetic_df(n=320, end="2026-01-14 14:00"):
-    """OHLCV frame carrying every indicator column generate_signals() needs.
-
-    Seeded uptrend → deterministic TRENDING regime (bump −0.25); the index ends
-    at 14:00 UTC so the session bump is the US −0.25. No network, no DB.
-    """
+def _frame(close, end="2026-01-14 14:00"):
+    """Wrap a close series into an OHLCV frame carrying every indicator column
+    generate_signals() needs. The index ends at 14:00 UTC so the session bump is
+    the US −0.25. No network, no DB."""
     import numpy as np
     import pandas as pd
     from signals.indicators import (calculate_atr, calculate_bollinger_bands,
                                     calculate_ema, calculate_macd, calculate_obv,
                                     calculate_rsi, calculate_stoch_rsi,
                                     calculate_vwap, compute_cmf, compute_mfi)
-    rng   = np.random.default_rng(7)
-    close = 80_000 + np.arange(n) * 25 + rng.normal(0, 60, n)
+    rng = np.random.default_rng(11)
+    n   = len(close)
     df = pd.DataFrame({
-        "open":   close - rng.normal(0, 20, n),
-        "high":   close + np.abs(rng.normal(80, 20, n)),
-        "low":    close - np.abs(rng.normal(80, 20, n)),
+        "open":   close + rng.normal(0, 15, n),
+        "high":   close + np.abs(rng.normal(70, 18, n)),
+        "low":    close - np.abs(rng.normal(70, 18, n)),
         "close":  close,
-        "volume": np.abs(rng.normal(1000, 100, n)),
+        "volume": np.abs(rng.normal(1000, 90, n)),
     }, index=pd.date_range(end=end, periods=n, freq="1h"))
     df['EMA_200'] = calculate_ema(df['close'], 200)
     df['RSI_14']  = calculate_rsi(df['close'])
@@ -685,6 +683,22 @@ def _synthetic_df(n=320, end="2026-01-14 14:00"):
     df['MFI_14']  = compute_mfi(df)
     df['CMF_20']  = compute_cmf(df)
     return df
+
+def _synthetic_df(n=320):
+    """Seeded uptrend → deterministic TRENDING regime (bump −0.25)."""
+    import numpy as np
+    rng = np.random.default_rng(7)
+    return _frame(80_000 + np.arange(n) * 25 + rng.normal(0, 60, n))
+
+def _selloff_df(n=320, drop=14):
+    """Uptrend ending in a sharp flush → RSI and MFI both at an oversold extreme
+    while BB-lower and the StochRSI crossover stay quiet, so the correlated-extreme
+    cluster holds exactly two members."""
+    import numpy as np
+    rng   = np.random.default_rng(3)
+    close = 80_000 + np.arange(n) * 20 + rng.normal(0, 50, n)
+    close[-drop:] = close[-drop - 1] - np.cumsum(np.abs(rng.normal(320, 40, drop)))
+    return _frame(close)
 
 def _engine_threshold(mode, override):
     from signals.engine import generate_signals
@@ -745,6 +759,46 @@ def test_pipelines_keep_effective_threshold():
             src = f.read()
         assert "signal['_threshold'] = threshold" not in src, \
             f"{path} overwrites the effective threshold set by generate_signals()"
+
+
+# ── 11. Correlated-extreme cluster & spot cache hygiene ──────────────────────
+
+def test_mfi_extreme_counts_in_correlated_cluster():
+    """MFI ≤20 reads the same price extreme as RSI ≤30 — it must be discounted by
+    the diminishing-returns block, not stack a full +1.5 on top of it."""
+    from signals.engine import generate_signals
+    df  = _selloff_df()
+    last = df.iloc[-1]
+    assert last['RSI_14'] <= 30 and last['MFI_14'] <= 20, "fixture must hit both extremes"
+    assert last['close'] > last['BB_Lower'], "fixture must leave BB out of the cluster"
+
+    sig = generate_signals(df, htf=None, market_structure=None, sr=None,
+                           mode="spot", threshold_override=4.3)
+    clustered = [r for r in sig['reasons'] if 'conditions clustered' in r]
+    assert clustered, "RSI + MFI oversold must register as a cluster"
+    assert "-0.75" in clustered[0], f"expected a 2-member penalty, got: {clustered[0]}"
+
+def test_spot_cache_hit_is_flagged_stale():
+    """A replayed 4H analysis must be marked so Phase 3 refuses to open on it,
+    and the stored copy must stay unflagged for the next replay."""
+    import time as _time
+    import signals.spot as sp
+    saved = dict(sp._spot_cache)
+    try:
+        sp._spot_cache["timestamp"] = int(_time.time() // (4 * 3600))
+        sp._spot_cache["signal"] = {"type": "BUY", "entry_price": 80_000.0, "_cached": False}
+        out = sp.analyze_spot_signal()          # cache hit — returns before any I/O
+        assert out["_cached"] is True, "cached signal must be flagged stale"
+        assert sp._spot_cache["signal"]["_cached"] is False, "stored copy must stay unflagged"
+    finally:
+        sp._spot_cache.update(saved)
+
+def test_run_bot_refuses_entry_on_cached_spot_signal():
+    """Phase 3 must consult the flag and record the skip as a gate block."""
+    with open("run_bot.py") as f:
+        src = f.read()
+    assert 'spot_signal.get("_cached")' in src, "run_bot.py ignores the stale-cache flag"
+    assert '"stale_cache"' in src, "the skip must be logged to signal_blocks"
 
 
 if __name__ == "__main__":
@@ -813,6 +867,11 @@ if __name__ == "__main__":
     run("sub-minimum override respected",         test_explicit_sub_minimum_override_is_respected)
     run("news overlay keeps HTF downgrade",       test_news_overlay_preserves_htf_confidence_downgrade)
     run("pipelines keep effective _threshold",    test_pipelines_keep_effective_threshold)
+
+    print("\n── 11. Correlated extremes & spot cache ──")
+    run("MFI extreme joins the cluster",          test_mfi_extreme_counts_in_correlated_cluster)
+    run("cached spot signal flagged stale",       test_spot_cache_hit_is_flagged_stale)
+    run("run_bot refuses cached spot entry",      test_run_bot_refuses_entry_on_cached_spot_signal)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

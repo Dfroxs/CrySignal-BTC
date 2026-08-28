@@ -42,7 +42,8 @@ RISK_CONFIG = {
     "max_position_hours":      72,   # force-close futures position if open longer than this
     "max_position_hours_spot": 72,   # spot 4H: 72h = 18 candles; enough room for swing to develop
     "vol_expansion_exit_mult": 2.0,  # close if current ATR > entry ATR × this (root cause was wrong-mode ATR, now per-mode)
-    "max_positions":         2,     # max 1 BUY + 1 SELL (one per direction)
+    # No max_positions key: concurrent spot positions are capped by
+    # pyramid.max_entries below. The old setting was never read by any module.
     "pyramid": {
         "enabled":                 True,       # allow adding to existing position on STRONG signals
         "max_entries":             3,          # 1 initial + 2 pyramid entries max
@@ -68,7 +69,10 @@ FUTURES_CONFIG = {
     "futures_balance":       float(os.getenv("FUTURES_BALANCE", 500)),
     "risk_per_trade":        0.03,
     "max_margin_pct":        0.20,
-    "max_positions":         2,     # max 1 LONG + 1 SHORT (one per direction)
+    # No max_positions key: futures holds at most ONE position at a time —
+    # run_bot.py closes an opposite position before opening (close-and-flip)
+    # and skips a same-direction one (has_open_position_same_direction).
+    # The old setting was never read by any module.
     "entry": {
         "min_confidence":         "NORMAL",   # minimum confidence to open first position
         "reentry_price_check":    True,       # TA-driven re-entry quality gate
@@ -105,15 +109,53 @@ SPOT_THRESHOLD_STATE_FILE  = os.path.join(DATA_DIR, "spot_threshold_state.json")
 # Signal thresholds
 # ---------------------------------------------------------------------------
 
+# SIGNAL_MAX_SCORE / SPOT_MAX_SCORE are display denominators only ("score X / max"
+# in the terminal and Telegram cards) — nothing gates on them. Each is the
+# un-penalised BUY-side ceiling: the sum of the best case of every independent
+# scoring block in signals/engine.py. A realised score can sit below it after the
+# correlated-extreme penalty (−2.25 max) or the HTF conflict penalty (−1.0).
+# Keep this table in sync when adding or reweighting a condition:
+#
+#   block                        spot   futures
+#   EMA200 trend + slope         1.00      1.00
+#   RSI                          1.50      1.50
+#   MACD crossover (ADX ≥ 20)    1.50      1.50
+#   Volume confirmation          1.00      1.00
+#   Effort vs Result (Wyckoff)   0.75      0.75
+#   Bollinger Bands              1.00      1.00
+#   HTF alignment (capped)       2.00      2.00
+#   OBV slope                    0.75      0.75
+#   Funding bias                 0.25      0.50
+#   Long/Short ratio             0.25      0.75
+#   DXY                          0.50      0.50
+#   S&P 500                      0.50      1.00
+#   Stablecoin supply            0.75      0.75
+#   BTC dominance                0.75      0.75
+#   Open interest                   —      0.50
+#   Futures basis                   —      0.50
+#   OI × price direction            —      0.75
+#   Stochastic RSI               1.25      1.25
+#   Support / resistance         0.75      0.75
+#   VWAP crossover               0.75      0.75
+#   ADX + DI crossover           1.25      1.25
+#   Gold + VIX                   0.50      0.50
+#   RSI divergence               2.00      2.00
+#   Candlestick pattern          1.00      1.00
+#   MFI                          1.50      1.50
+#   CMF                          1.00      1.00
+#   Taker buy/sell ratio            —      1.00
+#   ──────────────────────────────────────────
+#   total                       22.50     26.50
+
 # Futures signal thresholds
 SIGNAL_THRESHOLD = float(os.getenv("SIGNAL_THRESHOLD", 5.2))
-SIGNAL_MAX_SCORE = 25.75  # +1.5 MFI +1.0 CMF +1.0 taker ratio
+SIGNAL_MAX_SCORE = 26.50
 THRESHOLD_MIN    = 4.0
 THRESHOLD_MAX    = 8.0
 
 # Spot signal thresholds (4H, 15 conditions — no funding/L/S/OI/basis)
 SPOT_THRESHOLD    = float(os.getenv("SPOT_THRESHOLD", 4.3))
-SPOT_MAX_SCORE    = 21.75  # +1.5 MFI +1.0 CMF
+SPOT_MAX_SCORE    = 22.50
 SPOT_THRESHOLD_MIN = 3.0
 SPOT_THRESHOLD_MAX = 7.0
 
