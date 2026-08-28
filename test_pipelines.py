@@ -486,6 +486,98 @@ def test_tp2_no_cap_when_resistance_below_entry():
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
+# ── 8. Exchange mirror fallback ──────────────────────────────────────────────
+
+def test_mirror_urls_configured():
+    """Mirror client points at the vision host and loads spot markets only."""
+    import ccxt  # noqa: F401
+    from signals.market_data import _BinanceWithMirror, _MIRROR_HOST
+    ex = _BinanceWithMirror()
+    assert _MIRROR_HOST in ex._mirror.urls["api"]["public"], ex._mirror.urls["api"]["public"]
+    assert "api.binance.com" in ex._primary.urls["api"]["public"], "primary must stay on the real host"
+    assert ex._mirror.options.get("fetchMarkets") == ["spot"], ex._mirror.options.get("fetchMarkets")
+
+
+def test_mirror_fallback_on_network_error():
+    """A NetworkError on the primary retries the same call on the mirror."""
+    import ccxt
+    from signals.market_data import _BinanceWithMirror
+    ex = _BinanceWithMirror()
+    seen = []
+
+    def boom(*a, **k):
+        seen.append("primary")
+        raise ccxt.NetworkError("binance GET https://api.binance.com/api/v3/exchangeInfo")
+
+    def ok(*a, **k):
+        seen.append("mirror")
+        return [[1, 2, 3, 4, 5, 6]]
+
+    ex._primary.fetch_ohlcv = boom
+    ex._mirror.fetch_ohlcv = ok
+
+    out = ex.fetch_ohlcv("BTC/USDT", "1h", limit=1)
+    assert out == [[1, 2, 3, 4, 5, 6]], out
+    assert seen == ["primary", "mirror"], seen
+
+
+def test_mirror_fallback_is_sticky():
+    """Once tripped, later calls skip the primary instead of timing out again."""
+    import ccxt
+    from signals.market_data import _BinanceWithMirror
+    ex = _BinanceWithMirror()
+    seen = []
+
+    def boom(*a, **k):
+        seen.append("primary")
+        raise ccxt.NetworkError("blocked")
+
+    ex._primary.fetch_ohlcv = boom
+    ex._mirror.fetch_ohlcv = lambda *a, **k: (seen.append("mirror"), [[0]])[1]
+
+    ex.fetch_ohlcv("BTC/USDT", "1h")
+    seen.clear()
+    ex.fetch_ohlcv("BTC/USDT", "1h")
+    assert seen == ["mirror"], f"primary should not be retried while tripped: {seen}"
+
+
+def test_mirror_cooldown_reprobes_primary():
+    """After the cooldown window the primary is tried again."""
+    import time as _t
+    from signals.market_data import _BinanceWithMirror, _MIRROR_RETRY_AFTER_S
+    ex = _BinanceWithMirror()
+    seen = []
+    ex._primary.fetch_ohlcv = lambda *a, **k: (seen.append("primary"), [[1]])[1]
+    ex._mirror.fetch_ohlcv = lambda *a, **k: (seen.append("mirror"), [[2]])[1]
+
+    # pretend we tripped just past the cooldown
+    object.__setattr__(ex, "_mirror_since", _t.monotonic() - _MIRROR_RETRY_AFTER_S - 1)
+    ex.fetch_ohlcv("BTC/USDT", "1h")
+    assert seen == ["primary"], f"cooldown should release back to primary: {seen}"
+
+
+def test_futures_calls_never_use_mirror():
+    """The mirror has no futures endpoints — those must stay on the primary."""
+    import time as _t
+    from signals.market_data import _BinanceWithMirror
+    ex = _BinanceWithMirror()
+    ex._primary.fetch_open_interest = lambda *a, **k: "PRIMARY"
+    ex._mirror.fetch_open_interest = lambda *a, **k: "MIRROR"
+
+    object.__setattr__(ex, "_mirror_since", _t.monotonic())  # tripped
+    assert ex.fetch_open_interest("BTC/USDT") == "PRIMARY", "futures read leaked to the mirror"
+
+
+def test_setattr_reaches_both_clients():
+    """Config set on the proxy applies to whichever client ends up serving."""
+    from signals.market_data import _BinanceWithMirror
+    ex = _BinanceWithMirror()
+    ex.enableRateLimit = False
+    assert ex._primary.enableRateLimit is False
+    assert ex._mirror.enableRateLimit is False
+
+
+
 if __name__ == "__main__":
     print("\n══ Pipeline Dummy-Data Tests ══\n")
 
@@ -531,6 +623,14 @@ if __name__ == "__main__":
     run("SELL TP2 < TP1 even when support > TP1",      test_tp2_always_beyond_tp1_sell)
     run("TP2 capped at resistance when valid (>TP1)",  test_tp2_capped_when_resistance_beyond_tp1)
     run("resistance below entry does not affect TP2",  test_tp2_no_cap_when_resistance_below_entry)
+
+    print("\n── 8. Exchange mirror fallback ──")
+    run("mirror URLs + spot-only markets",        test_mirror_urls_configured)
+    run("NetworkError → retry on mirror",         test_mirror_fallback_on_network_error)
+    run("fallback is sticky",                     test_mirror_fallback_is_sticky)
+    run("cooldown re-probes primary",             test_mirror_cooldown_reprobes_primary)
+    run("futures reads never use mirror",         test_futures_calls_never_use_mirror)
+    run("setattr reaches both clients",           test_setattr_reaches_both_clients)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

@@ -4,6 +4,33 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-29 — feat: Binance public-data-mirror fallback
+
+### Added
+- **Mirror fallback for spot reads** (`signals/market_data.py`). The bare
+  `exchange = ccxt.binance()` had no fallback, and a full cycle lost Phase 2
+  *and* Phase 3 when api.binance.com answered 403 at the Cloudflare edge
+  (geo-restriction; confirmed a genuine Binance response via `cf-ray`, not a
+  local network issue). `_BinanceWithMirror` now retries the spot reads in
+  `_MIRRORABLE` (`fetch_ohlcv`, `fetch_ticker`, `fetch_tickers`,
+  `fetch_order_book`) against `data-api.binance.vision`, which serves the same
+  public spot endpoints unrestricted. Call sites are unchanged — the proxy
+  delegates by attribute.
+  - `fetchMarkets=['spot']` on the mirror client keeps `load_markets()` off
+    fapi.binance.com, which has no mirror and is blocked alongside the primary.
+  - Futures-only reads (funding, open interest, L/S ratio, basis) deliberately
+    stay on the primary and degrade to NEUTRAL as before — the mirror cannot
+    serve them, so routing them there would swap one failure for another.
+  - The fallback is sticky so a tripped cycle does not pay the timeout twice,
+    and expires after 30 min (`_MIRROR_RETRY_AFTER_S`) so a long `--loop` run
+    returns to the primary, and its futures data, once the block lifts.
+- **6 tests** (`test_pipelines.py` §8) — mirror URL/spot-only config,
+  NetworkError retry, stickiness, cooldown re-probe, futures reads never
+  leaking to the mirror, and `__setattr__` reaching both clients. Offline,
+  matching the suite's no-network contract. Suite 29 → 35.
+
+---
+
 ## 2026-08-29 — docs: merge PAPER_TRADE_PLAN into TODO_PLAN
 
 ### Changed
