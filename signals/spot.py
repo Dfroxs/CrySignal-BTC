@@ -121,6 +121,10 @@ def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
         _spot_cache["signal"] = signal
         return signal
 
-    except Exception as e:
-        logger.error("[SPOT] %s: %s", type(e).__name__, str(e)[:120])
-        return None
+    except Exception:
+        # Re-raise instead of returning None. run_bot.py already wraps this call
+        # and keeps the cycle alive, so swallowing here bought nothing and cost
+        # the real cause: the caller then subscripted None and reported
+        # "'NoneType' object is not subscriptable" instead of the NetworkError.
+        logger.exception("[SPOT] analysis failed")
+        raise

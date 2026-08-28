@@ -117,6 +117,10 @@ def analyze_futures_signal(symbol='BTC/USDT', include_news=True, display=False):
         }
         return signal
 
-    except Exception as e:
-        logger.error("[FUTURES] %s: %s", type(e).__name__, str(e)[:120])
-        return None
+    except Exception:
+        # Re-raise instead of returning None. run_bot.py already wraps this call
+        # and keeps the cycle alive, so swallowing here bought nothing and cost
+        # the real cause: the caller then subscripted None and reported
+        # "'NoneType' object is not subscriptable" instead of the NetworkError.
+        logger.exception("[FUTURES] analysis failed")
+        raise

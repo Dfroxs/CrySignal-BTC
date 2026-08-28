@@ -578,6 +578,79 @@ def test_setattr_reaches_both_clients():
 
 
 
+# ── 9. Phase 2 / Phase 4 error reporting ─────────────────────────────────────
+
+def test_pipeline_reraises_instead_of_returning_none():
+    """A failing pipeline must surface its real exception, not return None.
+
+    Returning None is what produced the misleading
+    "'NoneType' object is not subscriptable" in run_bot.py Phase 2.
+    """
+    import ccxt
+    import signals.spot as sp
+    import signals.futures as fu
+
+    for mod, name in ((sp, "analyze_spot_signal"), (fu, "analyze_futures_signal")):
+        original = mod.fetch_ohlcv_df
+        cache = getattr(mod, "_spot_cache", None) or getattr(mod, "_futures_cache", None)
+        saved = dict(cache) if cache else None
+        if cache:
+            cache["timestamp"] = 0
+            cache["signal"] = None
+        mod.fetch_ohlcv_df = lambda *a, **k: (_ for _ in ()).throw(
+            ccxt.NetworkError("binance GET https://api.binance.com/api/v3/exchangeInfo")
+        )
+        try:
+            raised = None
+            try:
+                getattr(mod, name)(symbol="BTC/USDT", include_news=False)
+            except Exception as e:
+                raised = e
+            assert raised is not None, f"{name} swallowed the error and returned instead"
+            assert isinstance(raised, ccxt.NetworkError), f"{name} masked the cause: {type(raised).__name__}"
+        finally:
+            mod.fetch_ohlcv_df = original
+            if cache and saved:
+                cache.update(saved)
+
+
+def test_send_signal_alert_returns_zero_when_no_signals():
+    """Both signals None → nothing sent, and the count says so."""
+    from notifier.common import send_signal_alert
+    assert send_signal_alert(spot_signal=None, futures_signal=None) == 0
+
+
+def test_send_signal_alert_counts_delivered():
+    """The count reflects what the transport actually delivered."""
+    import notifier.common as nc
+    import notifier.telegram as nt
+
+    sent_ok = nc._send_telegram_message
+    combined = nt._send_combined_telegram
+    try:
+        nt._send_combined_telegram = lambda s, f, sym: 2
+        assert nc.send_signal_alert(spot_signal={"mode": "spot"}, futures_signal={"mode": "futures"}) == 2
+
+        nt._send_combined_telegram = lambda s, f, sym: 0      # transport refused
+        assert nc.send_signal_alert(spot_signal={"mode": "spot"}, futures_signal={"mode": "futures"}) == 0
+    finally:
+        nc._send_telegram_message = sent_ok
+        nt._send_combined_telegram = combined
+
+
+def test_combined_telegram_returns_zero_without_credentials():
+    """No token/chat configured → 0 delivered, never a bare None."""
+    import notifier.telegram as nt
+    tok, chat = nt.TELEGRAM_BOT_TOKEN, nt.TELEGRAM_CHAT_ID
+    try:
+        nt.TELEGRAM_BOT_TOKEN = ""
+        nt.TELEGRAM_CHAT_ID = ""
+        assert nt._send_combined_telegram({"mode": "spot"}, {"mode": "futures"}, "BTC/USDT") == 0
+    finally:
+        nt.TELEGRAM_BOT_TOKEN, nt.TELEGRAM_CHAT_ID = tok, chat
+
+
+
 if __name__ == "__main__":
     print("\n══ Pipeline Dummy-Data Tests ══\n")
 
@@ -631,6 +704,12 @@ if __name__ == "__main__":
     run("cooldown re-probes primary",             test_mirror_cooldown_reprobes_primary)
     run("futures reads never use mirror",         test_futures_calls_never_use_mirror)
     run("setattr reaches both clients",           test_setattr_reaches_both_clients)
+
+    print("\n── 9. Phase 2 / Phase 4 error reporting ──")
+    run("pipeline re-raises real cause",          test_pipeline_reraises_instead_of_returning_none)
+    run("no signals → 0 delivered",               test_send_signal_alert_returns_zero_when_no_signals)
+    run("delivered count is honest",              test_send_signal_alert_counts_delivered)
+    run("no credentials → 0, not None",           test_combined_telegram_returns_zero_without_credentials)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

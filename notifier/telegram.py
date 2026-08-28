@@ -829,9 +829,12 @@ def _format_consolidated_telegram(spot_signal, futures_signal):
 
 
 def _send_combined_telegram(spot_signal, futures_signal, symbol):
-    """Send single consolidated message + optional macro banner."""
+    """Send single consolidated message + optional macro banner.
+
+    Returns the number of messages actually delivered.
+    """
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        return
+        return 0
 
     sent = 0
 
@@ -848,4 +851,5 @@ def _send_combined_telegram(spot_signal, futures_signal, symbol):
 
     if sent:
         logger.info("Telegram: %d message(s) delivered", sent)
+    return sent
 

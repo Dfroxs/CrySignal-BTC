@@ -4,6 +4,41 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-29 — fix: Phase 2 and Phase 4 error reporting
+
+### Fixed
+- **Phase 2 reported the wrong error.** `analyze_spot_signal()` /
+  `analyze_futures_signal()` caught every exception, logged it, and returned
+  `None`; `run_bot.py` then did `spot_signal["type"]` on that `None`, so the
+  terminal showed `'NoneType' object is not subscriptable` while the real
+  cause — a ccxt `NetworkError` from the Binance 403 — only appeared in the
+  log. Both pipelines now `logger.exception(...)` (full traceback to
+  `spotsignal.log`) and re-raise. `run_bot.py` is the only caller, and it
+  already wraps both calls and keeps the cycle alive, so the swallow bought
+  nothing. Phase 2 also guards against a `None` return and prefixes the
+  exception class, so the message reads
+  `SPOT failed (NetworkError: binance GET https://api.binance.com/...)`.
+- **Phase 4 announced sends that never happened.** `send_signal_alert()`
+  returns early when both signals are `None`, but `run_bot.py` printed
+  "✓ Telegram sent" unconditionally — including on a cycle where Phases 2 and
+  3 had all failed and nothing was transmitted. `send_signal_alert()` and
+  `_send_combined_telegram()` now return the number of messages actually
+  delivered (0 when credentials are missing, rather than a bare `None`), and
+  Phase 4 reports one of three honest outcomes: `Telegram sent (N messages)`,
+  `Skipped — no signal to report`, or `Nothing delivered — check TELEGRAM_* in
+  .env / spotsignal.log`. The third case did not exist before: a Telegram
+  transport failure (bad token, bad chat_id, HTTP error) also read as "sent".
+- **4 regression tests** (`test_pipelines.py` §9) covering the pipeline
+  re-raise, the zero-delivery count, an honest delivered count, and the
+  no-credentials path. Suite 35 → 39.
+
+### Known gap
+- Phase 3 still reports without the exception class
+  (`Phase 3 Failed (binance GET https://...)`), the same pattern fixed above
+  for Phases 2 and 4.
+
+---
+
 ## 2026-08-29 — feat: Binance public-data-mirror fallback
 
 ### Added

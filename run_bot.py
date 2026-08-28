@@ -360,25 +360,29 @@ def run_cycle():
     spot_signal = None
     try:
         spot_signal = analyze_spot_signal(symbol="BTC/USDT", include_news=True)
+        if spot_signal is None:
+            raise RuntimeError("analysis returned no signal")
         s_type = spot_signal["type"]
         s_score = spot_signal.get("strength", 0)
         s_icon = "🟢" if s_type == "BUY" else ("🔴" if s_type == "SELL" else "⏸")
         _ok(f"Phase 2  SPOT 4H    {s_icon} {s_type}  score {s_score:.2f}")
     except Exception as e:
-        logger.error("Spot analysis failed: %s", e)
-        _err(f"Phase 2  SPOT failed  ({e})")
+        logger.error("Spot analysis failed: %s: %s", type(e).__name__, e)
+        _err(f"Phase 2  SPOT failed  ({type(e).__name__}: {e})")
 
     _loading("Phase 2  FUTURES 1H — fetching OHLCV & indicators...")
     futures_signal = None
     try:
         futures_signal = analyze_futures_signal(symbol="BTC/USDT", include_news=True)
+        if futures_signal is None:
+            raise RuntimeError("analysis returned no signal")
         f_type = futures_signal["type"]
         f_score = futures_signal.get("strength", 0)
         f_icon = "🟢" if f_type == "BUY" else ("🔴" if f_type == "SELL" else "⏸")
         _ok(f"Phase 2  FUTURES 1H {f_icon} {f_type}  score {f_score:.2f}")
     except Exception as e:
-        logger.error("Futures analysis failed: %s", e)
-        _err(f"Phase 2  FUTURES failed  ({e})")
+        logger.error("Futures analysis failed: %s: %s", type(e).__name__, e)
+        _err(f"Phase 2  FUTURES failed  ({type(e).__name__}: {e})")
 
     # Phase 3 — paper trading
     _loading("Phase 3  Updating paper positions...")
@@ -860,13 +864,19 @@ def run_cycle():
     # a malformed signal could still raise during formatting.)
     _loading("Phase 4  Sending Telegram notifications...")
     try:
-        send_signal_alert(spot_signal=spot_signal, futures_signal=futures_signal)
+        sent = send_signal_alert(spot_signal=spot_signal, futures_signal=futures_signal) or 0
         for msg, label in pending_tg:
-            _send_telegram_message(msg, label)
-        _ok("Phase 4  Telegram sent")
+            if _send_telegram_message(msg, label):
+                sent += 1
+        if sent:
+            _ok(f"Phase 4  Telegram sent  ({sent} message{'' if sent == 1 else 's'})")
+        elif spot_signal is None and futures_signal is None and not pending_tg:
+            _warn("Phase 4  Skipped — no signal to report")
+        else:
+            _warn("Phase 4  Nothing delivered — check TELEGRAM_* in .env / spotsignal.log")
     except Exception as e:
-        logger.error("Phase 4 failed: %s", e)
-        _err(f"Phase 4  Failed  ({e})")
+        logger.error("Phase 4 failed: %s: %s", type(e).__name__, e)
+        _err(f"Phase 4  Failed  ({type(e).__name__}: {e})")
 
 
 # ---------------------------------------------------------------------------

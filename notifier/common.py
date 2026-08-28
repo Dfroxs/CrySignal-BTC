@@ -76,25 +76,27 @@ def _send_telegram_message(text, label="alert"):
 
 
 def send_signal_alert(spot_signal=None, futures_signal=None, symbol="BTC/USDT"):
-    """Send combined SPOT + FUTURES alert to Telegram."""
+    """Send combined SPOT + FUTURES alert to Telegram.
+
+    Returns the number of messages delivered, so the caller can report honestly
+    instead of announcing a send that never happened.
+    """
     from notifier.telegram import _format_compact_signal_telegram, _send_combined_telegram
 
     # Backward compat: positional single-signal call
     if futures_signal is None and spot_signal is not None and isinstance(spot_signal, dict):
         if "mode" not in spot_signal:
             text = _format_compact_signal_telegram(spot_signal)
-            _send_telegram_message(text, "signal")
-            return
+            return 1 if _send_telegram_message(text, "signal") else 0
 
     has_spot = spot_signal is not None
     has_futures = futures_signal is not None
 
     if not has_spot and not has_futures:
-        return
+        return 0
 
     if has_spot and has_futures:
-        _send_combined_telegram(spot_signal, futures_signal, symbol)
-    elif has_spot:
-        _send_telegram_message(_format_compact_signal_telegram(spot_signal), "spot-signal")
-    else:
-        _send_telegram_message(_format_compact_signal_telegram(futures_signal), "futures-signal")
+        return _send_combined_telegram(spot_signal, futures_signal, symbol) or 0
+    if has_spot:
+        return 1 if _send_telegram_message(_format_compact_signal_telegram(spot_signal), "spot-signal") else 0
+    return 1 if _send_telegram_message(_format_compact_signal_telegram(futures_signal), "futures-signal") else 0
