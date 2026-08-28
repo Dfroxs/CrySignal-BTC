@@ -532,6 +532,30 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             sell_conditions += 0.75
             signal['reasons'].append(f"✗ MFI in sell zone ({mfi:.0f}) — distribution detected")
 
+    # 7 — RSI Divergence. Divergence is structurally independent of the price
+    # extremes below — it is never a cluster member itself — but it must be
+    # scored BEFORE the diminishing-returns block: when it cancels the RSI
+    # OS/OB score it also clears that flag, so the penalty no longer counts a
+    # component that is no longer contributing.
+    divergence = detect_rsi_divergence(df)
+    signal['rsi_divergence'] = divergence
+    if divergence == 'BULLISH' and _rsi_ob:
+        sell_conditions -= 1.5  # cancel OB sell score
+        buy_conditions += 1.5   # restore divergence advantage
+        _rsi_ob = False         # cancelled — no longer a clustered overbought extreme
+        signal['reasons'].append("⚠️  RSI OB cancelled by BULLISH divergence — divergence takes precedence")
+    elif divergence == 'BEARISH' and _rsi_os:
+        buy_conditions -= 1.5   # cancel OS buy score
+        sell_conditions += 1.5
+        _rsi_os = False         # cancelled — no longer a clustered oversold extreme
+        signal['reasons'].append("⚠️  RSI OS cancelled by BEARISH divergence — divergence takes precedence")
+    elif divergence == 'BULLISH':
+        buy_conditions += 2.0
+        signal['reasons'].append("✓ RSI BULLISH DIVERGENCE — price lower low, RSI higher low")
+    elif divergence == 'BEARISH':
+        sell_conditions += 2.0
+        signal['reasons'].append("✗ RSI BEARISH DIVERGENCE — price higher high, RSI lower high")
+
     # ── Diminishing returns on correlated oversold/overbought conditions ──
     # RSI OS/OB, BB lower/upper, StochRSI OS/OB crossover and MFI OS/OB all fire
     # from the same price extreme.  First condition = full weight, each further
@@ -546,24 +570,6 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         penalty = (sell_extremes - 1) * 0.75
         sell_conditions -= penalty
         signal['reasons'].append(f"⚠️  {sell_extremes} overbought conditions clustered — diminishing returns applied (-{penalty:.2f})")
-
-    # 7 — RSI Divergence (scored after diminishing-returns penalty — structurally independent)
-    divergence = detect_rsi_divergence(df)
-    signal['rsi_divergence'] = divergence
-    if divergence == 'BULLISH' and _rsi_ob:
-        sell_conditions -= 1.5  # cancel OB sell score
-        buy_conditions += 1.5   # restore divergence advantage
-        signal['reasons'].append("⚠️  RSI OB cancelled by BULLISH divergence — divergence takes precedence")
-    elif divergence == 'BEARISH' and _rsi_os:
-        buy_conditions -= 1.5   # cancel OS buy score
-        sell_conditions += 1.5
-        signal['reasons'].append("⚠️  RSI OS cancelled by BEARISH divergence — divergence takes precedence")
-    elif divergence == 'BULLISH':
-        buy_conditions += 2.0
-        signal['reasons'].append("✓ RSI BULLISH DIVERGENCE — price lower low, RSI higher low")
-    elif divergence == 'BEARISH':
-        sell_conditions += 2.0
-        signal['reasons'].append("✗ RSI BEARISH DIVERGENCE — price higher high, RSI lower high")
 
     # 19 — Candlestick pattern recognition
     cs = detect_candlestick_pattern(df) or {}

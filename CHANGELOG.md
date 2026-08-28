@@ -4,6 +4,28 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-29 — fix: cancelled RSI extreme no longer penalised as a cluster member
+
+### Fixed
+- **The diminishing-returns penalty charged for a score that had been
+  removed.** The correlated-extreme block ran before condition 7, so when a
+  divergence cancelled the RSI OS/OB score (`sell_conditions -= 1.5` /
+  `buy_conditions -= 1.5`, "divergence takes precedence") the penalty had
+  already counted that RSI flag as a cluster member. The side lost 0.75 for a
+  component contributing nothing. Condition 7 now runs ahead of the block and
+  clears `_rsi_os` / `_rsi_ob` when it cancels them, so only extremes still
+  contributing are counted. Divergence itself is never a cluster member, so
+  the reorder does not expose it to the penalty — the reason the block used to
+  sit first. Measured on a synthetic bearish-divergence flush (RSI 19.7, MFI
+  7.5): spot buy score 1.35 → 2.10, the unwarranted −0.75 removed.
+
+### Tests
+- `test_pipelines.py` — `test_cancelled_rsi_extreme_leaves_the_cluster`, on a
+  fixture that prints a higher high on weaker RSI and then flushes into
+  oversold. Verified to fail against the pre-fix source. Suite: 48/48.
+
+---
+
 ## 2026-08-29 — fix: dead config, scoring double-count, stale spot cache, gate analytics
 
 ### Fixed

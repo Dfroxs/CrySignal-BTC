@@ -763,6 +763,20 @@ def test_pipelines_keep_effective_threshold():
 
 # ── 11. Correlated-extreme cluster & spot cache hygiene ──────────────────────
 
+def _divergence_flush_df(n=320):
+    """Higher high printed on weaker RSI (bearish divergence), then a monotonic
+    flush into oversold so RSI ≤30 and MFI ≤20 both fire. The divergence then
+    cancels the RSI leg, leaving a single member in the correlated cluster."""
+    import numpy as np
+    rng = np.random.default_rng(5)
+    c = np.empty(n)
+    c[:263]    = 80_000 + np.arange(263) * 10 + rng.normal(0, 25, 263)
+    c[263:281] = c[262] + np.cumsum(np.full(18, 300.0))       # steep rally → peak A, high RSI
+    c[281:293] = c[280] - np.cumsum(np.full(12, 210.0))       # pullback
+    c[293:307] = c[292] + np.cumsum(np.full(14, 230.0))       # slow grind → higher high B, weaker RSI
+    c[307:]    = c[306] - np.cumsum(np.full(n - 307, 430.0))  # monotonic flush → oversold
+    return _frame(c)
+
 def test_mfi_extreme_counts_in_correlated_cluster():
     """MFI ≤20 reads the same price extreme as RSI ≤30 — it must be discounted by
     the diminishing-returns block, not stack a full +1.5 on top of it."""
@@ -777,6 +791,24 @@ def test_mfi_extreme_counts_in_correlated_cluster():
     clustered = [r for r in sig['reasons'] if 'conditions clustered' in r]
     assert clustered, "RSI + MFI oversold must register as a cluster"
     assert "-0.75" in clustered[0], f"expected a 2-member penalty, got: {clustered[0]}"
+
+def test_cancelled_rsi_extreme_leaves_the_cluster():
+    """When a divergence cancels the RSI OS/OB score, that extreme must drop out
+    of the correlated cluster — otherwise the side is penalised for a component
+    that is no longer contributing anything."""
+    from signals.engine import generate_signals
+    df   = _divergence_flush_df()
+    last = df.iloc[-1]
+    assert last['RSI_14'] <= 30 and last['MFI_14'] <= 20, "fixture must hit both extremes"
+
+    sig = generate_signals(df, htf=None, market_structure=None, sr=None,
+                           mode="spot", threshold_override=4.3)
+    assert sig['rsi_divergence'] == 'BEARISH', f"fixture lost its divergence: {sig['rsi_divergence']}"
+    assert [r for r in sig['reasons'] if 'cancelled by BEARISH divergence' in r], \
+        "fixture must exercise the divergence-cancel branch"
+    clustered = [r for r in sig['reasons'] if 'conditions clustered' in r]
+    assert not clustered, f"cancelled RSI still counted as a clustered extreme: {clustered}"
+
 
 def test_spot_cache_hit_is_flagged_stale():
     """A replayed 4H analysis must be marked so Phase 3 refuses to open on it,
@@ -870,6 +902,7 @@ if __name__ == "__main__":
 
     print("\n── 11. Correlated extremes & spot cache ──")
     run("MFI extreme joins the cluster",          test_mfi_extreme_counts_in_correlated_cluster)
+    run("cancelled RSI leaves the cluster",       test_cancelled_rsi_extreme_leaves_the_cluster)
     run("cached spot signal flagged stale",       test_spot_cache_hit_is_flagged_stale)
     run("run_bot refuses cached spot entry",      test_run_bot_refuses_entry_on_cached_spot_signal)
 
