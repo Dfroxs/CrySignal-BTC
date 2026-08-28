@@ -4,6 +4,47 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-29 — chore: remove dead code, trim CLAUDE.md to non-derivable guidance
+
+`/doctor` cleanup pass. Removed files nothing could reach, plus documentation a
+session can read straight from the code, and corrected constants that had
+drifted out of date.
+
+### Removed
+- **`notifier.py` shim deleted** — dead code. A `notifier/` package and a
+  `notifier.py` module sat side by side, and Python resolves the package
+  first, so the shim could never be imported. Verified: `import notifier`
+  resolves to `notifier/__init__.py`, and the suite passes without it.
+- **`core_analysis.py` shim deleted** — no module imported it, and it had no
+  `__main__` block, so the documented `python3 core_analysis.py` command was
+  a silent no-op. Removed the command from `CLAUDE.md` and `README.md`.
+- **`test_telegram.py` deleted** — unreferenced one-off credential check.
+- **`spotsignal.log`, `.DS_Store`, and all `__pycache__/` removed** (~1.6 MB),
+  including 14 orphaned `.pyc` files for modules that no longer exist
+  (`signal_engine`, `paper_trader`, `guwek_oracle_v1`, `notifier/discord`, …).
+
+### Fixed
+- **Stale max-score constants** — CLAUDE.md documented `SPOT_MAX_SCORE` as
+  17.25 and `SIGNAL_MAX_SCORE` as 21.25; `config.py` has 21.75 and 25.75.
+  Dropped the hardcoded numbers rather than re-pinning them.
+- **Stale condition count** — the 18-row condition table predated conditions
+  19 (candlestick patterns), 20 (MFI), 21 (CMF) and 22 (taker ratio) in
+  `signals/engine.py`.
+
+### Changed
+- **CLAUDE.md 9,580 → 5,572 chars** (~2,395 → ~1,393 est. context tokens).
+  Cut the config-variable table (superset lives in `.env.example` and
+  `README.md`), the `signals/` module table (each row was that module's own
+  docstring), the 18-row condition table, the "Useful SQL queries" block
+  (identical copy in `README.md`), and the "Adaptive threshold" section
+  (documented in `README.md`, constants in `config.py:111-118`).
+  Kept the run commands, phase behaviour contracts, the `mode=` query
+  convention, the scoring-convention rules, and the backtest caveats.
+- Docstrings in `news_scraper.py` and `trading/history.py` no longer name the
+  deleted `core_analysis` shim.
+
+---
+
 ## 2026-06-13 — audit #12: entry-quality triple — structural SL, R:R floor, entry-wick gate
 
 User-requested follow-up to minimise losses on opening signals. Three

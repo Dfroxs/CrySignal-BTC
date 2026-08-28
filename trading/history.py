@@ -1,6 +1,6 @@
 """SQLite-backed signal history with query helpers.
 
-Replaces the flat CSV in ``core_analysis.log_signal()`` while
+Replaces the original flat-CSV signal log while
 preserving CSV export as fallback.
 """
 
