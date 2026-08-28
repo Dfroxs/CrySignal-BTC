@@ -4,6 +4,35 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-29 — docs: merge PAPER_TRADE_PLAN into TODO_PLAN
+
+### Changed
+- **`PAPER_TRADE_PLAN.md` merged into `TODO_PLAN.md` and deleted.** The two
+  documents described the same paper-trade validation with conflicting
+  numbers (2 weeks vs 1 week; WR > 35% futures / > 45% spot vs WR ≥ 50%).
+  `TODO_PLAN.md` is the newer, post-audit-#12 document, so its targets win;
+  the older bar is recorded inline as a deliberate fallback, not deleted.
+  Carried over: weekly analysis queries (frequency, gate-block distribution,
+  WR/PF, PnL by F&G zone, daily P&L curve), the red-flag table, and the five
+  tuning levers — all five verified still present in `config.py` / `run_bot.py`.
+  Dropped as obsolete: the never-filled `<start-date>` period, the decision
+  matrix, and "Promote to v2.8.0" — `v2.8.0` (`0f0c2c7`) was tagged
+  2026-05-14, the same day as `v2.8.0-rc1` (`e0a7d08`), so the 2-week
+  validation it gated on never ran.
+
+### Fixed
+- **Wrong rollback target in the retired plan.** It named `cd1f378` as "the
+  `v2.7.0` state"; `v2.7.0` is actually `09f0ba6`, and `cd1f378` is merely an
+  ancestor of it. The merged rollback section points at the tags instead.
+- **`TODO_PLAN.md` drift corrected** — BE-cushion line refs `~236`/`~311` →
+  actual `247`/`330` in `trading/paper.py`; Phase 1 now creates `logs/`, which
+  never existed and would have failed the `nohup` redirect; the "push develop"
+  checklist item marked done (`origin/develop` == `ce85bc1`); adaptive-threshold
+  cold start upgraded from possible to certain (both threshold state files are
+  gone); new Phase 0 pre-flight covering the current empty-DB state.
+
+---
+
 ## 2026-08-29 — chore: remove dead code, trim CLAUDE.md to non-derivable guidance
 
 `/doctor` cleanup pass. Removed files nothing could reach, plus documentation a
