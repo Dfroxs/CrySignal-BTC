@@ -216,3 +216,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# SpotSignal run state — data/paper_run_manifest.json is tracked on purpose
+# (it records the frozen parameters of a validation run); everything else
+# under data/ is output that grows every cycle.
+data/*.db
+data/*.csv
+data/backups/
+data/*_cache.json
+data/threshold_state.json
+data/spot_threshold_state.json
