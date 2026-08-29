@@ -156,7 +156,7 @@ say "Recording the run manifest"
 
 # ── 8. systemd ──────────────────────────────────────────────────────────────
 say "Installing the systemd service"
-sed "s|__USER__|$SERVICE_USER|g" deploy/spotsignal.service \
+sed -e "s|__USER__|$SERVICE_USER|g" -e "s|__APP_DIR__|$APP_DIR|g" deploy/spotsignal.service \
   | sudo tee /etc/systemd/system/spotsignal.service >/dev/null
 sudo systemctl daemon-reload
 sudo systemctl enable --now spotsignal.service
