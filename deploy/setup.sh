@@ -45,7 +45,10 @@ if command -v apt-get >/dev/null; then
   sudo apt-get update -qq
   sudo apt-get install -y -qq git curl ca-certificates build-essential
 elif command -v dnf >/dev/null; then
-  sudo dnf install -y -q git curl ca-certificates gcc gcc-c++ make
+  # Oracle Linux 9 / RHEL 9 ship curl-minimal, and `dnf install curl` tries to
+  # swap it out — that fails with a conflict unless --allowerasing is passed.
+  # curl is already present (step 0 used it), so do not ask for it here.
+  sudo dnf install -y -q git ca-certificates gcc gcc-c++ make
 else
   die "Unsupported distro: need apt or dnf"
 fi
@@ -56,6 +59,11 @@ fi
 # ── 2. Python 3.14 via uv ───────────────────────────────────────────────────
 # Ubuntu 24.04 ships 3.12 and Oracle Linux 9 ships 3.9; requirements.txt pins
 # pandas 3.0.2, so let uv fetch the interpreter rather than fighting the distro.
+#
+# The system python is NEVER touched. On Oracle Linux dnf itself is written in
+# python3.9 — replacing or upgrading it in place breaks the package manager and
+# the usual way out is rebuilding the instance. uv installs a private
+# interpreter under ~/.local and the venv points at that.
 say "Installing uv + Python 3.14"
 if ! command -v uv >/dev/null; then
   curl -LsSf https://astral.sh/uv/install.sh | sh
