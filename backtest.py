@@ -45,9 +45,20 @@ MIN_WARMUP = 200  # candles for EMA200
 
 # Higher timeframes per base timeframe — must match signals/htf.py.
 _HTF_FOR = {"4h": ("1d", "1w"), "1h": ("4h", "1d")}
-_HTF_LIMIT = 1000          # ≥200 bars of EMA200 warmup plus the whole test window
 _TF_DELTA = {"4h": pd.Timedelta(hours=4), "1d": pd.Timedelta(days=1),
              "1w": pd.Timedelta(weeks=1)}
+_HTF_WARMUP = 250          # bars of EMA200 warmup before the window even starts
+
+
+def _htf_bars_needed(tf, lookback_days):
+    """Bars of *tf* required to cover the window plus EMA200 warmup.
+
+    A fixed limit silently ran out: 1000 bars of 4H is 166 days, so a 180-day
+    backtest lost its 4H trend for the first fortnight — the same class of
+    quiet degradation that made the resampled HTF useless.
+    """
+    per_day = {"4h": 6, "1d": 1, "1w": 1 / 7}[tf]
+    return int(lookback_days * per_day) + _HTF_WARMUP
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +88,7 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
     # Last RESOLVED trade per direction — feeds the re-entry quality gate that
     # live applies to first entries (run_bot._check_reentry_quality).
     last_resolved = {}
-    htf_frames = _load_htf_series(symbol, timeframe)
+    htf_frames = _load_htf_series(symbol, timeframe, lookback_days)
     # Same-side cooldown after exit (audit #9). Stops the bot from immediately
     # re-entering the exact setup that just stopped out. 5 candles on 1H, 2 on 4H.
     cooldown_n = 5 if timeframe == "1h" else 2
@@ -135,6 +146,11 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
         return [], {}
 
     stats = _compute_stats(trades, df.iloc[MIN_WARMUP]["close"])
+    stats["lookback_days"] = lookback_days
+    # The evaluated span, not the span between the first and last trade — a
+    # walk-forward split has to show the windows that produced nothing.
+    stats["data_from"] = df.index[MIN_WARMUP]
+    stats["data_to"] = df.index[-1]
     return trades, stats
 
 
@@ -323,6 +339,7 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
 
             # Partial TP1 (50%)
             if not partial_closed and high >= tp1:
+                signal["_partial_taken"] = True
                 partial_pnl = (tp1 - entry) / entry * 100 - _costs(mode, 2)
                 # Pull trail to entry − 0.5×ATR (was: snap to entry). At exact
                 # BE, fees made every remainder a fee-tax LOSS even when TP1 hit.
@@ -351,6 +368,7 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
                     trail = new_trail
 
             if not partial_closed and low <= tp1:
+                signal["_partial_taken"] = True
                 partial_pnl = (entry - tp1) / entry * 100 - _costs(mode, 2)
                 # Mirror of BUY path: cushion 0.5×ATR above entry instead of snapping to entry.
                 trail = min(trail, entry + 0.5 * atr_now if atr_now > 0 else entry)
@@ -416,11 +434,12 @@ def _make_trade(df, entry_idx, exit_idx, signal, outcome, entry, exit_px, pnl_pc
         "outcome": outcome,
         "pnl_pct": round(pnl_pct, 3),
         "candles_held": exit_idx - entry_idx,
+        "partial": bool(signal.get("_partial_taken")),
         "reasons": "; ".join(signal.get("reasons", [])[:5]),
     }
 
 
-def _load_htf_series(symbol, timeframe):
+def _load_htf_series(symbol, timeframe, lookback_days):
     """Fetch the SAME higher timeframes live uses and precompute per-bar indicators.
 
     Replaces resampling the base timeframe, which could never hold enough bars:
@@ -431,7 +450,7 @@ def _load_htf_series(symbol, timeframe):
     """
     frames = {}
     for tf in _HTF_FOR.get(timeframe, ("4h", "1d")):
-        bars = _fetch_ohlcv_paged(symbol, tf, _HTF_LIMIT)
+        bars = _fetch_ohlcv_paged(symbol, tf, _htf_bars_needed(tf, lookback_days))
         d = pd.DataFrame(bars, columns=["timestamp", "open", "high", "low", "close", "volume"])
         d.index = pd.to_datetime(d["timestamp"], unit="ms")
         frames[tf] = (htf_indicator_series(d), _TF_DELTA[tf])
@@ -517,8 +536,131 @@ def _compute_stats(trades, start_price):
 
 
 # ---------------------------------------------------------------------------
+# Out-of-sample stability
+# ---------------------------------------------------------------------------
+
+def walk_forward(trades, n_windows, start=None, end=None):
+    """Split closed trades into *n_windows* sequential periods and stat each one.
+
+    Parameters are fixed throughout — nothing is refitted between windows — so
+    this answers the only question a single-period backtest cannot: do these
+    numbers hold up in periods they were not chosen on? A profit factor that
+    swings from 2.0 to 0.3 across windows is noise wearing a result's clothes.
+    """
+    closed = [t for t in trades if t["outcome"] in ("WIN", "LOSS", "TIME_EXIT", "VOL_EXIT")]
+    stamped = sorted(
+        ((pd.Timestamp(t["entry_time"]), t) for t in closed), key=lambda x: x[0]
+    )
+    # Windows span the EVALUATED PERIOD, not the first-to-last-trade range:
+    # a stretch that produced no signal at all is itself a result and must show.
+    first = pd.Timestamp(start) if start is not None else (stamped[0][0] if stamped else None)
+    last  = pd.Timestamp(end)   if end   is not None else (stamped[-1][0] if stamped else None)
+    if first is None or last is None or n_windows < 1:
+        return []
+    span = (last - first) / n_windows
+
+    windows = []
+    for w in range(n_windows):
+        lo = first + span * w
+        hi = first + span * (w + 1)
+        bucket = [t for ts, t in stamped if (lo <= ts < hi) or (w == n_windows - 1 and ts == hi)]
+        windows.append({
+            "from": lo, "to": hi,
+            "stats": _compute_stats(bucket, 0) if bucket else None,
+            "n": len(bucket),
+        })
+    return windows
+
+
+def cost_sensitivity(trades, mode, levels=(0.0, 0.05, 0.09, 0.15, 0.25)):
+    """Re-price every trade at different per-side execution costs.
+
+    Since the T4 fix, cost is subtracted in P&L only — it no longer shifts entry,
+    stop or target prices, so which trades fire and where they exit is
+    cost-independent and this re-pricing is exact rather than an approximation.
+    A non-partial trade carries 2 legs of cost; a partial one carries
+    0.5×2 + 0.5×1 = 1.5 (the TP1 half paid a round trip, the runner pays one exit).
+    """
+    ec = EXECUTION_CONFIG
+    fee = ec["futures_fee_pct"] if mode == "futures" else ec["spot_fee_pct"]
+    current = fee + ec.get("slippage_pct", 0.05)
+
+    closed = [t for t in trades if t["outcome"] in ("WIN", "LOSS", "TIME_EXIT", "VOL_EXIT")]
+    out = []
+    for level in sorted(set(levels) | {round(current, 4)}):
+        rows = []
+        for t in closed:
+            legs = 1.5 if t.get("partial") else 2.0
+            rows.append(t["pnl_pct"] + (current - level) * legs)
+        wins = [p for p in rows if p > 0]
+        losses = [p for p in rows if p <= 0]
+        gross_l = abs(sum(losses))
+        out.append({
+            "per_side": level,
+            "round_trip": level * 2,
+            "total_pnl": round(sum(rows), 2),
+            "win_rate": len(wins) / len(rows) if rows else 0,
+            "profit_factor": (sum(wins) / gross_l) if gross_l > 0 else (float("inf") if wins else 0),
+            "is_current": abs(level - current) < 1e-9,
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Display
 # ---------------------------------------------------------------------------
+
+def print_walk_forward(windows):
+    if not windows:
+        print("\n   No closed trades to segment.\n")
+        return
+    print("\n" + "=" * 70)
+    print("  🔁 WALK-FORWARD — fixed parameters, sequential windows".center(70))
+    print("=" * 70)
+    print(f"\n   {'window':<24} {'trades':>7} {'WR':>7} {'PF':>7} {'P&L':>9}")
+    print(f"   {'-' * 56}")
+    pfs, profitable = [], 0
+    for w in windows:
+        label = f"{w['from']:%Y-%m-%d} → {w['to']:%m-%d}"
+        s = w["stats"]
+        if not s:
+            print(f"   {label:<24} {0:>7} {'no signal':>23}")
+            continue
+        pf = s["profit_factor"]
+        pfs.append(float(pf) if pf != "∞" else float("inf"))
+        if s["total_pnl_pct"] > 0:
+            profitable += 1
+        print(f"   {label:<24} {w['n']:>7} {s['win_rate']:>6.0%} "
+              f"{str(pf):>7} {s['total_pnl_pct']:>8.2f}%")
+
+    finite = [p for p in pfs if p != float("inf")]
+    print(f"\n   Profitable windows : {profitable}/{len(windows)}")
+    if finite:
+        print(f"   Profit factor range: {min(finite):.2f} → {max(finite):.2f}")
+        if max(finite) > 0 and min(finite) < 1 < max(finite):
+            print(f"   {'⚠️  PF crosses 1.0 between windows — parameters are not stable'}")
+    print("=" * 70 + "\n")
+
+
+def print_cost_sensitivity(rows):
+    if not rows:
+        return
+    print("\n" + "=" * 70)
+    print("  💸 EXECUTION COST SENSITIVITY".center(70))
+    print("=" * 70)
+    print(f"\n   {'per side':>9} {'round trip':>11} {'P&L':>9} {'PF':>7} {'WR':>7}")
+    print(f"   {'-' * 46}")
+    for r in rows:
+        pf = "∞" if r["profit_factor"] == float("inf") else f"{r['profit_factor']:.2f}"
+        mark = "  ← current" if r["is_current"] else ""
+        print(f"   {r['per_side']:>8.2f}% {r['round_trip']:>10.2f}% "
+              f"{r['total_pnl']:>8.2f}% {pf:>7} {r['win_rate']:>6.0%}{mark}")
+    gross = next((r for r in rows if r["per_side"] == 0), None)
+    cur   = next((r for r in rows if r["is_current"]), None)
+    if gross and cur and gross["total_pnl"] != 0:
+        eaten = gross["total_pnl"] - cur["total_pnl"]
+        print(f"\n   Costs consume {eaten:+.2f}% of a {gross['total_pnl']:+.2f}% gross result")
+    print("=" * 70 + "\n")
 
 def print_backtest_results(trades, stats):
     """Pretty-print backtest results."""
@@ -530,7 +672,7 @@ def print_backtest_results(trades, stats):
     print("  📊 BACKTEST RESULTS".center(70))
     print("=" * 70)
 
-    print(f"\n   Period:           {LOOKBACK_DAYS} days")
+    print(f"\n   Period:           {stats.get('lookback_days', LOOKBACK_DAYS)} days")
     print(f"   Start Price:      ${stats['start_price']:,.2f}")
 
     print(f"\n   Total Signals:    {stats['total_signals']}")
@@ -586,6 +728,10 @@ if __name__ == "__main__":
                         help="Trading mode (default: futures)")
     parser.add_argument("--days", type=int, default=LOOKBACK_DAYS,
                         help=f"Lookback days (default: {LOOKBACK_DAYS})")
+    parser.add_argument("--walk-forward", type=int, default=0, metavar="N",
+                        help="Also split the run into N sequential windows and stat each")
+    parser.add_argument("--costs", action="store_true",
+                        help="Also show P&L re-priced at other execution-cost levels")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -596,3 +742,10 @@ if __name__ == "__main__":
     tf = "4h" if args.mode == "spot" else "1h"
     trades, stats = run_backtest(mode=args.mode, timeframe=tf, lookback_days=args.days)
     print_backtest_results(trades, stats)
+    if args.walk_forward:
+        print_walk_forward(walk_forward(
+            trades, args.walk_forward,
+            start=stats.get("data_from"), end=stats.get("data_to"),
+        ))
+    if args.costs:
+        print_cost_sensitivity(cost_sensitivity(trades, args.mode))

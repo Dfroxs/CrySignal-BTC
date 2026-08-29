@@ -986,6 +986,43 @@ def test_ohlcv_pagination_beats_the_exchange_cap():
         oh.exchange = saved
 
 
+# ── 13. Walk-forward & cost sensitivity ──────────────────────────────────────
+
+def _wf_trade(entry_time, pnl, outcome="WIN", partial=False):
+    return {"entry_time": entry_time, "outcome": outcome, "pnl_pct": pnl,
+            "candles_held": 5, "confidence": "NORMAL", "partial": partial,
+            "type": "BUY", "strength": 6.0}
+
+def test_walk_forward_windows_span_the_evaluated_period():
+    """Windows must cover the period that was TESTED, not the span between the
+    first and last trade — a stretch that produced no signal is itself a result."""
+    from backtest import walk_forward
+    trades = [_wf_trade("2026-06-01 00:00", 1.0), _wf_trade("2026-06-15 00:00", -2.0, "LOSS")]
+    wins = walk_forward(trades, 4, start="2026-01-01", end="2026-09-01")
+    assert len(wins) == 4
+    assert str(wins[0]["from"].date()) == "2026-01-01", "first window must start at the data start"
+    assert str(wins[-1]["to"].date()) == "2026-09-01", "last window must end at the data end"
+    empty = [w for w in wins if w["n"] == 0]
+    assert empty, "windows with no signal must be reported, not dropped"
+    assert sum(w["n"] for w in wins) == 2, "every trade must land in exactly one window"
+
+def test_cost_sensitivity_reprices_exactly():
+    """Since costs no longer shift entry/stop/target prices, re-pricing at another
+    cost level is exact: 2 legs for a plain trade, 1.5 for one that took TP1."""
+    from backtest import cost_sensitivity
+    from config import EXECUTION_CONFIG as ec
+    current = ec["futures_fee_pct"] + ec.get("slippage_pct", 0.05)
+    trades = [_wf_trade("2026-06-01 00:00", 1.00, "WIN"),
+              _wf_trade("2026-06-02 00:00", -0.50, "LOSS", partial=True)]
+    rows = {round(r["per_side"], 4): r for r in cost_sensitivity(trades, "futures", levels=(0.0,))}
+    assert round(current, 4) in rows, "the configured cost level must always be shown"
+    gross = rows[0.0]["total_pnl"]
+    now   = rows[round(current, 4)]["total_pnl"]
+    expected = (1.00 + current * 2) + (-0.50 + current * 1.5)
+    assert abs(gross - round(expected, 2)) < 0.011, f"gross should be {expected:.3f}, got {gross}"
+    assert abs(now - 0.50) < 1e-9, "the current level must reproduce the stored P&L"
+
+
 if __name__ == "__main__":
     print("\n══ Pipeline Dummy-Data Tests ══\n")
 
@@ -1066,6 +1103,10 @@ if __name__ == "__main__":
     run("HTF ignores the forming bar",            test_htf_at_ignores_the_still_forming_bar)
     run("HTF alignment matches live",             test_htf_at_alignment_matches_live_rule)
     run("OHLCV pagination beats the cap",         test_ohlcv_pagination_beats_the_exchange_cap)
+
+    print("\n── 13. Walk-forward & cost sensitivity ──")
+    run("windows span the evaluated period",      test_walk_forward_windows_span_the_evaluated_period)
+    run("cost re-pricing is exact",               test_cost_sensitivity_reprices_exactly)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

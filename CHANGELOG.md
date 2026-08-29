@@ -4,6 +4,45 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-29 — feat: walk-forward windows + execution-cost sensitivity
+
+Validation tooling, not tuning. Nothing about the strategy changed.
+
+### Added
+- **`backtest.py --walk-forward N`** — splits the evaluated period into N
+  sequential windows and stats each with the parameters held fixed. A single
+  90-day number cannot distinguish an edge from a lucky window; a profit factor
+  that crosses 1.0 between windows is noise wearing a result's clothes. Windows
+  span the **tested period**, not the first-to-last-trade range, so a stretch
+  that produced no signal is reported as `no signal` rather than silently
+  dropped — with this system that is most of them.
+- **`backtest.py --costs`** — re-prices every trade at other execution-cost
+  levels and shows what the current setting consumes. Exact rather than
+  approximate: since costs stopped shifting entry/stop/target prices, trade
+  selection and exit points no longer depend on them, so a plain trade carries
+  2 legs of cost and one that took TP1 carries 1.5.
+
+### Fixed
+- **HTF data ran out on longer backtests.** `_HTF_LIMIT` was pinned at 1000
+  bars — 166 days of 4H — so a 180-day run lost its 4H trend for the first two
+  weeks, the same quiet degradation that made the resampled HTF useless.
+  `_htf_bars_needed()` now scales the fetch to the window plus 250 bars of
+  EMA200 warmup. On a 180-day futures run this recovered a trade the harness
+  had been skipping.
+- `print_backtest_results()` printed the `LOOKBACK_DAYS` constant as the period
+  regardless of `--days`.
+
+### Measured
+180-day futures run, parameters fixed: **3 trades, 0 wins, −2.88%**, spread
+across 3 of 6 windows; the other 3 produced no signal at all. Cost sensitivity
+on that run: −1.86% gross → −2.40% net at the configured 0.18% round trip.
+
+### Tests
+- `test_pipelines.py` section 13 — window span (including empty windows) and
+  exactness of the cost re-pricing. Suite: 56/56.
+
+---
+
 ## 2026-08-29 — fix: backtest fidelity (10 findings) + real drawdown breaker
 
 A full re-audit of the modules not covered by the earlier passes — persistence,
