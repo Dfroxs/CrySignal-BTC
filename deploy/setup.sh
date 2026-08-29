@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Provision a fresh VPS to run the SpotSignal paper bot under systemd.
 #
-#   curl -fsSL https://raw.githubusercontent.com/Dfroxs/CrySignal-BTC/develop/deploy/setup.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Dfroxs/CrySignal-BTC/main/deploy/setup.sh | bash
 # or, from a clone:
 #   bash deploy/setup.sh
 #
@@ -9,8 +9,10 @@
 set -euo pipefail
 
 REPO_URL="${REPO_URL:-https://github.com/Dfroxs/CrySignal-BTC.git}"
-BRANCH="${BRANCH:-develop}"
-APP_DIR="${APP_DIR:-$HOME/SpotSignal}"
+# Deploy from main. develop carries unreleased work; a server running it would
+# be validating a moving target. Override with BRANCH=develop for a test box.
+BRANCH="${BRANCH:-main}"
+APP_DIR="${APP_DIR:-$HOME/playground/CrySignal-BTC}"
 SERVICE_USER="$(id -un)"
 
 say()  { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
@@ -124,6 +126,8 @@ if [ -d "$APP_DIR/.git" ]; then
   git -C "$APP_DIR" checkout --quiet "$BRANCH"
   git -C "$APP_DIR" pull --quiet --ff-only origin "$BRANCH"
 else
+  # git clone creates the leaf directory but not missing parents.
+  mkdir -p "$(dirname "$APP_DIR")"
   git clone --quiet --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
 fi
 cd "$APP_DIR"

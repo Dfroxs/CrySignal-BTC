@@ -4,6 +4,81 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## v2.9.0 — 2026-08-30
+
+24 commits since v2.8.0. The theme is measurement: most of this release is
+about finding out that the tools used to judge the strategy were themselves
+wrong, fixing them, and then honouring what they said afterwards — including
+when that overturned a conclusion recorded earlier in the same release.
+
+### The backtest was not measuring what it claimed
+Ten defects in the harness every tuned parameter had been measured against:
+
+- The futures backtest simulated **~30 days and reported 90**. Binance caps a
+  single `fetch_ohlcv()` at 1000 rows without signalling truncation.
+- **HTF was structurally disabled.** Resampling the base timeframe cannot
+  produce 200 daily bars from 90 days, so spot's 1W trend was NEUTRAL at every
+  index and `aligned` was permanently False — zeroing the largest weight after
+  divergence. The daily "EMA200" was an EMA50.
+- The 24-hour wick window was **swapped between modes** (96h on spot, 6h on
+  futures).
+- Execution costs were charged **once on TP2 and twice on trailing exits** —
+  precisely the trade-off the trailing factors were tuned on.
+- Two entry gates live applies were missing, making the harness *looser* than
+  live rather than conservative.
+
+### Risk controls that did not control
+- **The circuit breaker never measured drawdown.** It read
+  `max(0, -cumulative_pnl)`, which reports 0% for an account 18% below its peak
+  but still net positive.
+- `.env.example` shipped threshold overrides uncommented, so any deployment
+  that copied it ran with the adaptive controller switched off entirely, at a
+  looser bar than the tuned defaults.
+- The spot cache stored its entry by reference, so Phase 3 edits — a
+  breaker-forced HOLD, a pyramid's tightened stop — became the base signal
+  replayed for the rest of the 4H candle.
+
+### New measurement tooling
+`--walk-forward N`, `--costs`, `--gates`, `--disable`, `--all-conditions`,
+`--start/--end`, and `scripts/condition_ic.py` with a horizon sweep. Every
+condition now emits its own contribution through a read-only checkpoint,
+verified inert against 63 candles.
+
+### What the tooling then said
+- **Almost nothing in the scoring stack is stable across years.** Tested on
+  2024 against 2025 in both modes, `ema200` runs +3.5 then −2.2, `macd` +1.4
+  then −4.7; `mfi` and `rsi` flip sign *significantly in both directions*. Only
+  `htf` keeps its sign — negative in all four samples.
+- **The gates thin rather than select.** Trades they let through are worse per
+  trade (−0.799%) than the ones they reject (−0.557%); total loss falls only
+  because count does.
+- **The pruning experiment failed.** Dropping the nine conditions with no stable
+  predictive power made results worse out-of-sample, so `DISABLED_CONDITIONS` is
+  empty and scoring is unchanged. The machinery stays for the next attempt.
+
+### Two conclusions recorded in this release were later overturned by it
+"The gates are carrying the system" came from comparing sums over unequal trade
+counts. "Trend-following works, mean-reversion doesn't" came from two
+overlapping 2026 samples and did not survive a genuine out-of-sample test. Both
+retractions are in the entries above rather than edited away.
+
+### Deployment
+`deploy/setup.sh` and a systemd unit, both written for an unattended
+multi-week run: it refuses to proceed unless Binance answers 200 from the host,
+installs Python 3.14 through uv without touching the distro interpreter, adds
+swap below 2 GB of RAM, records a run manifest **before** anything writes to the
+database, and enables the service only after a full verification cycle passes.
+
+### Validation status
+**Unvalidated.** The paper run this release exists to enable has not produced a
+sample yet. Over 2024 and 2025 the unmodified system is profitable on spot in
+both years (+3.71% PF 1.58, +0.55% PF 1.23) and on futures 2024 H1 (+0.64% PF
+1.39) — roughly 15 trades in total, far too few to call an edge.
+
+Tests: 67/67, up from 39.
+
+---
+
 ## 2026-08-30 — fix: session/regime bumps apply in full again
 
 Closes the fifteenth review finding, the one held back for a decision.
