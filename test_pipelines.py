@@ -1037,6 +1037,56 @@ def test_cost_sensitivity_reprices_exactly():
     assert abs(now - 0.50) < 1e-9, "the current level must reproduce the stored P&L"
 
 
+# ── 14. Condition attribution & ablation ─────────────────────────────────────
+
+def _contrib_signal(disabled=None):
+    from signals.engine import generate_signals
+    from signals.indicators import detect_support_resistance
+    df = _synthetic_df()
+    return generate_signals(df, htf=None, market_structure=None,
+                            sr=detect_support_resistance(df), mode="futures",
+                            threshold_override=5.2, disabled=disabled)
+
+def test_contributions_sum_to_the_scores():
+    """The attribution checkpoints only read the accumulators. If the parts stop
+    summing to the whole, a condition is being counted twice or not at all."""
+    sig = _contrib_signal()
+    contrib = sig["_contributions"]
+    assert contrib, "engine must emit per-condition contributions"
+    assert abs(sum(b for b, _ in contrib.values()) - sig["buy_score"]) < 0.011
+    assert abs(sum(s for _, s in contrib.values()) - sig["sell_score"]) < 0.011
+
+# Conditions scored after the HTF block, which holds the last code that reads the
+# running totals (its conflict penalty picks whichever side is ahead). Ablating
+# one of these changes the totals and nothing else, so the arithmetic is exact.
+_LATE_CONDITIONS = ["taker", "cmf", "candlestick", "extreme_cluster_penalty",
+                    "rsi_divergence", "mfi", "oi_price", "gold_vix", "adx",
+                    "vwap", "support_resistance", "stoch_rsi", "obv"]
+
+def test_ablation_removes_exactly_that_condition():
+    """Disabling a condition must subtract its contribution and nothing else."""
+    base = _contrib_signal()
+    contrib = base["_contributions"]
+    target = next((n for n in _LATE_CONDITIONS
+                   if contrib.get(n, (0.0, 0.0)) != (0.0, 0.0)), None)
+    assert target, f"fixture scores none of the late conditions: {contrib}"
+
+    off = _contrib_signal(disabled=[target])
+    b_buy, b_sell = contrib[target]
+    assert off["_contributions"][target] == (0.0, 0.0), \
+        f"{target} was ablated but still contributed"
+    assert abs(off["buy_score"] - (base["buy_score"] - b_buy)) < 0.011, \
+        f"{target}: buy {off['buy_score']} != {base['buy_score']} - {b_buy}"
+    assert abs(off["sell_score"] - (base["sell_score"] - b_sell)) < 0.011, \
+        f"{target}: sell {off['sell_score']} != {base['sell_score']} - {b_sell}"
+
+def test_ablation_of_nothing_is_a_no_op():
+    """An empty disable list must reproduce the unmodified engine exactly."""
+    base, same = _contrib_signal(), _contrib_signal(disabled=[])
+    assert (base["buy_score"], base["sell_score"], base["type"]) == \
+           (same["buy_score"], same["sell_score"], same["type"])
+
+
 if __name__ == "__main__":
     print("\n══ Pipeline Dummy-Data Tests ══\n")
 
@@ -1122,6 +1172,11 @@ if __name__ == "__main__":
     print("\n── 13. Walk-forward & cost sensitivity ──")
     run("windows span the evaluated period",      test_walk_forward_windows_span_the_evaluated_period)
     run("cost re-pricing is exact",               test_cost_sensitivity_reprices_exactly)
+
+    print("\n── 14. Condition attribution & ablation ──")
+    run("contributions sum to the scores",        test_contributions_sum_to_the_scores)
+    run("ablation removes exactly one condition", test_ablation_removes_exactly_that_condition)
+    run("empty ablation is a no-op",              test_ablation_of_nothing_is_a_no_op)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

@@ -11,7 +11,8 @@ from signals.market_data import get_signal_confidence
 from signals.sentiment import check_upcoming_macro_events
 
 
-def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures', threshold_override=None):
+def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures',
+                     threshold_override=None, disabled=None):
     current = df.iloc[-1]
     previous = df.iloc[-2]
 
@@ -39,8 +40,23 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     # to answer which of the 22 conditions actually carry predictive power.
     _contrib = {}
     _seen = [0.0, 0.0]
+    _off = set(disabled or ())
 
     def _mark(name):
+        """Close out one condition's contribution.
+
+        With *name* in `disabled`, the accumulators are rolled back to their
+        pre-condition values — exact ablation with no edits to any condition
+        body, so an ablation run cannot drift from the real scoring path. Note
+        that flags a condition sets for later blocks (``_rsi_os`` and friends)
+        are NOT unset; ablate a flag-setting condition only when that is
+        understood.
+        """
+        nonlocal buy_conditions, sell_conditions
+        if name in _off:
+            buy_conditions, sell_conditions = _seen[0], _seen[1]
+            _contrib[name] = (0.0, 0.0)
+            return
         _contrib[name] = (round(buy_conditions - _seen[0], 4),
                           round(sell_conditions - _seen[1], 4))
         _seen[0], _seen[1] = buy_conditions, sell_conditions

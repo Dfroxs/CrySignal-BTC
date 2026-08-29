@@ -44,9 +44,15 @@ logger = logging.getLogger(__name__)
 G, R, Y, DIM, BLD, RST = "\033[32m", "\033[31m", "\033[33m", "\033[2m", "\033[1m", "\033[0m"
 
 
-def collect(mode="futures", days=180, horizon=6):
+def collect(mode="futures", days=180, horizons=(6,)):
     """Run the engine over every candle and pair each condition's contribution
-    with the return that followed."""
+    with the returns that followed, at every requested horizon.
+
+    All horizons come from one pass: the engine loop is what costs time, forward
+    returns are a shift. Sweeping horizons in one run is what makes the decisive
+    question cheap to ask — does a condition's sign hold as the holding period
+    changes, or does it only look predictive at the one horizon it was read at?
+    """
     tf = "4h" if mode == "spot" else "1h"
     per_day = 6 if tf == "4h" else 24
     limit = days * per_day + MIN_WARMUP
@@ -57,7 +63,7 @@ def collect(mode="futures", days=180, horizon=6):
     htf_frames = _load_htf_series("BTC/USDT", tf, days)
 
     rows = []
-    end = len(df) - horizon
+    end = len(df) - max(horizons)
     for i in range(MIN_WARMUP, end):
         window = df.iloc[:i + 1].copy()
         try:
@@ -71,9 +77,9 @@ def collect(mode="futures", days=180, horizon=6):
         )
         contrib = signal.get("_contributions") or {}
         now = df["close"].iloc[i]
-        fwd = (df["close"].iloc[i + horizon] - now) / now * 100
         row = {name: buy - sell for name, (buy, sell) in contrib.items()}
-        row["_fwd"] = fwd
+        for h in horizons:
+            row[f"_fwd{h}"] = (df["close"].iloc[i + h] - now) / now * 100
         rows.append(row)
 
     return pd.DataFrame(rows).fillna(0.0)
@@ -99,9 +105,9 @@ def _welch_t(x, y):
     return float((np.mean(x) - np.mean(y)) / denom)
 
 
-def analyse(data):
-    fwd = data["_fwd"].values
-    conditions = [c for c in data.columns if c != "_fwd"]
+def analyse(data, horizon):
+    fwd = data[f"_fwd{horizon}"].values
+    conditions = [c for c in data.columns if not c.startswith("_fwd")]
     out = []
     for name in conditions:
         v = data[name].values
@@ -123,7 +129,7 @@ def analyse(data):
 
 
 def report(results, data, mode, days, horizon):
-    fwd = data["_fwd"]
+    fwd = data[f"_fwd{horizon}"]
     print("\n" + "=" * 78)
     print(f"  🔬 CONDITION PREDICTIVE POWER — {mode.upper()}, {days}d, "
           f"{horizon}-bar forward return".center(78))
@@ -163,20 +169,66 @@ def report(results, data, mode, days, horizon):
     print("=" * 78 + "\n")
 
 
+def report_sweep(data, horizons, mode, days):
+    """Sign stability across holding periods.
+
+    A condition that predicts something should keep its sign as the horizon
+    moves. One that flips is reading a different phenomenon at each scale, and a
+    fixed weight cannot serve both.
+    """
+    per = {h: {r["condition"]: r for r in analyse(data, h)} for h in horizons}
+    names = [c for c in data.columns if not c.startswith("_fwd")]
+    names = [n for n in names if any(per[h][n]["n_pos"] or per[h][n]["n_neg"] for h in horizons)]
+    names.sort(key=lambda n: -max(abs(per[h][n]["t"]) for h in horizons))
+
+    print("\n" + "=" * 78)
+    print(f"  📐 HORIZON SWEEP — {mode.upper()}, {days}d "
+          f"(t-statistic per forward horizon)".center(78))
+    print("=" * 78)
+    head = "".join(f"{str(h) + 'b':>9}" for h in horizons)
+    print(f"\n   {'condition':<24}{head}   sign")
+    print(f"   {'-' * (24 + 9 * len(horizons) + 8)}")
+    for n in names:
+        ts = [per[h][n]["t"] for h in horizons]
+        signs = {1 if x > 0 else (-1 if x < 0 else 0) for x in ts if abs(x) > 0.5}
+        if len(signs) > 1:
+            tag, col = "flips", Y
+        elif signs == {-1}:
+            tag, col = "negative", R
+        elif signs == {1}:
+            tag, col = "positive", G
+        else:
+            tag, col = "flat", DIM
+        cells = "".join(
+            f"{G if x >= 2 else (R if x <= -2 else DIM)}{x:>+9.1f}{RST}" for x in ts
+        )
+        print(f"   {n:<24}{cells}   {col}{tag}{RST}")
+    print(f"\n   {DIM}Bold cells are |t| ≥ 2. A condition that only clears the bar at one{RST}")
+    print(f"   {DIM}horizon, or flips sign across them, is not a stable signal.{RST}")
+    print("=" * 78 + "\n")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--mode", choices=["spot", "futures"], default="futures")
     ap.add_argument("--days", type=int, default=180)
     ap.add_argument("--horizon", type=int, default=6,
-                    help="Bars of forward return to score against (default 6)")
+                    help="Bars of forward return for the main table (default 6)")
+    ap.add_argument("--horizons", default="",
+                    help="Comma-separated horizons to sweep, e.g. 3,6,12,24,48")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-    data = collect(args.mode, args.days, args.horizon)
+    sweep = [int(h) for h in args.horizons.split(",") if h.strip()] if args.horizons else []
+    horizons = sorted(set(sweep) | {args.horizon})
+
+    data = collect(args.mode, args.days, tuple(horizons))
     if data.empty:
         print("No data collected.")
         return
-    report(analyse(data), data, args.mode, args.days, args.horizon)
+    report(analyse(data, args.horizon), data, args.mode, args.days, args.horizon)
+    if sweep:
+        report_sweep(data, horizons, args.mode, args.days)
 
 
 if __name__ == "__main__":

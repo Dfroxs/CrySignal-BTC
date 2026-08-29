@@ -66,7 +66,7 @@ def _htf_bars_needed(tf, lookback_days):
 # ---------------------------------------------------------------------------
 
 def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
-                 lookback_days=LOOKBACK_DAYS, counterfactual=False):
+                 lookback_days=LOOKBACK_DAYS, counterfactual=False, disabled=None):
     """Run backtest and return (trades, summary_stats) dicts.
 
     With *counterfactual*, every signal a gate rejects is ALSO simulated forward
@@ -118,7 +118,7 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
 
         signal = generate_signals(
             window, htf=htf, market_structure=None, sr=sr,
-            mode=mode, threshold_override=effective_threshold,
+            mode=mode, threshold_override=effective_threshold, disabled=disabled,
         )
         signal["mode"] = mode
 
@@ -800,6 +800,8 @@ if __name__ == "__main__":
                         help="Also show P&L re-priced at other execution-cost levels")
     parser.add_argument("--gates", action="store_true",
                         help="Also simulate every signal the entry gates rejected")
+    parser.add_argument("--disable", default="",
+                        help="Comma-separated conditions to ablate, e.g. htf,mfi,rsi")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -808,8 +810,11 @@ if __name__ == "__main__":
     )
 
     tf = "4h" if args.mode == "spot" else "1h"
+    off = [c.strip() for c in args.disable.split(",") if c.strip()]
+    if off:
+        print(f"\n   ⚗️  Ablation: {', '.join(off)} disabled\n")
     trades, stats = run_backtest(mode=args.mode, timeframe=tf, lookback_days=args.days,
-                                 counterfactual=args.gates)
+                                 counterfactual=args.gates, disabled=off)
     print_backtest_results(trades, stats)
     if args.walk_forward:
         print_walk_forward(walk_forward(

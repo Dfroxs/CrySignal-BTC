@@ -4,6 +4,67 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-29 — feat: horizon sweep + condition ablation
+
+### Added
+- **`scripts/condition_ic.py --horizons 3,6,12,24,48,72`** — every horizon from
+  one pass (the engine loop is the cost; forward returns are a shift). A
+  condition that predicts something keeps its sign as the holding period moves;
+  one that flips is reading a different phenomenon at each scale and a fixed
+  weight cannot serve both.
+- **`backtest.py --disable htf,mfi,rsi`** — exact condition ablation. It reuses
+  the attribution checkpoints: a disabled condition has the accumulators rolled
+  back to their pre-condition values, so an ablation run cannot drift from the
+  real scoring path and no condition body was touched. Flags a condition sets
+  for later blocks (`_rsi_os` and friends) are deliberately *not* unset.
+
+### Measured — the sweep replicates across two samples
+FUTURES 1H / 180d and SPOT 4H / 400d, t-statistic by forward horizon:
+
+| condition | futures (3→72b) | spot (3→18b) | reading |
+|---|---|---|---|
+| `ema200` | +0.4 → **+5.0** | +0.9 → **+2.4** | correct, strengthens with horizon |
+| `cmf` | −0.6 → **+5.0** | −0.1 → **+3.3** | correct at longer horizons |
+| `adx` | −0.1 → **+3.9** | +1.3 → +1.8 | correct |
+| `macd` | +0.7 → **+4.1** | **+2.2** → +0.3 | correct |
+| `htf` | **−3.1 → −4.9** | **−2.3 → −6.1** | **inverted at every horizon, both samples** |
+| `mfi` | −0.7 → **−4.4** | −1.1 → **−3.0** | **inverted** |
+| `rsi` | +0.3 → **−2.4** | −1.3 → **−2.2** | **inverted** |
+| `bollinger` | −0.3 → **−4.0** | flat | inverted in futures |
+
+The pattern is coherent: **the trend-following conditions point the right way
+and the mean-reversion conditions point the wrong way.** On these samples an
+oversold reading was followed by more downside, not a bounce. `htf` is the
+outlier — a trend condition that reads backwards, and the most consistently
+anti-predictive thing in the engine while carrying the largest weight after
+divergence.
+
+Three of the largest weights in the scoring stack — `htf` (2.0), `rsi` (1.5),
+`mfi` (1.5) — are anti-predictive on both samples. That is a plausible
+mechanism for the counterfactual result in the previous commit, where the
+ungated engine produced 49 signals worth −29.65%.
+
+### Ablation, 180-day futures
+```
+baseline            3 trades   -2.40%
+--disable htf       1 trade    -1.14%
+--disable htf,mfi,rsi   no signals at all
+```
+Directionally consistent with the sweep, but n=3→1 settles nothing. That is the
+point: the trade-level test cannot resolve this question at 12 signals a year,
+which is why the candle-level measurement exists.
+
+### Not changed
+No weight was touched. Both samples are BTC and overlap in time, the
+observations are autocorrelated, and the era is one regime. The evidence is
+strong enough to investigate and not strong enough to re-weight on.
+
+### Tests
+- Section 14 — contributions sum to the scores, ablation subtracts exactly one
+  condition and nothing else, empty ablation is a no-op. Suite: 60/60.
+
+---
+
 ## 2026-08-29 — feat: per-condition predictive power (scripts/condition_ic.py)
 
 ### Added
