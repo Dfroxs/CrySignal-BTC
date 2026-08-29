@@ -56,7 +56,48 @@ fi
 # Oracle Linux and Ubuntu both default to a firewall that blocks nothing
 # outbound, which is all this bot needs — it opens no listening port.
 
-# ── 2. Python 3.14 via uv ───────────────────────────────────────────────────
+# ── 2. Swap — insurance for the once-an-hour memory spike ───────────────────
+# Measured on this workload: the bot idles at ~125 MB and peaks at ~320 MB for
+# about six seconds per cycle, while both pipelines hold their DataFrames. On a
+# 1 GB instance that peak plus the OS leaves little headroom, and an OOM kill
+# mid-cycle would end a multi-week run silently. Swap is not meant to be USED
+# here — swappiness is lowered so the kernel reaches for it only under real
+# pressure, keeping the hourly spike in RAM where it belongs.
+say "Checking swap"
+mem_mb=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
+echo "    RAM: ${mem_mb} MB"
+
+if [ "$(swapon --show --noheadings 2>/dev/null | wc -l)" -gt 0 ]; then
+  echo "  ✓ swap already configured, leaving it alone"
+elif [ "$mem_mb" -ge 2048 ]; then
+  echo "  ✓ ${mem_mb} MB RAM is ample — no swapfile needed"
+else
+  avail_mb=$(df -Pm / | awk 'NR==2 {print $4}')
+  if [ "$avail_mb" -lt 4096 ]; then
+    warn "Only ${avail_mb} MB free on / — skipping swapfile to avoid filling the disk"
+  elif sudo fallocate -l 2G /swapfile 2>/dev/null ||
+       sudo dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none 2>/dev/null; then
+    sudo chmod 600 /swapfile
+    sudo mkswap /swapfile >/dev/null
+    if sudo swapon /swapfile 2>/dev/null; then
+      # Survive reboot, without duplicating the entry on a re-run.
+      grep -q '^/swapfile ' /etc/fstab ||
+        echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null
+      sudo sysctl -w vm.swappiness=10 >/dev/null
+      grep -q '^vm.swappiness' /etc/sysctl.conf 2>/dev/null ||
+        echo 'vm.swappiness=10' | sudo tee -a /etc/sysctl.conf >/dev/null
+      echo "  ✓ 2 GB swapfile active, swappiness 10"
+    else
+      # Containerised VPS (OpenVZ/LXC) cannot take a swapfile. Not fatal.
+      warn "swapon refused — this host probably cannot swap. Continuing without."
+      sudo rm -f /swapfile
+    fi
+  else
+    warn "Could not allocate /swapfile — continuing without swap"
+  fi
+fi
+
+# ── 3. Python 3.14 via uv ───────────────────────────────────────────────────
 # Ubuntu 24.04 ships 3.12 and Oracle Linux 9 ships 3.9; requirements.txt pins
 # pandas 3.0.2, so let uv fetch the interpreter rather than fighting the distro.
 #
@@ -71,7 +112,7 @@ fi
 export PATH="$HOME/.local/bin:$PATH"
 uv python install 3.14
 
-# ── 3. Code ─────────────────────────────────────────────────────────────────
+# ── 4. Code ─────────────────────────────────────────────────────────────────
 say "Fetching the repository"
 if [ -d "$APP_DIR/.git" ]; then
   git -C "$APP_DIR" fetch --quiet origin "$BRANCH"
@@ -89,7 +130,7 @@ uv venv --python 3.14 venv
 VIRTUAL_ENV="$APP_DIR/venv" uv pip install --quiet -r requirements.txt
 ./venv/bin/python -c "import ccxt, pandas, numpy; print('  ✓ imports OK')"
 
-# ── 4. Secrets ──────────────────────────────────────────────────────────────
+# ── 5. Secrets ──────────────────────────────────────────────────────────────
 if [ ! -f .env ]; then
   cp .env.example .env
   warn "Created .env from the example — it has NO Telegram credentials yet."
@@ -102,18 +143,18 @@ if ! grep -qE '^TELEGRAM_BOT_TOKEN=.+' .env; then
   warn "TELEGRAM_BOT_TOKEN is empty in .env — the bot will run but stay silent."
 fi
 
-# ── 5. One verification cycle before committing to the loop ─────────────────
+# ── 6. One verification cycle before committing to the loop ─────────────────
 say "Running one full cycle as a smoke test"
 if ! ./venv/bin/python run_bot.py; then
   die "The verification cycle failed. Fix that before installing the service —
       a broken loop under Restart=always just fails every 30 seconds forever."
 fi
 
-# ── 6. Record what this run is testing ──────────────────────────────────────
+# ── 7. Record what this run is testing ──────────────────────────────────────
 say "Recording the run manifest"
 ./venv/bin/python scripts/start_paper_run.py || true
 
-# ── 7. systemd ──────────────────────────────────────────────────────────────
+# ── 8. systemd ──────────────────────────────────────────────────────────────
 say "Installing the systemd service"
 sed "s|__USER__|$SERVICE_USER|g" deploy/spotsignal.service \
   | sudo tee /etc/systemd/system/spotsignal.service >/dev/null
