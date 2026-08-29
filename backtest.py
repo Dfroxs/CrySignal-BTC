@@ -66,8 +66,14 @@ def _htf_bars_needed(tf, lookback_days):
 # ---------------------------------------------------------------------------
 
 def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
-                 lookback_days=LOOKBACK_DAYS):
-    """Run backtest and return (trades, summary_stats) dicts."""
+                 lookback_days=LOOKBACK_DAYS, counterfactual=False):
+    """Run backtest and return (trades, summary_stats) dicts.
+
+    With *counterfactual*, every signal a gate rejects is ALSO simulated forward
+    and recorded under `stats["blocked"]`. Each entry gate in this system was
+    added to erase one specific losing trade; nothing ever measured the winners
+    it took with it.
+    """
     limit = lookback_days * (24 if timeframe == "1h" else 6) + MIN_WARMUP
     max_hold = MAX_HOLD_CANDLES.get(timeframe, 72)
     threshold = SPOT_THRESHOLD if mode == "spot" else SIGNAL_THRESHOLD
@@ -88,6 +94,10 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
     # Last RESOLVED trade per direction — feeds the re-entry quality gate that
     # live applies to first entries (run_bot._check_reentry_quality).
     last_resolved = {}
+    blocked = []
+    # Counterfactuals get the same one-position-per-direction rule as real
+    # trades, so a setup that keeps re-firing for ten candles is counted once.
+    cf_open_until = {"BUY": -1, "SELL": -1}
     htf_frames = _load_htf_series(symbol, timeframe, lookback_days)
     # Same-side cooldown after exit (audit #9). Stops the bot from immediately
     # re-entering the exact setup that just stopped out. 5 candles on 1H, 2 on 4H.
@@ -124,7 +134,14 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
             continue
 
         # ── Entry gate simulation ──
-        if not _passes_entry_gates(signal, mode, window, last_resolved):
+        gates = _failing_gates(signal, mode, window, last_resolved)
+        if gates:
+            if counterfactual and i > cf_open_until[signal["type"]]:
+                shadow = _simulate_forward(df, i, signal, max_hold, timeframe, mode, ec)
+                if shadow:
+                    shadow["gates"] = gates
+                    blocked.append(shadow)
+                    cf_open_until[signal["type"]] = i + shadow["candles_held"]
             continue
 
         # ── Forward simulation with trailing stop + partial TP ──
@@ -143,7 +160,7 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
 
     if not trades:
         logger.warning("No signals generated in backtest period.")
-        return [], {}
+        return [], ({"blocked": blocked} if counterfactual else {})
 
     stats = _compute_stats(trades, df.iloc[MIN_WARMUP]["close"])
     stats["lookback_days"] = lookback_days
@@ -151,6 +168,7 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
     # walk-forward split has to show the windows that produced nothing.
     stats["data_from"] = df.index[MIN_WARMUP]
     stats["data_to"] = df.index[-1]
+    stats["blocked"] = blocked
     return trades, stats
 
 
@@ -158,10 +176,16 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
 # Entry gate simulation
 # ---------------------------------------------------------------------------
 
-def _passes_entry_gates(signal, mode, window, last_resolved=None):
-    """Simulate entry gates with historical data — mirrors run_bot.py logic
-    for both BUY and SELL across spot/futures so backtest reflects live.
+def _failing_gates(signal, mode, window, last_resolved=None):
+    """Every gate that rejects this signal — not just the first.
+
+    Live only needs "does anything block this", but attribution needs all of
+    them: with an early return whichever gate happens to be checked first
+    absorbs the credit and every gate behind it looks inert. Returns [] when the
+    signal passes. Names match the `gate` slugs run_bot._block() writes to
+    signal_blocks, so a backtest breakdown and a live one read side by side.
     """
+    fails = []
     conf = signal.get("confidence", "WEAK")
     min_conf = "NORMAL"
     stype = signal["type"]
@@ -169,7 +193,7 @@ def _passes_entry_gates(signal, mode, window, last_resolved=None):
     # Confidence gate
     _CL = {"WEAK": 0, "NORMAL": 1, "STRONG": 2}
     if _CL.get(conf, -1) < _CL.get(min_conf, 0):
-        return False
+        fails.append("confidence_first")
 
     # Fakeout gate — symmetric on BUY upper-wick and SELL lower-wick
     last = window.iloc[-1]
@@ -183,10 +207,8 @@ def _passes_entry_gates(signal, mode, window, last_resolved=None):
         range_24h = hi24 - lo24
         upper_wick = (hi24 - last["close"]) / range_24h
         lower_wick = (last["close"] - lo24) / range_24h
-        if stype == "BUY" and upper_wick > 0.6:
-            return False  # fake bullish breakout
-        if stype == "SELL" and lower_wick > 0.6:
-            return False  # fake bearish breakdown
+        if (stype == "BUY" and upper_wick > 0.6) or (stype == "SELL" and lower_wick > 0.6):
+            fails.append("fakeout_first")
 
     # Direction-symmetric quality gates — apply for BOTH spot BUY and futures
     # SHORT (live applies these to futures first-entry too as of c5a5f04+ef5d55d).
@@ -201,10 +223,8 @@ def _passes_entry_gates(signal, mode, window, last_resolved=None):
 
     # Counter-trend regime block — symmetric BUY/SELL
     if regime_lbl in ("TRENDING", "VOLATILE"):
-        if stype == "BUY" and trend == "BEARISH":
-            return False
-        if stype == "SELL" and trend == "BULLISH":
-            return False
+        if (stype == "BUY" and trend == "BEARISH") or (stype == "SELL" and trend == "BULLISH"):
+            fails.append("regime_counter")
 
     # Trend confluence — 2/3 confirmations matching direction
     confluence = 0
@@ -217,13 +237,13 @@ def _passes_entry_gates(signal, mode, window, last_resolved=None):
         if trend == "BEARISH": confluence += 1
         if vwap and close < vwap: confluence += 1
     if confluence < 2:
-        return False
+        fails.append("trend_confluence")
 
     # Breakout chase — applies to BUY only (spot lineage); SELL has its own
     # over-extended check via wick gate above.
     if stype == "BUY" and mode == "spot":
         if atr and vwap and entry_px > vwap + atr:
-            return False  # FOMO entry
+            fails.append("breakout_chase")  # FOMO entry
 
     # Psychology-SL vulnerability — symmetric direction
     sl = signal.get("stop_loss", 0)
@@ -232,20 +252,19 @@ def _passes_entry_gates(signal, mode, window, last_resolved=None):
         if stype == "BUY":
             next_round = (int(sl // step) + 1) * step
             if (next_round - sl) / sl * 100 <= 0.15:
-                return False
+                fails.append("psy_sl_first")
         else:
             prev_round = int(sl // step) * step
             if (sl - prev_round) / sl * 100 <= 0.15:
-                return False
+                fails.append("psy_sl_first")
 
     # S/R proximity — live gate 0e (spot) / sr_first (futures): entry sitting
     # within 1× ATR of the level it has to break through.
     sr = signal.get("support_resistance") or {}
     if atr:
-        if stype == "BUY" and sr.get("resistance") and 0 < sr["resistance"] - entry_px <= atr:
-            return False
-        if stype == "SELL" and sr.get("support") and 0 < entry_px - sr["support"] <= atr:
-            return False
+        if (stype == "BUY" and sr.get("resistance") and 0 < sr["resistance"] - entry_px <= atr) or \
+           (stype == "SELL" and sr.get("support") and 0 < entry_px - sr["support"] <= atr):
+            fails.append("sr_first")
 
     # Re-entry quality — live gate 0a: after a resolved WIN/LOSS in this
     # direction, require a better price, a confidence upgrade, or ≥ +0.3 strength.
@@ -259,9 +278,9 @@ def _passes_entry_gates(signal, mode, window, last_resolved=None):
             prev_conf = get_signal_confidence(prev_strength, thr) if thr > 0 else "WEAK"
             if _CL.get(conf, -1) <= _CL.get(prev_conf, -1) and \
                signal.get("strength", 0) < prev_strength + 0.3:
-                return False
+                fails.append("reentry_first")
 
-    return True
+    return fails
 
 
 # ---------------------------------------------------------------------------
@@ -642,6 +661,53 @@ def print_walk_forward(windows):
     print("=" * 70 + "\n")
 
 
+def print_gate_counterfactual(trades, blocked):
+    """What each entry gate threw away, beside what it saved.
+
+    Every gate here was added to erase one specific losing trade. That is easy
+    to do after the fact; the open question has always been how many winners
+    went with it. A gate whose blocked trades sum to a PROFIT is costing money.
+    """
+    print("\n" + "=" * 70)
+    print("  🚦 ENTRY GATE COUNTERFACTUAL".center(70))
+    print("=" * 70)
+    if not blocked:
+        print("\n   No signals were blocked in this period.\n" + "=" * 70 + "\n")
+        return
+
+    by_gate = {}
+    for b in blocked:
+        for g in b["gates"]:
+            by_gate.setdefault(g, []).append(b)
+
+    print(f"\n   {'gate':<20} {'blocked':>7} {'only':>5} {'won':>5} {'net P&L':>10}  verdict")
+    print(f"   {'-' * 62}")
+    for gate, rows in sorted(by_gate.items(), key=lambda kv: -abs(sum(r["pnl_pct"] for r in kv[1]))):
+        won = sum(1 for r in rows if r["pnl_pct"] > 0)
+        # `only` = trades no other gate would have caught. A gate with a big
+        # `blocked` count but `only` = 0 is redundant: dropping it changes nothing.
+        alone = sum(1 for r in rows if len(r["gates"]) == 1)
+        net = sum(r["pnl_pct"] for r in rows)
+        verdict = "COSTS money" if net > 0 else ("saves money" if alone else "redundant")
+        print(f"   {gate:<20} {len(rows):>7} {alone:>5} {won:>5} "
+              f"{net:>9.2f}%  {verdict}")
+    print(f"\n   {'blocked'} counts every gate that would have caught the trade, so the\n"
+          f"   column sums past the {len(blocked)} distinct blocked signals; "
+          f"'only' does not.")
+
+    taken_pnl = sum(t["pnl_pct"] for t in trades
+                    if t["outcome"] in ("WIN", "LOSS", "TIME_EXIT", "VOL_EXIT"))
+    blocked_pnl = sum(b["pnl_pct"] for b in blocked)
+    print(f"\n   Taken     : {len(trades):>3} trades  {taken_pnl:>7.2f}%")
+    print(f"   Blocked   : {len(blocked):>3} trades  {blocked_pnl:>7.2f}%")
+    print(f"   Ungated   : {len(trades) + len(blocked):>3} trades  "
+          f"{taken_pnl + blocked_pnl:>7.2f}%")
+    if blocked_pnl > 0:
+        print(f"\n   ⚠️  The gates net-removed a POSITIVE {blocked_pnl:+.2f}% — "
+              f"as a set they cost more than they saved")
+    print("=" * 70 + "\n")
+
+
 def print_cost_sensitivity(rows):
     if not rows:
         return
@@ -732,6 +798,8 @@ if __name__ == "__main__":
                         help="Also split the run into N sequential windows and stat each")
     parser.add_argument("--costs", action="store_true",
                         help="Also show P&L re-priced at other execution-cost levels")
+    parser.add_argument("--gates", action="store_true",
+                        help="Also simulate every signal the entry gates rejected")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -740,7 +808,8 @@ if __name__ == "__main__":
     )
 
     tf = "4h" if args.mode == "spot" else "1h"
-    trades, stats = run_backtest(mode=args.mode, timeframe=tf, lookback_days=args.days)
+    trades, stats = run_backtest(mode=args.mode, timeframe=tf, lookback_days=args.days,
+                                 counterfactual=args.gates)
     print_backtest_results(trades, stats)
     if args.walk_forward:
         print_walk_forward(walk_forward(
@@ -749,3 +818,5 @@ if __name__ == "__main__":
         ))
     if args.costs:
         print_cost_sensitivity(cost_sensitivity(trades, args.mode))
+    if args.gates:
+        print_gate_counterfactual(trades, stats.get("blocked", []))

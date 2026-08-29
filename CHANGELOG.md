@@ -4,6 +4,55 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-29 — feat: entry-gate counterfactual
+
+### Added
+- **`backtest.py --gates`** — every signal an entry gate rejects is also
+  simulated forward, so each gate can be judged on what it *threw away* beside
+  what it saved. Each of these gates was added to erase one specific losing
+  trade; that is easy after the fact, and nothing had ever measured the winners
+  that went with it.
+- `_passes_entry_gates()` became `_failing_gates()`, returning **every** gate
+  that rejects a signal rather than the first. With an early return whichever
+  gate is checked first absorbs all the credit and the ones behind it look
+  inert — useless for deciding what to prune. The report separates `blocked`
+  (any gate would have caught it) from `only` (no other gate would have).
+  Counterfactual entries obey the same one-position-per-direction rule as real
+  trades, so a setup that re-fires for ten candles is counted once.
+
+### Measured — 180-day futures run
+```
+gate                 blocked  only   won    net P&L  verdict
+confidence_first          36     3     5    -22.16%  saves money
+trend_confluence          31     0     4    -17.65%  redundant
+fakeout_first             32     0     4    -16.77%  redundant
+regime_counter            23     1     3    -12.77%  saves money
+reentry_first             17     0     1     -9.71%  redundant
+psy_sl_first               7     0     0     -4.21%  redundant
+sr_first                   1     0     0     -2.00%  redundant
+
+Taken     :   3 trades    -2.89%
+Blocked   :  46 trades   -26.76%
+Ungated   :  49 trades   -29.65%
+```
+Two readings worth recording:
+1. **Five of seven gates are fully redundant on this window** — 0 unique blocks.
+   Removing them would not change a single trade taken. Only
+   `confidence_first` (3 unique) and `regime_counter` (1) do work nothing else
+   does.
+2. **The gates are carrying the system, not the score.** The engine produced 49
+   signals; 46 were losers the gates caught. A −29.65% ungated result becomes
+   −2.89%. That points at the scoring stack, not the filters, as the part that
+   is not earning its complexity.
+
+Neither reading is acted on here — one 180-day window is not enough to prune
+on. It is the first evidence either way.
+
+### Tests
+- Gate attribution lists every failing gate, with no duplicates. Suite: 57/57.
+
+---
+
 ## 2026-08-29 — feat: walk-forward windows + execution-cost sensitivity
 
 Validation tooling, not tuning. Nothing about the strategy changed.

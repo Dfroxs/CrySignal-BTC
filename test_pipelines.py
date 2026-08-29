@@ -857,12 +857,26 @@ def _gate_signal():
 def test_wick_gate_measures_24_hours_in_both_modes():
     """The fakeout gate looks back 24 HOURS: 6 bars on spot 4H, 24 on futures 1H.
     They were swapped, so spot measured 96h and futures 6h."""
-    from backtest import _passes_entry_gates
+    from backtest import _failing_gates
     w = _gate_window()
-    assert _passes_entry_gates(_gate_signal(), "spot", w) is True, \
+    assert _failing_gates(_gate_signal(), "spot", w) == [], \
         "spot must look at 6 bars (4H × 6 = 24h) — the spike is outside it"
-    assert _passes_entry_gates(_gate_signal(), "futures", w) is False, \
+    assert "fakeout_first" in _failing_gates(_gate_signal(), "futures", w), \
         "futures must look at 24 bars (1H × 24 = 24h) — the spike is inside it"
+
+def test_failing_gates_reports_every_gate_not_just_the_first():
+    """Attribution needs all of them: with an early return the gate checked
+    first absorbs the credit and everything behind it looks inert."""
+    from backtest import _failing_gates
+    w = _gate_window()
+    bad = _gate_signal()
+    bad["confidence"] = "WEAK"                       # trips confidence_first
+    bad["_regime"] = {"regime": "TRENDING", "trend_dir": "BEARISH"}   # + regime_counter
+    gates = _failing_gates(bad, "futures", w)
+    assert "confidence_first" in gates and "regime_counter" in gates, gates
+    assert len(gates) >= 3, f"confluence should fail too, got {gates}"
+    assert len(gates) == len(set(gates)), f"a gate must not be counted twice: {gates}"
+
 
 def test_backtest_cost_model_matches_live():
     """backtest._net_pnl must agree with trading/paper.py::_calc_pnl — the old
@@ -1098,6 +1112,7 @@ if __name__ == "__main__":
 
     print("\n── 12. Backtest fidelity & risk accounting ──")
     run("wick gate = 24h in both modes",          test_wick_gate_measures_24_hours_in_both_modes)
+    run("gate attribution lists all gates",       test_failing_gates_reports_every_gate_not_just_the_first)
     run("backtest costs match live",              test_backtest_cost_model_matches_live)
     run("drawdown is peak-to-trough",             test_drawdown_is_peak_to_trough)
     run("HTF ignores the forming bar",            test_htf_at_ignores_the_still_forming_bar)
