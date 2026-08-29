@@ -101,7 +101,11 @@ if ! ./venv/bin/python run_bot.py; then
       a broken loop under Restart=always just fails every 30 seconds forever."
 fi
 
-# ── 6. systemd ──────────────────────────────────────────────────────────────
+# ── 6. Record what this run is testing ──────────────────────────────────────
+say "Recording the run manifest"
+./venv/bin/python scripts/start_paper_run.py || true
+
+# ── 7. systemd ──────────────────────────────────────────────────────────────
 say "Installing the systemd service"
 sed "s|__USER__|$SERVICE_USER|g" deploy/spotsignal.service \
   | sudo tee /etc/systemd/system/spotsignal.service >/dev/null
