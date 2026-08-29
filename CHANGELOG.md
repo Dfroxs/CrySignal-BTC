@@ -4,6 +4,75 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-29 — feat: condition-set machinery; the pruning experiment failed
+
+Option (a) from the review — prune the scoring stack — was implemented,
+measured, and **rejected on the evidence**. The machinery stays, the pruning
+does not.
+
+### Added
+- **`config.CONDITION_MAX`** — the per-condition BUY-side ceiling, keyed by the
+  engine's attribution names. It was a comment table; it is data now because the
+  ceiling and the thresholds have to move together when the condition set does.
+  Verified to reproduce the documented 22.50 / 26.50 exactly.
+- **`config.DISABLED_CONDITIONS`** — the active set, honoured by
+  `generate_signals(disabled=None)`. `--disable a,b` adds to it for one run;
+  `--all-conditions` ignores it.
+- **Thresholds derived as a fraction of the ceiling** rather than absolute
+  numbers. Pruning lowers the ceiling, and an absolute bar would silently become
+  a stricter one — an experiment that changed the condition set would then be
+  measuring two changes at once. The fractions reproduce 5.2 / 4.3 / 4.0 / 8.0 /
+  3.0 / 7.0 exactly at the pre-pruning maxima, so the mechanism itself moves
+  nothing.
+- **`backtest.py --start / --end`** so one period can be tested against another.
+
+### The experiment
+Hypothesis: the nine conditions with no stable candle-level predictive power
+(`htf`, `cmf`, `vwap`, `rsi_divergence`, `support_resistance`,
+`effort_vs_result`, `volume`, `candlestick`, `obv`) are dead weight, and
+dropping them leaves the same result with far fewer parameters.
+
+First attempt confounded two changes — a smaller condition set *and* a bar that
+had moved relative to the score distribution. Signals fell 8 → 2 and the result
+looked catastrophic. Isolating it by calibrating the pruned threshold on 2024 to
+match the full set's signal count, then applying that threshold unchanged to
+2025:
+
+| window | full set | pruned set |
+|---|---|---|
+| spot 2024 (calibration) | +3.71%, PF 1.58, 8 signals | +2.84%, PF 1.75, 6 signals |
+| spot 2025 (out-of-sample) | **+0.55%, PF 1.23**, 7 signals | **−1.33%, PF 0.51**, 5 signals |
+| futures 2024 H1 | **+0.64%, PF 1.39**, 5 signals | **−0.82%, PF 0.00**, 1 signal |
+
+The full set wins in all three windows. `DISABLED_CONDITIONS` is therefore
+empty and scoring is unchanged.
+
+### What this says
+The candle-level measurement and the trade-level one disagree, and both can be
+right. Marginal IC asks whether a condition predicts the next N bars *across
+every candle*; this system trades on the thin tail where the combined score
+clears a bar. A weak, weakly-correlated component can contribute nothing on
+average and still improve the ranking at that tail. Ablation over all candles
+does not measure the thing the system actually uses.
+
+With ~15 trades across both years, neither result is conclusive — which is the
+reason to keep the mechanism and act on neither.
+
+### Correction
+Earlier entries described this system as loss-making in every test. That was
+drawn from the trailing 2026 window, where it produces almost no signals. Over
+2024 and 2025 the unmodified system is **profitable on spot in both years**
+(+3.71% PF 1.58, +0.55% PF 1.23) and on futures 2024 H1 (+0.64% PF 1.39). The
+sample is far too small to call an edge, but "every test is negative" was wrong
+and came from generalising one window.
+
+### Tests
+- Thresholds track the active set; `CONDITION_MAX` covers every condition the
+  engine scores; `disabled=None` applies the configured set while an empty
+  collection scores everything. Suite: 65/65.
+
+---
+
 ## 2026-08-29 — fix: gate counterfactual reports per-trade, not just totals
 
 ### Fixed

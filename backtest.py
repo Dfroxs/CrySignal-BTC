@@ -66,7 +66,8 @@ def _htf_bars_needed(tf, lookback_days):
 # ---------------------------------------------------------------------------
 
 def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
-                 lookback_days=LOOKBACK_DAYS, counterfactual=False, disabled=None):
+                 lookback_days=LOOKBACK_DAYS, counterfactual=False, disabled=None,
+                 start=None, end=None):
     """Run backtest and return (trades, summary_stats) dicts.
 
     With *counterfactual*, every signal a gate rejects is ALSO simulated forward
@@ -79,8 +80,15 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
     threshold = SPOT_THRESHOLD if mode == "spot" else SIGNAL_THRESHOLD
     ec = EXECUTION_CONFIG
 
-    logger.info("Fetching %d days of %s %s OHLCV ...", lookback_days, mode, symbol)
-    df = fetch_ohlcv_df(symbol, timeframe, limit=limit)
+    if start is not None:
+        span = pd.Timedelta(hours=4 if timeframe == "4h" else 1) * MIN_WARMUP
+        since_ms = int((pd.Timestamp(start) - span).timestamp() * 1000)
+        until_ms = int(pd.Timestamp(end).timestamp() * 1000) if end is not None else None
+        logger.info("Fetching %s %s from %s to %s ...", mode, timeframe, start, end or "now")
+        df = fetch_ohlcv_df(symbol, timeframe, since=since_ms, until=until_ms)
+    else:
+        logger.info("Fetching %d days of %s %s OHLCV ...", lookback_days, mode, symbol)
+        df = fetch_ohlcv_df(symbol, timeframe, limit=limit)
     if len(df) < MIN_WARMUP + 10:
         logger.error("Not enough data (got %d candles).", len(df))
         return [], {}
@@ -98,12 +106,15 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
     # Counterfactuals get the same one-position-per-direction rule as real
     # trades, so a setup that keeps re-firing for ten candles is counted once.
     cf_open_until = {"BUY": -1, "SELL": -1}
-    htf_frames = _load_htf_series(symbol, timeframe, lookback_days)
+    htf_frames = _load_htf_series(symbol, timeframe, lookback_days, start=start, end=end)
     # Same-side cooldown after exit (audit #9). Stops the bot from immediately
     # re-entering the exact setup that just stopped out. 5 candles on 1H, 2 on 4H.
     cooldown_n = 5 if timeframe == "1h" else 2
     cooldown_until = {"BUY": -1, "SELL": -1}
-    for i in range(MIN_WARMUP, len(df) - max_hold - 1):
+    loop_start = MIN_WARMUP
+    if start is not None:
+        loop_start = max(MIN_WARMUP, int(df.index.searchsorted(pd.Timestamp(start))))
+    for i in range(loop_start, len(df) - max_hold - 1):
         window = df.iloc[:i + 1].copy()
         sr = detect_support_resistance(window)
 
@@ -162,11 +173,11 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
         logger.warning("No signals generated in backtest period.")
         return [], ({"blocked": blocked} if counterfactual else {})
 
-    stats = _compute_stats(trades, df.iloc[MIN_WARMUP]["close"])
+    stats = _compute_stats(trades, df.iloc[loop_start]["close"])
     stats["lookback_days"] = lookback_days
     # The evaluated span, not the span between the first and last trade — a
     # walk-forward split has to show the windows that produced nothing.
-    stats["data_from"] = df.index[MIN_WARMUP]
+    stats["data_from"] = df.index[loop_start]
     stats["data_to"] = df.index[-1]
     stats["blocked"] = blocked
     return trades, stats
@@ -767,7 +778,10 @@ def print_backtest_results(trades, stats):
     print("  📊 BACKTEST RESULTS".center(70))
     print("=" * 70)
 
-    print(f"\n   Period:           {stats.get('lookback_days', LOOKBACK_DAYS)} days")
+    _from, _to = stats.get("data_from"), stats.get("data_to")
+    period = (f"{_from:%Y-%m-%d} → {_to:%Y-%m-%d}" if _from is not None
+              else f"{stats.get('lookback_days', LOOKBACK_DAYS)} days")
+    print(f"\n   Period:           {period}")
     print(f"   Start Price:      ${stats['start_price']:,.2f}")
 
     print(f"\n   Total Signals:    {stats['total_signals']}")
@@ -830,7 +844,12 @@ if __name__ == "__main__":
     parser.add_argument("--gates", action="store_true",
                         help="Also simulate every signal the entry gates rejected")
     parser.add_argument("--disable", default="",
-                        help="Comma-separated conditions to ablate, e.g. htf,mfi,rsi")
+                        help="Extra conditions to ablate on top of config.DISABLED_CONDITIONS")
+    parser.add_argument("--all-conditions", action="store_true",
+                        help="Score every condition, ignoring config.DISABLED_CONDITIONS")
+    parser.add_argument("--start", default=None, metavar="YYYY-MM-DD",
+                        help="Explicit window start — lets one period be tested against another")
+    parser.add_argument("--end", default=None, metavar="YYYY-MM-DD", help="Explicit window end")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -839,11 +858,18 @@ if __name__ == "__main__":
     )
 
     tf = "4h" if args.mode == "spot" else "1h"
-    off = [c.strip() for c in args.disable.split(",") if c.strip()]
-    if off:
-        print(f"\n   ⚗️  Ablation: {', '.join(off)} disabled\n")
+    from config import DISABLED_CONDITIONS
+    extra = [c.strip() for c in args.disable.split(",") if c.strip()]
+    if args.all_conditions:
+        off = list(extra)
+        print(f"\n   ⚗️  Scoring ALL conditions (config.DISABLED_CONDITIONS ignored)\n")
+    else:
+        off = sorted(set(DISABLED_CONDITIONS) | set(extra))
+        print(f"\n   ⚗️  Active set: {len(off)} conditions disabled — "
+              f"{', '.join(off)}\n")
     trades, stats = run_backtest(mode=args.mode, timeframe=tf, lookback_days=args.days,
-                                 counterfactual=args.gates, disabled=off)
+                                 counterfactual=args.gates, disabled=off,
+                                 start=args.start, end=args.end)
     print_backtest_results(trades, stats)
     if args.walk_forward:
         print_walk_forward(walk_forward(

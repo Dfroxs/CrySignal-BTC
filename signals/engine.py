@@ -4,7 +4,7 @@ integrate_news_with_signal() for macro/sentiment overlay.
 
 import pandas as pd
 
-from config import RISK_CONFIG, SPOT_THRESHOLD_MIN, THRESHOLD_MIN
+from config import DISABLED_CONDITIONS, RISK_CONFIG, SPOT_THRESHOLD_MIN, THRESHOLD_MIN
 from signals.indicators import (calculate_adx, classify_regime,
                                 detect_candlestick_pattern, detect_rsi_divergence)
 from signals.market_data import get_signal_confidence
@@ -40,7 +40,9 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     # to answer which of the 22 conditions actually carry predictive power.
     _contrib = {}
     _seen = [0.0, 0.0]
-    _off = set(disabled or ())
+    # None = the configured active set; pass an empty collection to score
+    # everything, which is what backtest.py --all-conditions does.
+    _off = set(DISABLED_CONDITIONS if disabled is None else disabled)
 
     def _mark(name):
         """Close out one condition's contribution.

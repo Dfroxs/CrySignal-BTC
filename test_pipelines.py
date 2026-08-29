@@ -725,8 +725,11 @@ def test_spot_threshold_floor_is_spot_minimum():
 
 def test_explicit_sub_minimum_override_is_respected():
     """An env override already below the mode minimum is a deliberate choice —
-    the floor guards the bumps, not the operator's chosen base."""
-    override = 3.5   # below THRESHOLD_MIN (4.0)
+    the floor guards the bumps, not the operator's chosen base. Derived from
+    THRESHOLD_MIN rather than hard-coded: the minimum scales with the active
+    condition set, so a literal would stop testing what it claims to."""
+    from config import THRESHOLD_MIN
+    override = round(THRESHOLD_MIN - 0.5, 2)
     thr = _engine_threshold("futures", override)
     assert thr == override, f"override {override} was clamped up to {thr}"
 
@@ -1094,13 +1097,18 @@ def test_cost_sensitivity_reprices_exactly():
 
 # ── 14. Condition attribution & ablation ─────────────────────────────────────
 
-def _contrib_signal(disabled=None):
+_UNSET = object()
+
+def _contrib_signal(disabled=_UNSET):
+    """`disabled` defaults to () — score everything — so a test is not silently
+    measuring the configured active set unless it asks for it."""
     from signals.engine import generate_signals
     from signals.indicators import detect_support_resistance
     df = _synthetic_df()
     return generate_signals(df, htf=None, market_structure=None,
                             sr=detect_support_resistance(df), mode="futures",
-                            threshold_override=5.2, disabled=disabled)
+                            threshold_override=5.2,
+                            disabled=() if disabled is _UNSET else disabled)
 
 def test_contributions_sum_to_the_scores():
     """The attribution checkpoints only read the accumulators. If the parts stop
@@ -1135,11 +1143,60 @@ def test_ablation_removes_exactly_that_condition():
     assert abs(off["sell_score"] - (base["sell_score"] - b_sell)) < 0.011, \
         f"{target}: sell {off['sell_score']} != {base['sell_score']} - {b_sell}"
 
-def test_ablation_of_nothing_is_a_no_op():
-    """An empty disable list must reproduce the unmodified engine exactly."""
+def test_empty_disable_scores_every_condition():
+    """An empty collection means score everything — distinct from None."""
     base, same = _contrib_signal(), _contrib_signal(disabled=[])
     assert (base["buy_score"], base["sell_score"], base["type"]) == \
            (same["buy_score"], same["sell_score"], same["type"])
+
+def test_default_active_set_comes_from_config():
+    """`disabled=None` must apply config.DISABLED_CONDITIONS and nothing else —
+    the pruned set has to be a config decision, not a caller's."""
+    from config import DISABLED_CONDITIONS
+    every  = _contrib_signal(disabled=())
+    active = _contrib_signal(disabled=None)
+
+    for name in DISABLED_CONDITIONS:
+        assert active["_contributions"].get(name, (0.0, 0.0)) == (0.0, 0.0), \
+            f"{name} is in DISABLED_CONDITIONS but still scored"
+
+    # Exactness holds as long as no ablated condition also clears a flag a later
+    # block reads — rsi_divergence is the one that can, so guard on it.
+    if every["_contributions"].get("rsi_divergence", (0.0, 0.0)) == (0.0, 0.0):
+        removed_buy = sum(every["_contributions"].get(n, (0.0, 0.0))[0]
+                          for n in DISABLED_CONDITIONS)
+        assert abs(active["buy_score"] - (every["buy_score"] - removed_buy)) < 0.011, \
+            f"active {active['buy_score']} != {every['buy_score']} - {removed_buy}"
+
+
+def test_thresholds_track_the_active_condition_set():
+    """Thresholds are a fraction of the achievable ceiling, so pruning a
+    condition lowers the bar with it. An absolute bar would silently become a
+    stricter one and any pruning experiment would be measuring two changes."""
+    import importlib
+    import config
+    saved = config.DISABLED_CONDITIONS
+    try:
+        assert config.SPOT_MAX_SCORE == 22.50 and config.SIGNAL_MAX_SCORE == 26.50, \
+            "CONDITION_MAX must reproduce the documented ceilings"
+        assert config.SPOT_THRESHOLD == 4.30 and config.SIGNAL_THRESHOLD == 5.20, \
+            "the fractions must reproduce the pre-existing thresholds"
+
+        config.DISABLED_CONDITIONS = frozenset({"htf"})       # a 2.00 block
+        assert config._max_score("spot") == 20.50, config._max_score("spot")
+        assert config._max_score("futures") == 24.50, config._max_score("futures")
+        lean = round(24.50 * config._THR_FRACTION, 2)
+        assert lean < 5.20, "a smaller ceiling must lower the bar, not keep it"
+    finally:
+        config.DISABLED_CONDITIONS = saved
+
+def test_condition_max_covers_every_scored_condition():
+    """A condition the engine scores but CONDITION_MAX does not know about would
+    silently break the ceiling and every threshold derived from it."""
+    from config import CONDITION_MAX
+    sig = _contrib_signal(disabled=())
+    unknown = sorted(set(sig["_contributions"]) - set(CONDITION_MAX))
+    assert not unknown, f"conditions missing from CONDITION_MAX: {unknown}"
 
 
 if __name__ == "__main__":
@@ -1233,7 +1290,10 @@ if __name__ == "__main__":
     print("\n── 14. Condition attribution & ablation ──")
     run("contributions sum to the scores",        test_contributions_sum_to_the_scores)
     run("ablation removes exactly one condition", test_ablation_removes_exactly_that_condition)
-    run("empty ablation is a no-op",              test_ablation_of_nothing_is_a_no_op)
+    run("empty disable scores everything",        test_empty_disable_scores_every_condition)
+    run("default active set comes from config",   test_default_active_set_comes_from_config)
+    run("thresholds track the active set",        test_thresholds_track_the_active_condition_set)
+    run("CONDITION_MAX covers every condition",   test_condition_max_covers_every_scored_condition)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
