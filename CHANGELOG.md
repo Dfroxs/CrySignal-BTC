@@ -4,6 +4,45 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-30 — fix: session/regime bumps apply in full again
+
+Closes the fifteenth review finding, the one held back for a decision.
+
+### Fixed
+`market_data._get_adaptive_threshold()` already ends with
+`max(base - step, t_min)`, so the base it hands the engine is never below the
+mode minimum. Re-applying that same floor after the session and regime bumps
+therefore discarded every negative one whenever the controller had walked the
+base down to its floor — `max(4.0 − 0.25 − 0.25, 4.0)` — which is exactly the
+state a lower bar is meant to answer. Only the +0.5 Asia bump ever survived,
+leaving the mechanism one-directional.
+
+The mode minimum governs the adaptive **base**. The bumps are a transient layer
+above it and now move the effective bar past it:
+
+```
+futures  base 4.00  regime −0.25  session −0.25  →  effective 3.50
+spot     base 3.00  regime −0.25  session −0.25  →  effective 2.50
+```
+
+What remains in the engine is a single absolute sanity floor
+(`_ABS_MIN_THRESHOLD = 0.5`): below that a threshold stops being a bar and
+becomes an off switch.
+
+This supersedes the per-mode floor added earlier in this branch. That change
+fixed a real bug — the floor was hard-coded to 3.0, the *spot* minimum, applied
+to both modes — but fixed it in the wrong place, duplicating a clamp the
+controller already owns.
+
+### Tests
+The three tests that encoded the old contract are replaced by four that encode
+the new one: bumps apply in full in both modes, the effective bar is allowed
+below the base floor, the sanity floor holds against a pathological override,
+and an AST check that the engine no longer references either mode minimum —
+text search would trip on the comment explaining why. Suite: 67/67.
+
+---
+
 ## 2026-08-30 — fix: remaining code-review findings
 
 Second pass on the 15-finding review. Fourteen are now closed; the fifteenth is

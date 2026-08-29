@@ -705,33 +705,55 @@ def _engine_threshold(mode, override):
     sig = generate_signals(_synthetic_df(), htf=None, market_structure=None,
                            sr=None, mode=mode, threshold_override=override)
     assert sig["_regime"]["threshold_bump"] < 0, \
-        "fixture must produce a negative regime bump for the floor to be exercised"
-    return sig["_threshold"]
+        "fixture must produce a negative regime bump for these tests to mean anything"
+    return sig
 
-def test_futures_threshold_floor_is_futures_minimum():
-    """Session + regime bumps must not push futures below THRESHOLD_MIN.
+_SESSION_BUMP = -0.25   # the fixture's last candle is 14:00 UTC — US session
 
-    Was: floor hard-coded to 3.0 (the SPOT minimum), so futures gated at 3.5.
-    """
+def test_session_and_regime_bumps_apply_in_full():
+    """The bumps must move the effective bar even when the adaptive base already
+    sits at its mode minimum — that is exactly when the controller wants a lower
+    bar. Re-applying the per-mode floor here clipped them to nothing, leaving
+    only the +0.5 Asia bump and making the mechanism one-directional."""
     from config import THRESHOLD_MIN
-    thr = _engine_threshold("futures", THRESHOLD_MIN)
-    assert thr >= THRESHOLD_MIN, f"futures threshold {thr} below THRESHOLD_MIN {THRESHOLD_MIN}"
+    sig = _engine_threshold("futures", THRESHOLD_MIN)
+    expected = THRESHOLD_MIN + sig["_regime"]["threshold_bump"] + _SESSION_BUMP
+    assert abs(sig["_threshold"] - expected) < 0.011, \
+        f"bumps were clipped: {sig['_threshold']} != {expected}"
+    assert sig["_threshold"] < THRESHOLD_MIN, \
+        "a negative bump must be able to take the effective bar below the base floor"
 
-def test_spot_threshold_floor_is_spot_minimum():
-    """Spot keeps its own floor — this path must not regress with the futures fix."""
+def test_spot_bumps_apply_in_full_too():
     from config import SPOT_THRESHOLD_MIN
-    thr = _engine_threshold("spot", SPOT_THRESHOLD_MIN)
-    assert thr >= SPOT_THRESHOLD_MIN, f"spot threshold {thr} below SPOT_THRESHOLD_MIN"
+    sig = _engine_threshold("spot", SPOT_THRESHOLD_MIN)
+    expected = SPOT_THRESHOLD_MIN + sig["_regime"]["threshold_bump"] + _SESSION_BUMP
+    assert abs(sig["_threshold"] - expected) < 0.011, \
+        f"bumps were clipped: {sig['_threshold']} != {expected}"
 
-def test_explicit_sub_minimum_override_is_respected():
-    """An env override already below the mode minimum is a deliberate choice —
-    the floor guards the bumps, not the operator's chosen base. Derived from
-    THRESHOLD_MIN rather than hard-coded: the minimum scales with the active
-    condition set, so a literal would stop testing what it claims to."""
-    from config import THRESHOLD_MIN
-    override = round(THRESHOLD_MIN - 0.5, 2)
-    thr = _engine_threshold("futures", override)
-    assert thr == override, f"override {override} was clamped up to {thr}"
+def test_absolute_sanity_floor_holds():
+    """A pathological override must not yield a zero or negative bar — below the
+    sanity floor a threshold stops being a bar and becomes an off switch."""
+    from signals.engine import _ABS_MIN_THRESHOLD, generate_signals
+    sig = generate_signals(_synthetic_df(), htf=None, market_structure=None,
+                           sr=None, mode="futures", threshold_override=0.1)
+    assert sig["_threshold"] == _ABS_MIN_THRESHOLD, \
+        f"expected the sanity floor {_ABS_MIN_THRESHOLD}, got {sig['_threshold']}"
+
+def test_engine_does_not_reapply_the_mode_minimum():
+    """The per-mode floor belongs to the adaptive controller, which ends with
+    `max(base - step, t_min)`. Enforcing it in both places is what made the
+    bumps inert."""
+    import ast
+    with open("signals/engine.py") as f:
+        tree = ast.parse(f.read())
+    # AST, not text search: the comment explaining why the floor was removed
+    # names the constant, and a substring check would trip on its own rationale.
+    referenced = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    referenced |= {a.name for n in ast.walk(tree)
+                   if isinstance(n, ast.ImportFrom) for a in n.names}
+    leaked = referenced & {"THRESHOLD_MIN", "SPOT_THRESHOLD_MIN"}
+    assert not leaked, \
+        f"engine must not re-floor at the mode minimum — market_data already does: {leaked}"
 
 def test_news_overlay_preserves_htf_confidence_downgrade():
     """STRONG requires 1D HTF agreement (audit #9). The post-news recalculation
@@ -1290,9 +1312,10 @@ if __name__ == "__main__":
     run("no credentials → 0, not None",           test_combined_telegram_returns_zero_without_credentials)
 
     print("\n── 10. Threshold & confidence consistency ──")
-    run("futures floor = THRESHOLD_MIN",          test_futures_threshold_floor_is_futures_minimum)
-    run("spot floor = SPOT_THRESHOLD_MIN",        test_spot_threshold_floor_is_spot_minimum)
-    run("sub-minimum override respected",         test_explicit_sub_minimum_override_is_respected)
+    run("session/regime bumps apply in full",     test_session_and_regime_bumps_apply_in_full)
+    run("spot bumps apply in full",               test_spot_bumps_apply_in_full_too)
+    run("absolute sanity floor holds",            test_absolute_sanity_floor_holds)
+    run("engine does not re-floor at mode min",   test_engine_does_not_reapply_the_mode_minimum)
     run("news overlay keeps HTF downgrade",       test_news_overlay_preserves_htf_confidence_downgrade)
     run("pipelines keep effective _threshold",    test_pipelines_keep_effective_threshold)
 
