@@ -4,6 +4,61 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-29 — feat: per-condition predictive power (scripts/condition_ic.py)
+
+### Added
+- **`signals/engine.py` per-condition attribution.** `generate_signals()` now
+  emits `signal['_contributions']` — the buy/sell delta each numbered condition
+  contributed. Implemented as checkpoints that only *read* the accumulators, so
+  it cannot alter a score: verified across 63 candles against the previous
+  commit with zero differences in `buy_score`, `sell_score` or signal type, and
+  the contributions summing exactly to the final scores.
+- **`scripts/condition_ic.py`.** The full system fires ~12 times a year and can
+  never be validated on its own trade count; its components are evaluated on
+  every candle. This scores each condition's contribution against the forward
+  return over thousands of observations and reports fire rate, rank IC, mean
+  forward return when bullish vs bearish, the spread between them, and a Welch
+  t-statistic.
+
+### Measured
+FUTURES 1H, 180 days, 6-bar horizon — 4314 candles, baseline drift +0.027%:
+```
+htf                       100%  IC -0.013   edge -0.138%   t -3.5
+obv                       100%  IC -0.052   edge -0.057%   t -1.8
+stoch_rsi                  51%  IC +0.039   edge +0.074%   t +1.8
+… 13 more, all |t| < 2
+Distinguishable from noise: 1/16 — and it is inverted
+```
+SPOT 4H, 400 days, 3-bar horizon:
+```
+htf                       100%  IC -0.053   edge -0.142%   t -2.3
+macd                      100%  IC +0.017   edge +0.131%   t +2.1
+Distinguishable from noise: 2/16
+```
+Two findings, stated as findings and not acted on:
+1. **The HTF condition scores backwards in both runs** — different mode,
+   timeframe, period and horizon, same sign, both |t| ≥ 2. It carries the
+   largest weight in the engine after divergence (up to +2.0).
+2. **Almost nothing else separates from noise.** 14 of 16 measurable conditions
+   in futures, 14 of 16 in spot.
+
+The report prints its own caveat: consecutive candles share overlapping forward
+windows, so the observations are autocorrelated and these t-statistics are
+optimistic. `|t| ≥ 2` means "worth investigating", not "proven".
+
+### Found, not fixed
+- **Condition 16 (S/R proximity) can never fire.** `detect_support_resistance()`
+  only returns levels at least `tolerance` = 0.5% away from the close, while the
+  condition scores only when a level is within 0.2×ATR. Measured over 300
+  candles per timeframe: nearest level is ≥0.504% away, the proximity window
+  reaches at most 0.270% (1H) / 0.373% (4H). The ranges cannot overlap, in
+  either mode — so `✓ Bouncing off support` has never once been printed, and
+  both MAX_SCORE constants overstate by 0.75. Fixing it means choosing a new
+  parameter (widen the window, lower the detector tolerance, or delete the
+  condition); that choice should be measured, not guessed.
+
+---
+
 ## 2026-08-29 — feat: entry-gate counterfactual
 
 ### Added
