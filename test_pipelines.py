@@ -947,6 +947,20 @@ def test_drawdown_is_peak_to_trough():
         h.SIGNAL_HISTORY_DB, h.DB = saved_path, saved_db
         os.unlink(path)
 
+def _htf_frames(spec):
+    """Build the (series, close_times) tuples _load_htf_series produces.
+
+    Close times are precomputed there so _htf_at can binary-search instead of
+    masking the whole series on every candle; the tests must use the same shape
+    or they stop exercising the real lookup.
+    """
+    import pandas as pd
+    out = {}
+    for tf, (trends, freq, delta) in spec.items():
+        s = _htf_frame(trends, freq)
+        out[tf] = (s, (s.index + delta).values)
+    return out
+
 def _htf_frame(trends, freq, start="2026-01-01"):
     import pandas as pd
     idx = pd.date_range(start, periods=len(trends), freq=freq)
@@ -960,10 +974,10 @@ def test_htf_at_ignores_the_still_forming_bar():
     backwards in time. Only bars that had already closed may be read."""
     import pandas as pd
     from backtest import _htf_at
-    daily  = _htf_frame(["BULLISH", "BULLISH", "BEARISH"], "1D")   # 01-01, 01-02, 01-03
-    weekly = _htf_frame(["BULLISH"], "1W")
-    frames = {"1d": (daily, pd.Timedelta(days=1)),
-              "1w": (weekly, pd.Timedelta(weeks=1))}
+    frames = _htf_frames({
+        "1d": (["BULLISH", "BULLISH", "BEARISH"], "1D", pd.Timedelta(days=1)),
+        "1w": (["BULLISH"], "1W", pd.Timedelta(weeks=1)),
+    })
     htf = _htf_at(frames, pd.Timestamp("2026-01-03 12:00"))
     assert htf["1d"] == "BULLISH", \
         f"the 01-03 bar had not closed at 12:00 — got {htf['1d']} (look-ahead)"
@@ -977,12 +991,15 @@ def test_htf_at_alignment_matches_live_rule():
     day  = pd.Timedelta(days=1)
     ts   = pd.Timestamp("2026-03-01")
 
-    agree  = {"1d": (_htf_frame(["BULLISH"] * 40, "1D"), day),
-              "1w": (_htf_frame(["BULLISH"] * 8, "1W"), week)}
-    differ = {"1d": (_htf_frame(["BULLISH"] * 40, "1D"), day),
-              "1w": (_htf_frame(["BEARISH"] * 8, "1W"), week)}
+    agree  = _htf_frames({"1d": (["BULLISH"] * 40, "1D", day),
+                          "1w": (["BULLISH"] * 8, "1W", week)})
+    differ = _htf_frames({"1d": (["BULLISH"] * 40, "1D", day),
+                          "1w": (["BEARISH"] * 8, "1W", week)})
     assert _htf_at(agree, ts)["aligned"] is True
     assert _htf_at(differ, ts)["aligned"] is False
+    # An empty frame set means the HTF fetch failed; the run must continue with
+    # condition 6 neutral rather than dying.
+    assert _htf_at({}, ts) is None
 
 def test_range_fetch_walks_forward_to_the_requested_span():
     """An explicit span is what makes independent replication possible at all —

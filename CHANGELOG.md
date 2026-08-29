@@ -4,6 +4,79 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-30 — fix: remaining code-review findings
+
+Second pass on the 15-finding review. Fourteen are now closed; the fifteenth is
+a behavioural question recorded below rather than changed unilaterally.
+
+### Fixed — measurement correctness
+- **The gate counterfactual compared a filtered numerator with an unfiltered
+  count.** `taken_pnl` excluded OPEN rows while `n_taken` counted them, and
+  every OPEN shadow (`_simulate_forward` never returns None — it falls through
+  to an `"OPEN"` row at max_hold) padded the blocked denominator with a zero.
+  Both sides now filter on a single `RESOLVED` tuple. **Re-measured: the
+  earlier conclusion survives** — taken −0.799%/trade vs blocked −0.557%/trade,
+  so the gates still thin rather than select. The figures moved (blocked 46 → 47,
+  −26.76% → −26.16%) because the trailing fix below changed some outcomes.
+- **The backtest trailed futures wider than the bot does.** After TP1 it pulled
+  the trail to `entry − 0.5×ATR` in both modes; `trading/paper.py` does that for
+  spot only and snaps futures to breakeven. Futures win rate and profit factor
+  were systematically overstated, and the trailing factors were tuned against
+  those numbers.
+- **Per-gate verdict called a gate "COSTS money" before checking redundancy.**
+  A gate with `only == 0` changes no trade if removed; that is the more
+  actionable fact and now wins the label.
+- **`analyze.py` counted infrastructure skips as trading gates.** The rewrite
+  dropped the old explicit exclusion while this branch added a `stale_cache`
+  block that fires on up to 3 of every 4 cycles. On sample data it took 82% of
+  the histogram, pushing both real gates under the display threshold and
+  deflating entry conversion. Infrastructure skips are now excluded and
+  reported separately.
+
+### Fixed — robustness
+- **`--gates` crashed on the period it exists to investigate.** With no taken
+  trades `run_backtest` returned `{"blocked": [...]}`, which is truthy, so
+  `print_backtest_results` fell past `if not stats` and raised `KeyError:
+  'start_price'`. It now guards on a key real stats always carry.
+- **A failed HTF fetch aborted the whole backtest.** `_load_htf_series` sits
+  outside any try and indexed `d.index[0]` unguarded, so a transient error, a
+  geo-block, or a span the exchange has no bars for killed the run — where the
+  per-candle try/except it replaced degraded to `htf=None` and continued. It now
+  degrades with a warning, which also un-breaks `scripts/backtest_offline.py`:
+  that script patches `fetch_ohlcv_df`, and the HTF loader bypasses it by design.
+
+### Changed
+- `_htf_at` binary-searches precomputed bar close times instead of rebuilding a
+  DatetimeIndex, a boolean mask and a DataFrame slice per candle. The old form
+  was O(candles × htf_bars); `scripts/condition_ic.py` pays it once per candle
+  across 180–400 days.
+- Removed `_simulate_forward`'s dead `ec` parameter — it implied a per-call cost
+  model that stopped existing when `_costs()` moved to module scope — and an
+  unused `datetime` import left by `_candle_utc_hour`'s deletion.
+- `CLAUDE.md`: the documented `generate_signals` signature was missing
+  `disabled`; the "thresholds should be ~25–30% of max" rule contradicted
+  `config.py`, which now pins 19.6% / 19.1%; `CONDITION_MAX`,
+  `DISABLED_CONDITIONS`, `_contributions` and the six new backtest flags were
+  undocumented.
+
+### Recorded, not changed
+**The per-mode threshold floor makes the negative session/regime bumps inert on
+futures.** `get_adaptive_threshold()` already clamps the base at
+`THRESHOLD_MIN`, so `mode_min = min(THRESHOLD_MIN, threshold)` is 4.0 whenever
+the controller has walked the base down to its floor — and
+`max(4.0 − 0.25 − 0.25, 4.0)` discards both the US-session and TRENDING bumps.
+Only the +0.5 Asia bump ever survives, so the mechanism became one-directional
+at exactly the moment a lower bar is the point. This is a consequence of the
+floor fix earlier in this branch; changing it again alters live scoring, so it
+waits for a decision rather than being reverted mid-stream.
+
+### Tests
+Suite: 66/66. The `_htf_at` tests were updated to the new
+`(series, close_times)` frame contract and now also assert that an empty frame
+set returns `None` instead of raising.
+
+---
+
 ## 2026-08-29 — feat: condition-set machinery; the pruning experiment failed
 
 Option (a) from the review — prune the scoring stack — was implemented,
