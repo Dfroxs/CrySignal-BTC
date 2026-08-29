@@ -7,6 +7,7 @@ All functions that make external API calls live here.
 import json
 import logging
 import os
+import time
 from datetime import UTC, datetime, timedelta
 
 import ccxt
@@ -32,9 +33,99 @@ from config import (
 
 logger = logging.getLogger(__name__)
 
-# Shared ccxt exchange instance — rate-limited
-exchange = ccxt.binance()
-exchange.enableRateLimit = True
+# ---------------------------------------------------------------------------
+# Shared exchange instance — primary, with a public-data-mirror fallback
+# ---------------------------------------------------------------------------
+
+_MIRROR_HOST = "data-api.binance.vision"
+_MIRROR_RETRY_AFTER_S = 1800  # re-probe the primary after 30 min on the mirror
+
+# Reads the mirror can serve. Everything else stays on the primary — the mirror
+# publishes spot market data only.
+_MIRRORABLE = ("fetch_ohlcv", "fetch_ticker", "fetch_tickers", "fetch_order_book")
+
+
+def _new_binance(mirror=False):
+    """Build a rate-limited ccxt binance client, optionally pointed at the mirror.
+
+    ``fetchMarkets=['spot']`` keeps ``load_markets()`` off fapi.binance.com,
+    which the mirror does not serve and which is blocked wherever the primary is.
+    """
+    opts = {"options": {"fetchMarkets": ["spot"]}} if mirror else {}
+    ex = ccxt.binance(opts)
+    ex.enableRateLimit = True
+    if mirror:
+        for key in ("public", "v1"):
+            if key in ex.urls["api"]:
+                ex.urls["api"][key] = ex.urls["api"][key].replace(
+                    "api.binance.com", _MIRROR_HOST
+                )
+    return ex
+
+
+class _BinanceWithMirror:
+    """ccxt.binance() that falls back to Binance's public data mirror for spot reads.
+
+    api.binance.com is geo-restricted from some jurisdictions and answers 403 at
+    the Cloudflare edge. ccxt surfaces that as a NetworkError on the first call,
+    which took out Phase 2 and Phase 3 of a whole cycle on 2026-08-29.
+    data-api.binance.vision serves the same public spot endpoints unrestricted,
+    so OHLCV keeps flowing through the outage.
+
+    Only the reads in ``_MIRRORABLE`` are retried. The mirror has no futures
+    endpoints, so ``fetch_funding_rate`` / ``fetch_open_interest`` /
+    ``fetch_long_short_ratio`` and the basis fetcher stay on fapi.binance.com and
+    degrade to NEUTRAL on their own when it is blocked — the signal still scores,
+    minus those conditions.
+
+    The fallback is sticky so a tripped cycle does not pay the timeout twice, but
+    expires after ``_MIRROR_RETRY_AFTER_S`` so a long ``--loop`` run returns to
+    the primary (and its futures data) once the block lifts.
+    """
+
+    def __init__(self):
+        object.__setattr__(self, "_primary", _new_binance(mirror=False))
+        object.__setattr__(self, "_mirror", _new_binance(mirror=True))
+        object.__setattr__(self, "_mirror_since", None)
+
+    def _on_mirror(self):
+        since = self._mirror_since
+        if since is None:
+            return False
+        if time.monotonic() - since < _MIRROR_RETRY_AFTER_S:
+            return True
+        logger.info("Mirror cooldown elapsed — re-probing api.binance.com")
+        object.__setattr__(self, "_mirror_since", None)
+        return False
+
+    def __getattr__(self, name):
+        # Only reached when normal lookup fails, so the attributes set in
+        # __init__ never land here. Non-mirrorable attributes — futures fetchers,
+        # markets, config — always come from the primary.
+        if name not in _MIRRORABLE:
+            return getattr(self._primary, name)
+
+        def call(*args, **kwargs):
+            if not self._on_mirror():
+                try:
+                    return getattr(self._primary, name)(*args, **kwargs)
+                except ccxt.NetworkError as exc:
+                    logger.warning(
+                        "binance %s failed (%s) — falling back to %s for %ds",
+                        name, exc, _MIRROR_HOST, _MIRROR_RETRY_AFTER_S,
+                    )
+                    object.__setattr__(self, "_mirror_since", time.monotonic())
+            return getattr(self._mirror, name)(*args, **kwargs)
+
+        return call
+
+    def __setattr__(self, name, value):
+        # Keep both clients configured identically (e.g. enableRateLimit).
+        setattr(self._primary, name, value)
+        setattr(self._mirror, name, value)
+
+
+exchange = _BinanceWithMirror()
 
 _CACHE_MAX_AGE_HOURS = 6
 

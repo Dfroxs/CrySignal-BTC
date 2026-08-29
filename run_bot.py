@@ -360,25 +360,29 @@ def run_cycle():
     spot_signal = None
     try:
         spot_signal = analyze_spot_signal(symbol="BTC/USDT", include_news=True)
+        if spot_signal is None:
+            raise RuntimeError("analysis returned no signal")
         s_type = spot_signal["type"]
         s_score = spot_signal.get("strength", 0)
         s_icon = "🟢" if s_type == "BUY" else ("🔴" if s_type == "SELL" else "⏸")
         _ok(f"Phase 2  SPOT 4H    {s_icon} {s_type}  score {s_score:.2f}")
     except Exception as e:
-        logger.error("Spot analysis failed: %s", e)
-        _err(f"Phase 2  SPOT failed  ({e})")
+        logger.error("Spot analysis failed: %s: %s", type(e).__name__, e)
+        _err(f"Phase 2  SPOT failed  ({type(e).__name__}: {e})")
 
     _loading("Phase 2  FUTURES 1H — fetching OHLCV & indicators...")
     futures_signal = None
     try:
         futures_signal = analyze_futures_signal(symbol="BTC/USDT", include_news=True)
+        if futures_signal is None:
+            raise RuntimeError("analysis returned no signal")
         f_type = futures_signal["type"]
         f_score = futures_signal.get("strength", 0)
         f_icon = "🟢" if f_type == "BUY" else ("🔴" if f_type == "SELL" else "⏸")
         _ok(f"Phase 2  FUTURES 1H {f_icon} {f_type}  score {f_score:.2f}")
     except Exception as e:
-        logger.error("Futures analysis failed: %s", e)
-        _err(f"Phase 2  FUTURES failed  ({e})")
+        logger.error("Futures analysis failed: %s: %s", type(e).__name__, e)
+        _err(f"Phase 2  FUTURES failed  ({type(e).__name__}: {e})")
 
     # Phase 3 — paper trading
     _loading("Phase 3  Updating paper positions...")
@@ -392,9 +396,10 @@ def run_cycle():
     import trading.history as _h
     spot_pnl, _, _ = _h.get_closed_pnl("spot")
     fut_pnl, _, _ = _h.get_closed_pnl("futures")
-    spot_dd = max(0, -spot_pnl)
-    fut_dd  = max(0, -fut_pnl)
-    total_dd = max(0, -(spot_pnl + fut_pnl))
+    # Peak-to-trough, not cumulative P&L — see trading/history.get_drawdown().
+    spot_dd, _ = _h.get_drawdown("spot")
+    fut_dd, _  = _h.get_drawdown("futures")
+    equity_pct = 100 + spot_pnl + fut_pnl
     max_dd = RISK_LIMITS.get("max_drawdown_pct", 15.0)
     min_eq = RISK_LIMITS.get("min_equity_pct", 50.0)
 
@@ -440,8 +445,8 @@ def run_cycle():
     # blocked state — otherwise terminal shows STRONG BUY while Telegram says HOLD).
     display_combined(spot_signal, futures_signal)
 
-    if total_dd > (100 - min_eq):
-        msg = f"🚨 EQUITY {100-total_dd:.0f}% < {min_eq}% — EMERGENCY close all"
+    if equity_pct < min_eq:
+        msg = f"🚨 EQUITY {equity_pct:.0f}% < {min_eq}% — EMERGENCY close all"
         logger.critical(msg)
         phase3_actions.append(msg)
         # Use latest signal price for a meaningful exit P&L (was hard-coded 0).
@@ -457,7 +462,13 @@ def run_cycle():
 
     try:
         # Spot positions — BUY-only (no short selling on spot)
-        if spot_signal and spot_signal["type"] != "HOLD":
+        if spot_signal and spot_signal["type"] != "HOLD" and spot_signal.get("_cached"):
+            # Replayed 4H analysis — see signals/spot.py. Acting on it would open
+            # at a price up to 3h old, against gates evaluated on that old data.
+            _block(phase3_actions, "spot", spot_signal, "stale_cache",
+                   f"Spot {spot_signal['type']} from cached 4H analysis — stale entry data, not acted on")
+
+        elif spot_signal and spot_signal["type"] != "HOLD":
             pyramid_cfg = RISK_CONFIG.get("pyramid", {})
             existing_count = get_open_position_count_by_direction(spot_signal["type"], "spot")
 
@@ -860,13 +871,19 @@ def run_cycle():
     # a malformed signal could still raise during formatting.)
     _loading("Phase 4  Sending Telegram notifications...")
     try:
-        send_signal_alert(spot_signal=spot_signal, futures_signal=futures_signal)
+        sent = send_signal_alert(spot_signal=spot_signal, futures_signal=futures_signal) or 0
         for msg, label in pending_tg:
-            _send_telegram_message(msg, label)
-        _ok("Phase 4  Telegram sent")
+            if _send_telegram_message(msg, label):
+                sent += 1
+        if sent:
+            _ok(f"Phase 4  Telegram sent  ({sent} message{'' if sent == 1 else 's'})")
+        elif spot_signal is None and futures_signal is None and not pending_tg:
+            _warn("Phase 4  Skipped — no signal to report")
+        else:
+            _warn("Phase 4  Nothing delivered — check TELEGRAM_* in .env / spotsignal.log")
     except Exception as e:
-        logger.error("Phase 4 failed: %s", e)
-        _err(f"Phase 4  Failed  ({e})")
+        logger.error("Phase 4 failed: %s: %s", type(e).__name__, e)
+        _err(f"Phase 4  Failed  ({type(e).__name__}: {e})")
 
 
 # ---------------------------------------------------------------------------
@@ -885,8 +902,14 @@ def run_position_check():
         print(f"  MID-CYCLE CHECK  ·  BTC ${price:,.0f}")
         print(f"  {'─' * 40}")
 
+        # Without this the funding exit could only ever fire on a full cycle,
+        # so a position could sit through an expensive funding window untouched.
+        from signals.market_data import fetch_funding_rate
+        funding = fetch_funding_rate().get("rate_pct", 0)
+
         closed_spot = check_and_close_positions(price, mode="spot", current_atr=_last_atr_spot)
-        closed_fut = check_and_close_positions(price, mode="futures", current_atr=_last_atr_fut)
+        closed_fut = check_and_close_positions(price, mode="futures", current_atr=_last_atr_fut,
+                                               funding_rate=funding)
         all_closed = (closed_spot or []) + (closed_fut or [])
 
         print_open_status("spot")

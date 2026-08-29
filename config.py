@@ -42,7 +42,8 @@ RISK_CONFIG = {
     "max_position_hours":      72,   # force-close futures position if open longer than this
     "max_position_hours_spot": 72,   # spot 4H: 72h = 18 candles; enough room for swing to develop
     "vol_expansion_exit_mult": 2.0,  # close if current ATR > entry ATR × this (root cause was wrong-mode ATR, now per-mode)
-    "max_positions":         2,     # max 1 BUY + 1 SELL (one per direction)
+    # No max_positions key: concurrent spot positions are capped by
+    # pyramid.max_entries below. The old setting was never read by any module.
     "pyramid": {
         "enabled":                 True,       # allow adding to existing position on STRONG signals
         "max_entries":             3,          # 1 initial + 2 pyramid entries max
@@ -68,7 +69,10 @@ FUTURES_CONFIG = {
     "futures_balance":       float(os.getenv("FUTURES_BALANCE", 500)),
     "risk_per_trade":        0.03,
     "max_margin_pct":        0.20,
-    "max_positions":         2,     # max 1 LONG + 1 SHORT (one per direction)
+    # No max_positions key: futures holds at most ONE position at a time —
+    # run_bot.py closes an opposite position before opening (close-and-flip)
+    # and skips a same-direction one (has_open_position_same_direction).
+    # The old setting was never read by any module.
     "entry": {
         "min_confidence":         "NORMAL",   # minimum confidence to open first position
         "reentry_price_check":    True,       # TA-driven re-entry quality gate
@@ -105,17 +109,95 @@ SPOT_THRESHOLD_STATE_FILE  = os.path.join(DATA_DIR, "spot_threshold_state.json")
 # Signal thresholds
 # ---------------------------------------------------------------------------
 
-# Futures signal thresholds
-SIGNAL_THRESHOLD = float(os.getenv("SIGNAL_THRESHOLD", 5.2))
-SIGNAL_MAX_SCORE = 25.75  # +1.5 MFI +1.0 CMF +1.0 taker ratio
-THRESHOLD_MIN    = 4.0
-THRESHOLD_MAX    = 8.0
+# ── Condition weights, active set, and the thresholds derived from them ─────
+#
+# CONDITION_MAX is the un-penalised BUY-side ceiling of each scoring block in
+# signals/engine.py, keyed by the same names the engine's attribution
+# checkpoints emit. It was a comment table; it is data now because the maxima
+# and the thresholds have to move together when the condition set changes.
+CONDITION_MAX = {
+    # condition                spot   futures
+    "ema200":                  (1.00, 1.00),
+    "rsi":                     (1.50, 1.50),
+    "macd":                    (1.50, 1.50),
+    "volume":                  (1.00, 1.00),
+    "effort_vs_result":        (0.75, 0.75),
+    "bollinger":               (1.00, 1.00),
+    "htf":                     (2.00, 2.00),
+    "obv":                     (0.75, 0.75),
+    # funding, L/S, DXY, S&P, stablecoin, BTC.D (+ OI and basis on futures)
+    "market_structure":        (3.00, 5.25),
+    "stoch_rsi":               (1.25, 1.25),
+    "support_resistance":      (0.75, 0.75),
+    "vwap":                    (0.75, 0.75),
+    "adx":                     (1.25, 1.25),
+    "gold_vix":                (0.50, 0.50),
+    "oi_price":                (0.00, 0.75),
+    "mfi":                     (1.50, 1.50),
+    "rsi_divergence":          (2.00, 2.00),
+    "extreme_cluster_penalty": (0.00, 0.00),   # only ever subtracts
+    "candlestick":             (1.00, 1.00),
+    "cmf":                     (1.00, 1.00),
+    "taker":                   (0.00, 1.00),
+}
 
-# Spot signal thresholds (4H, 15 conditions — no funding/L/S/OI/basis)
-SPOT_THRESHOLD    = float(os.getenv("SPOT_THRESHOLD", 4.3))
-SPOT_MAX_SCORE    = 21.75  # +1.5 MFI +1.0 CMF
-SPOT_THRESHOLD_MIN = 3.0
-SPOT_THRESHOLD_MAX = 7.0
+# Which conditions are scored. EMPTY — the pruning experiment was run and it
+# failed, so nothing is disabled.
+#
+# The hypothesis was that conditions with no stable candle-level predictive
+# power are dead weight, and that dropping the nine worst would leave the same
+# result with far fewer parameters. Measured at matched selectivity (the pruned
+# threshold calibrated on 2024 by signal count, then applied unchanged to 2025):
+#
+#   window            full set              pruned set
+#   spot 2024         +3.71%  PF 1.58       +2.84%  PF 1.75   (8 vs 6 signals)
+#   spot 2025 (OOS)   +0.55%  PF 1.23       −1.33%  PF 0.51   (7 vs 5 signals)
+#   futures 2024 H1   +0.64%  PF 1.39       −0.82%  PF 0.00   (5 vs 1 signals)
+#
+# The full set wins in all three windows. The candle-level measurement says
+# those conditions carry no reliable signal ALONE; the trade-level test says
+# removing them makes the ensemble worse. Both can be true — a weak, weakly
+# correlated component can still improve a joint ranking at the tail where this
+# system actually trades, and marginal IC over every candle does not measure
+# that. With ~15 trades across both years neither result is conclusive, which is
+# itself the reason not to act on either.
+#
+# The machinery stays: add names here to prune, or run
+# `backtest.py --disable a,b` for one run and `--all-conditions` to ignore this
+# set entirely. See CHANGELOG 2026-08-29 for the full write-up.
+DISABLED_CONDITIONS = frozenset()
+
+
+def _max_score(mode):
+    """Ceiling over the ACTIVE conditions for *mode*."""
+    idx = 0 if mode == "spot" else 1
+    return round(sum(w[idx] for name, w in CONDITION_MAX.items()
+                     if name not in DISABLED_CONDITIONS), 2)
+
+
+# Thresholds are a FRACTION of the achievable ceiling, not absolute numbers.
+# Pruning a condition lowers the ceiling; an absolute bar would then silently
+# become a stricter one and the change would be measuring two things at once.
+# The fractions reproduce the previous 5.2 / 4.3 / 4.0 / 8.0 / 3.0 / 7.0 exactly
+# at the pre-pruning maxima of 26.50 and 22.50.
+_THR_FRACTION     = 0.1962      # 5.2 / 26.50
+_THR_MIN_FRACTION = 0.1509      # 4.0 / 26.50
+_THR_MAX_FRACTION = 0.3019      # 8.0 / 26.50
+_SPOT_THR_FRACTION     = 0.1911  # 4.3 / 22.50
+_SPOT_THR_MIN_FRACTION = 0.1333  # 3.0 / 22.50
+_SPOT_THR_MAX_FRACTION = 0.3111  # 7.0 / 22.50
+
+# Futures signal thresholds
+SIGNAL_MAX_SCORE = _max_score("futures")
+SIGNAL_THRESHOLD = float(os.getenv("SIGNAL_THRESHOLD", 0)) or round(SIGNAL_MAX_SCORE * _THR_FRACTION, 2)
+THRESHOLD_MIN    = round(SIGNAL_MAX_SCORE * _THR_MIN_FRACTION, 2)
+THRESHOLD_MAX    = round(SIGNAL_MAX_SCORE * _THR_MAX_FRACTION, 2)
+
+# Spot signal thresholds (4H — no funding/L/S/OI/basis)
+SPOT_MAX_SCORE     = _max_score("spot")
+SPOT_THRESHOLD     = float(os.getenv("SPOT_THRESHOLD", 0)) or round(SPOT_MAX_SCORE * _SPOT_THR_FRACTION, 2)
+SPOT_THRESHOLD_MIN = round(SPOT_MAX_SCORE * _SPOT_THR_MIN_FRACTION, 2)
+SPOT_THRESHOLD_MAX = round(SPOT_MAX_SCORE * _SPOT_THR_MAX_FRACTION, 2)
 
 # Rolling window (hours) for adaptive threshold signal counting.
 ADAPTIVE_WINDOW_HOURS = 72

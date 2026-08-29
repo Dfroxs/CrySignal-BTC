@@ -1,7 +1,7 @@
 """Phase 1 — News & macro event scraper.
 
 Fetches from free RSS / API sources, deduplicates, scores sentiment,
-and exports CSV files consumed by core_analysis.py.
+and exports CSV files consumed by the signals/ package.
 """
 
 import logging

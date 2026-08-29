@@ -77,7 +77,7 @@ def analyze_futures_signal(symbol='BTC/USDT', include_news=True, display=False):
         if include_news:
             logger.info("Computing combined sentiment...")
             news_data = get_combined_sentiment(fng=fng)
-            signal = integrate_news_with_signal(signal, news_data)
+            signal = integrate_news_with_signal(signal, news_data, htf)
 
         if display:
             display_analysis(df, signal, news_data, htf, market_structure, timeframe='1H', mode='futures')
@@ -85,7 +85,11 @@ def analyze_futures_signal(symbol='BTC/USDT', include_news=True, display=False):
         update_threshold_state(signal['type'])
 
         signal['mode'] = 'futures'
-        signal['_threshold'] = threshold
+        # `_threshold` is left as generate_signals() set it: the EFFECTIVE
+        # threshold, session + regime bumps included — the bar this signal
+        # actually had to clear. Overwriting it with the raw adaptive base made
+        # sizing (_compute_confidence) and run_bot._check_reentry_quality
+        # measure strength against a different number than the engine gated on.
         log_cycle(signal, df, market_structure, htf, 'futures')
         # ATR percentile for dynamic leverage
         from signals.indicators import compute_atr_percentile
@@ -117,6 +121,10 @@ def analyze_futures_signal(symbol='BTC/USDT', include_news=True, display=False):
         }
         return signal
 
-    except Exception as e:
-        logger.error("[FUTURES] %s: %s", type(e).__name__, str(e)[:120])
-        return None
+    except Exception:
+        # Re-raise instead of returning None. run_bot.py already wraps this call
+        # and keeps the cycle alive, so swallowing here bought nothing and cost
+        # the real cause: the caller then subscripted None and reported
+        # "'NoneType' object is not subscriptable" instead of the NetworkError.
+        logger.exception("[FUTURES] analysis failed")
+        raise

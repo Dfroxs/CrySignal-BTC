@@ -4,14 +4,15 @@ integrate_news_with_signal() for macro/sentiment overlay.
 
 import pandas as pd
 
-from config import RISK_CONFIG
+from config import DISABLED_CONDITIONS, RISK_CONFIG, SPOT_THRESHOLD_MIN, THRESHOLD_MIN
 from signals.indicators import (calculate_adx, classify_regime,
                                 detect_candlestick_pattern, detect_rsi_divergence)
 from signals.market_data import get_signal_confidence
 from signals.sentiment import check_upcoming_macro_events
 
 
-def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures', threshold_override=None):
+def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures',
+                     threshold_override=None, disabled=None):
     current = df.iloc[-1]
     previous = df.iloc[-2]
 
@@ -31,6 +32,36 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
 
     buy_conditions = 0.0
     sell_conditions = 0.0
+
+    # Per-condition attribution. _mark() only READS the accumulators and records
+    # the delta since the previous mark, so it cannot change a single score —
+    # verified by asserting buy_score/sell_score are unchanged across a full
+    # backtest. scripts/condition_ic.py correlates these against forward returns
+    # to answer which of the 22 conditions actually carry predictive power.
+    _contrib = {}
+    _seen = [0.0, 0.0]
+    # None = the configured active set; pass an empty collection to score
+    # everything, which is what backtest.py --all-conditions does.
+    _off = set(DISABLED_CONDITIONS if disabled is None else disabled)
+
+    def _mark(name):
+        """Close out one condition's contribution.
+
+        With *name* in `disabled`, the accumulators are rolled back to their
+        pre-condition values — exact ablation with no edits to any condition
+        body, so an ablation run cannot drift from the real scoring path. Note
+        that flags a condition sets for later blocks (``_rsi_os`` and friends)
+        are NOT unset; ablate a flag-setting condition only when that is
+        understood.
+        """
+        nonlocal buy_conditions, sell_conditions
+        if name in _off:
+            buy_conditions, sell_conditions = _seen[0], _seen[1]
+            _contrib[name] = (0.0, 0.0)
+            return
+        _contrib[name] = (round(buy_conditions - _seen[0], 4),
+                          round(sell_conditions - _seen[1], 4))
+        _seen[0], _seen[1] = buy_conditions, sell_conditions
 
     # Pre-compute ADX once — used in condition 3 (MACD gate) and condition 18
     try:
@@ -52,6 +83,8 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         label = "falling ✓" if not ema_rising else "flat/rising ⚠️"
         signal['reasons'].append(f"✗ Price below EMA 200 ({label})")
 
+    _mark('ema200')
+
     # 2 — RSI
     rsi = current['RSI_14']
     _rsi_os = False  # track for diminishing-returns check later
@@ -71,6 +104,8 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         sell_conditions += 1.0
         signal['reasons'].append("✗ RSI in sell zone (50–70)")
 
+    _mark('rsi')
+
     # 3 — MACD crossover / position (ADX-gated: full weight only in trending markets)
     _macd_cross_w = 1.5 if _adx_pre >= 20 else 0.75
     _macd_low_adx = "" if _adx_pre >= 20 else f" (ADX {_adx_pre:.0f} — reduced)"
@@ -87,6 +122,8 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         sell_conditions += 0.5
         signal['reasons'].append("✗ MACD below signal line")
 
+    _mark('macd')
+
     # 4 — Volume confirmation
     vol_avg = df['volume'].rolling(20).mean().iloc[-1]
     vol_ratio = current['volume'] / vol_avg if vol_avg > 0 else 1
@@ -100,6 +137,8 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     elif vol_ratio < 0.7:
         signal['reasons'].append(f"⚠️  Low volume ({vol_ratio:.1f}x avg) — weak conviction")
 
+    _mark('volume')
+
     # 4b — Volume climax / Effort vs Result (Wyckoff)
     candle_range = current['high'] - current['low']
     range_vs_atr = candle_range / current['ATR_14'] if current['ATR_14'] > 0 else 1
@@ -111,6 +150,8 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         elif close_pos > 0.60 and current['close'] <= current['open']:  # red close near high = distribution
             sell_conditions += 0.75
             signal['reasons'].append(f"✗ Effort vs Result ({vol_ratio:.1f}x vol, narrow range) — distribution")
+
+    _mark('effort_vs_result')
 
     # 5 — Bollinger Bands
     _bb_lower = False
@@ -139,6 +180,8 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
                     else:
                         sell_conditions += 0.25
                         signal['reasons'].append("✗ BB squeeze + below middle — breakdown coil")
+
+    _mark('bollinger')
 
     # 6 — Multi-timeframe alignment
     if htf:
@@ -227,6 +270,8 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
                 sell_conditions = max(0, sell_conditions - 1.0)
                 signal['reasons'].append("⬇ HTF conflict penalty −1.0 (4H vs 1D opposing)")
 
+    _mark('htf')
+
     # 8 — OBV slope (5-candle)
     obv_slope = df['OBV'].iloc[-1] - df['OBV'].iloc[-5]
     obv_denom = df['volume'].iloc[-5:].sum()
@@ -238,6 +283,8 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         else:
             sell_conditions += 0.75
             signal['reasons'].append("✗ OBV falling — distribution detected")
+
+    _mark('obv')
 
     # 9 — Market structure (funding + L/S + DXY)
     if market_structure:
@@ -352,6 +399,8 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
                 sell_conditions += 0.5
                 signal['reasons'].append(f"✗ Futures discount ({basis_pct:+.3f}%) — weak demand")
 
+    _mark('market_structure')
+
     # 15 — Stochastic RSI
     sk, sd = current.get('StochRSI_K'), current.get('StochRSI_D')
     psk, psd = previous.get('StochRSI_K'), previous.get('StochRSI_D')
@@ -382,6 +431,8 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             signal['reasons'].append(f"✗ StochRSI overbought (K={sk:.1f})"
                                      + (" (RSI confirms)" if rsi_now > 70 else ""))
 
+    _mark('stoch_rsi')
+
     # 16 — Support/Resistance proximity (ATR-scaled)
     if sr:
         support = sr.get('support')
@@ -397,6 +448,8 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             sell_conditions += 0.75
             signal['reasons'].append(f"✗ Rejected at resistance ${resistance:,.0f} (within {prox_pct*100:.2f}%)")
 
+    _mark('support_resistance')
+
     # 17 — VWAP crossover (require recent cross — pure position scores nothing in a trending market)
     vwap = current.get('VWAP_24')
     if vwap and not pd.isna(vwap) and len(df) >= 6:
@@ -410,6 +463,8 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             if lookback_close.gt(lookback_vwap).any():  # was above VWAP in last 5 candles
                 sell_conditions += 0.75
                 signal['reasons'].append(f"✗ Price crossed below VWAP ${vwap:,.2f} — institutional selling")
+
+    _mark('vwap')
 
     # 18 — ADX trend strength + DI crossover
     try:
@@ -445,6 +500,8 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         regime = {"regime": "UNKNOWN", "threshold_bump": 0, "size_adj": 1.0, "trend_dir": "NEUTRAL"}
         signal['regime'] = "UNKNOWN"
 
+    _mark('adx')
+
     # ── Gold & VIX correlation ──
     if market_structure:
         gold = market_structure.get("gold", {})
@@ -459,6 +516,8 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         if vix.get("change_pct", 0) > 3:
             buy_conditions += 0.25
             signal['reasons'].append(f"📊 VIX spiking ({vix['change_pct']:+.1f}%) — fear gauge, contrarian BTC bid")
+
+    _mark('gold_vix')
 
     # ── Session-based threshold adjustment ──
     # Use the LATEST CANDLE's hour, not wall-clock. The old datetime.now(UTC)
@@ -480,8 +539,16 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         session_bump = -0.25  # US session: highest volume, lower threshold
     else:
         session_bump = 0.0
-    # Floor at 3.0 so session/regime bumps can't push threshold below the spot minimum.
-    threshold = max(threshold + regime.get("threshold_bump", 0) + session_bump, 3.0)
+    # Floor at the PER-MODE minimum so session/regime bumps can't push the
+    # threshold below it. The old hard-coded 3.0 was the *spot* minimum applied
+    # to both modes, so futures could gate at 3.5 (4.0 base − 0.25 TRENDING
+    # − 0.25 US session) despite THRESHOLD_MIN = 4.0. An explicit env override
+    # that already sits below the minimum is respected — the floor guards the
+    # bumps, not the operator's chosen base.
+    mode_min = SPOT_THRESHOLD_MIN if mode == 'spot' else THRESHOLD_MIN
+    if threshold > 0:
+        mode_min = min(mode_min, threshold)
+    threshold = max(threshold + regime.get("threshold_bump", 0) + session_bump, mode_min)
 
     # ── OI × Price directional analysis ──
     if mode == 'futures' and market_structure:
@@ -501,30 +568,49 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             sell_conditions += 0.5
             signal['reasons'].append(f"✓ OI↓ ({oi_change:+.1f}%) + Price↓ — liquidation cascade")
 
-    # ── Diminishing returns on correlated oversold/overbought conditions ──
-    # RSI OS/OB, BB lower/upper, StochRSI OS/OB crossover all fire from the
-    # same price extreme.  First condition = full weight, second = 0.5×, third = 0.25×.
-    buy_extremes = sum([_rsi_os, _bb_lower, _stoch_os_cross])
-    sell_extremes = sum([_rsi_ob, _bb_upper, _stoch_ob_cross])
-    if buy_extremes >= 2:
-        penalty = (buy_extremes - 1) * 0.75  # 2→-0.75, 3→-1.5
-        buy_conditions -= penalty
-        signal['reasons'].append(f"⚠️  {buy_extremes} oversold conditions clustered — diminishing returns applied (-{penalty:.2f})")
-    if sell_extremes >= 2:
-        penalty = (sell_extremes - 1) * 0.75
-        sell_conditions -= penalty
-        signal['reasons'].append(f"⚠️  {sell_extremes} overbought conditions clustered — diminishing returns applied (-{penalty:.2f})")
+    _mark('oi_price')
 
-    # 7 — RSI Divergence (scored after diminishing-returns penalty — structurally independent)
+    # 20 — MFI (Money Flow Index) — volume-weighted RSI, detects institutional flow.
+    # Scored here, ahead of the diminishing-returns block, because an MFI extreme
+    # reads the SAME price extreme as RSI / BB / StochRSI: left below the block it
+    # stacked a full +1.5 on top of conditions that had already been discounted.
+    mfi = current.get('MFI_14')
+    _mfi_os = False
+    _mfi_ob = False
+    if mfi is not None and not pd.isna(mfi):
+        if mfi <= 20:
+            buy_conditions += 1.5
+            _mfi_os = True
+            signal['reasons'].append(f"✓ MFI OVERSOLD ({mfi:.0f}) — strong buying pressure")
+        elif mfi <= 40:
+            buy_conditions += 0.75
+            signal['reasons'].append(f"✓ MFI in buy zone ({mfi:.0f}) — accumulation building")
+        elif mfi >= 80:
+            sell_conditions += 1.5
+            _mfi_ob = True
+            signal['reasons'].append(f"✗ MFI OVERBOUGHT ({mfi:.0f}) — strong selling pressure")
+        elif mfi >= 60:
+            sell_conditions += 0.75
+            signal['reasons'].append(f"✗ MFI in sell zone ({mfi:.0f}) — distribution detected")
+
+    _mark('mfi')
+
+    # 7 — RSI Divergence. Divergence is structurally independent of the price
+    # extremes below — it is never a cluster member itself — but it must be
+    # scored BEFORE the diminishing-returns block: when it cancels the RSI
+    # OS/OB score it also clears that flag, so the penalty no longer counts a
+    # component that is no longer contributing.
     divergence = detect_rsi_divergence(df)
     signal['rsi_divergence'] = divergence
     if divergence == 'BULLISH' and _rsi_ob:
         sell_conditions -= 1.5  # cancel OB sell score
         buy_conditions += 1.5   # restore divergence advantage
+        _rsi_ob = False         # cancelled — no longer a clustered overbought extreme
         signal['reasons'].append("⚠️  RSI OB cancelled by BULLISH divergence — divergence takes precedence")
     elif divergence == 'BEARISH' and _rsi_os:
         buy_conditions -= 1.5   # cancel OS buy score
         sell_conditions += 1.5
+        _rsi_os = False         # cancelled — no longer a clustered oversold extreme
         signal['reasons'].append("⚠️  RSI OS cancelled by BEARISH divergence — divergence takes precedence")
     elif divergence == 'BULLISH':
         buy_conditions += 2.0
@@ -532,6 +618,25 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     elif divergence == 'BEARISH':
         sell_conditions += 2.0
         signal['reasons'].append("✗ RSI BEARISH DIVERGENCE — price higher high, RSI lower high")
+
+    _mark('rsi_divergence')
+
+    # ── Diminishing returns on correlated oversold/overbought conditions ──
+    # RSI OS/OB, BB lower/upper, StochRSI OS/OB crossover and MFI OS/OB all fire
+    # from the same price extreme.  First condition = full weight, each further
+    # one is discounted.
+    buy_extremes = sum([_rsi_os, _bb_lower, _stoch_os_cross, _mfi_os])
+    sell_extremes = sum([_rsi_ob, _bb_upper, _stoch_ob_cross, _mfi_ob])
+    if buy_extremes >= 2:
+        penalty = (buy_extremes - 1) * 0.75  # 2→-0.75, 3→-1.5, 4→-2.25
+        buy_conditions -= penalty
+        signal['reasons'].append(f"⚠️  {buy_extremes} oversold conditions clustered — diminishing returns applied (-{penalty:.2f})")
+    if sell_extremes >= 2:
+        penalty = (sell_extremes - 1) * 0.75
+        sell_conditions -= penalty
+        signal['reasons'].append(f"⚠️  {sell_extremes} overbought conditions clustered — diminishing returns applied (-{penalty:.2f})")
+
+    _mark('extreme_cluster_penalty')
 
     # 19 — Candlestick pattern recognition
     cs = detect_candlestick_pattern(df) or {}
@@ -549,21 +654,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         sell_conditions += w
         signal['reasons'].append(f"✗ {bearish_cs.replace('_', ' ')} pattern — bearish reversal")
 
-    # 20 — MFI (Money Flow Index) — volume-weighted RSI, detects institutional flow
-    mfi = current.get('MFI_14')
-    if mfi is not None and not pd.isna(mfi):
-        if mfi <= 20:
-            buy_conditions += 1.5
-            signal['reasons'].append(f"✓ MFI OVERSOLD ({mfi:.0f}) — strong buying pressure")
-        elif mfi <= 40:
-            buy_conditions += 0.75
-            signal['reasons'].append(f"✓ MFI in buy zone ({mfi:.0f}) — accumulation building")
-        elif mfi >= 80:
-            sell_conditions += 1.5
-            signal['reasons'].append(f"✗ MFI OVERBOUGHT ({mfi:.0f}) — strong selling pressure")
-        elif mfi >= 60:
-            sell_conditions += 0.75
-            signal['reasons'].append(f"✗ MFI in sell zone ({mfi:.0f}) — distribution detected")
+    _mark('candlestick')
 
     # 21 — CMF (Chaikin Money Flow) — accumulation/distribution pressure
     cmf = current.get('CMF_20')
@@ -581,6 +672,8 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             sell_conditions += 0.5
             signal['reasons'].append(f"✗ CMF mild distribution ({cmf:+.3f})")
 
+    _mark('cmf')
+
     # 22 — Taker buy/sell ratio (futures only) — aggressive order flow dominance
     if mode == 'futures' and market_structure:
         taker = market_structure.get('taker', {})
@@ -590,6 +683,8 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         elif taker.get('bias') == 'BEARISH':
             sell_conditions += 1.0
             signal['reasons'].append(f"✗ Taker ratio {taker.get('ratio', 0):.2f} — aggressive sellers dominant")
+
+    _mark('taker')
 
     # Structural SL helper (audit #12): place SL beyond the most recent
     # 20-candle swing low/high with a small buffer, but cap at 2.5×ATR so risk
@@ -792,6 +887,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
 
     signal['buy_score'] = round(buy_conditions, 2)
     signal['sell_score'] = round(sell_conditions, 2)
+    signal['_contributions'] = _contrib
     signal['atr'] = current['ATR_14']
     signal['_threshold'] = threshold
 
@@ -852,7 +948,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     return signal
 
 
-def integrate_news_with_signal(signal, news_data):
+def integrate_news_with_signal(signal, news_data, htf=None):
     enhanced = signal.copy()
 
     # MACRO block — always force HOLD when a HIGH-impact event is <2h away.
@@ -927,8 +1023,14 @@ def integrate_news_with_signal(signal, news_data):
             f"⚠️  Post-news strength ({enhanced['strength']:.2f}) below threshold ({thr:.2f}) — downgraded to HOLD"
         )
 
-    # Always recalculate confidence after news adjustments — strength may have changed
+    # Always recalculate confidence after news adjustments — strength may have
+    # changed. htf/signal_type must be passed so the STRONG-requires-HTF-agreement
+    # rule (audit #9) survives the recalculation: without them, a signal the
+    # engine had deliberately downgraded to NORMAL was promoted back to STRONG,
+    # which unlocks spot pyramiding (min_confidence = STRONG).
     if enhanced['type'] != 'HOLD':
-        enhanced['confidence'] = get_signal_confidence(enhanced['strength'], thr)
+        enhanced['confidence'] = get_signal_confidence(
+            enhanced['strength'], thr, htf=htf, signal_type=enhanced['type']
+        )
 
     return enhanced

@@ -4,6 +4,711 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-29 — feat: condition-set machinery; the pruning experiment failed
+
+Option (a) from the review — prune the scoring stack — was implemented,
+measured, and **rejected on the evidence**. The machinery stays, the pruning
+does not.
+
+### Added
+- **`config.CONDITION_MAX`** — the per-condition BUY-side ceiling, keyed by the
+  engine's attribution names. It was a comment table; it is data now because the
+  ceiling and the thresholds have to move together when the condition set does.
+  Verified to reproduce the documented 22.50 / 26.50 exactly.
+- **`config.DISABLED_CONDITIONS`** — the active set, honoured by
+  `generate_signals(disabled=None)`. `--disable a,b` adds to it for one run;
+  `--all-conditions` ignores it.
+- **Thresholds derived as a fraction of the ceiling** rather than absolute
+  numbers. Pruning lowers the ceiling, and an absolute bar would silently become
+  a stricter one — an experiment that changed the condition set would then be
+  measuring two changes at once. The fractions reproduce 5.2 / 4.3 / 4.0 / 8.0 /
+  3.0 / 7.0 exactly at the pre-pruning maxima, so the mechanism itself moves
+  nothing.
+- **`backtest.py --start / --end`** so one period can be tested against another.
+
+### The experiment
+Hypothesis: the nine conditions with no stable candle-level predictive power
+(`htf`, `cmf`, `vwap`, `rsi_divergence`, `support_resistance`,
+`effort_vs_result`, `volume`, `candlestick`, `obv`) are dead weight, and
+dropping them leaves the same result with far fewer parameters.
+
+First attempt confounded two changes — a smaller condition set *and* a bar that
+had moved relative to the score distribution. Signals fell 8 → 2 and the result
+looked catastrophic. Isolating it by calibrating the pruned threshold on 2024 to
+match the full set's signal count, then applying that threshold unchanged to
+2025:
+
+| window | full set | pruned set |
+|---|---|---|
+| spot 2024 (calibration) | +3.71%, PF 1.58, 8 signals | +2.84%, PF 1.75, 6 signals |
+| spot 2025 (out-of-sample) | **+0.55%, PF 1.23**, 7 signals | **−1.33%, PF 0.51**, 5 signals |
+| futures 2024 H1 | **+0.64%, PF 1.39**, 5 signals | **−0.82%, PF 0.00**, 1 signal |
+
+The full set wins in all three windows. `DISABLED_CONDITIONS` is therefore
+empty and scoring is unchanged.
+
+### What this says
+The candle-level measurement and the trade-level one disagree, and both can be
+right. Marginal IC asks whether a condition predicts the next N bars *across
+every candle*; this system trades on the thin tail where the combined score
+clears a bar. A weak, weakly-correlated component can contribute nothing on
+average and still improve the ranking at that tail. Ablation over all candles
+does not measure the thing the system actually uses.
+
+With ~15 trades across both years, neither result is conclusive — which is the
+reason to keep the mechanism and act on neither.
+
+### Correction
+Earlier entries described this system as loss-making in every test. That was
+drawn from the trailing 2026 window, where it produces almost no signals. Over
+2024 and 2025 the unmodified system is **profitable on spot in both years**
+(+3.71% PF 1.58, +0.55% PF 1.23) and on futures 2024 H1 (+0.64% PF 1.39). The
+sample is far too small to call an edge, but "every test is negative" was wrong
+and came from generalising one window.
+
+### Tests
+- Thresholds track the active set; `CONDITION_MAX` covers every condition the
+  engine scores; `disabled=None` applies the configured set while an empty
+  collection scores everything. Suite: 65/65.
+
+---
+
+## 2026-08-29 — fix: gate counterfactual reports per-trade, not just totals
+
+### Fixed
+- **The counterfactual's headline number was misleading.** It reported that the
+  gates turn a −29.16% ungated result into −2.40%, which reads as the gates
+  carrying the system. Comparing totals across different trade counts cannot
+  show that. Per trade:
+
+```
+             trades     total   per trade
+  Taken           3    -2.40%     -0.799%
+  Blocked        46   -26.76%     -0.582%
+  Ungated        49   -29.16%     -0.595%
+```
+
+  **The trades the gates let through are worse per trade than the ones they
+  reject.** Total loss fell only because count fell from 49 to 3 — the effect
+  any filter of that severity produces on a negative-expectancy system,
+  including a random one. The gate set has negative selection value on this
+  window, not positive.
+
+  The report now prints per-trade P&L per gate and for each bucket, and says
+  explicitly whether the gates are selecting or merely thinning.
+
+### Correction
+This retracts the second reading recorded under "feat: entry-gate
+counterfactual" — *"the gates are carrying the system, not the score"*. They are
+not carrying it. That conclusion came from comparing sums over unequal counts,
+which is exactly the error the per-trade column now makes impossible to repeat.
+
+Note also that `confidence_first`, the gate with the most unique blocks, is
+itself a threshold on the score (`strength >= threshold × 1.2`), so "keep the
+gates, drop the scoring stack" was never a coherent split to begin with.
+
+---
+
+## 2026-08-29 — feat: explicit date ranges + 2024 vs 2025 replication
+
+### Added
+- **`signals/ohlcv.py:_fetch_ohlcv_range()`** and `fetch_ohlcv_df(since=, until=)`
+  — page *forward* through an explicit span. `_fetch_ohlcv_paged()` walks
+  backwards from now, so every sample it can produce ends today and overlaps
+  every other one; independent replication was not available at all.
+- **`scripts/condition_ic.py --start / --end`**, with HTF warmed from before the
+  window opens so the opening weeks are not scored on half-formed indicators.
+- `backtest.py:_load_htf_series(start=, end=)` for the same reason.
+
+### Measured — 2024 vs 2025, two modes, non-overlapping years
+t-statistic range across horizons; **bold** = |t| ≥ 2 somewhere in the sweep.
+
+| condition | fut 2024 | fut 2025 | spot 2024 | spot 2025 |
+|---|---|---|---|---|
+| `htf` | **−3.7 → −5.9** | −1.0 → −1.7 | **−2.5 → −3.6** | −0.7 → **−3.8** |
+| `cmf` | **−3.1 → −3.0** | **−2.5 → −3.5** | flat | −0.3 → −1.9 |
+| `ema200` | +1.8 → **+3.5** | **−2.6 → −2.2** | +0.6 → +1.9 | +0.5 → +1.8 |
+| `macd` | +1.5 → +1.4 | **−2.8 → −4.7** | **+2.9 → +2.4** | +0.1 → +1.8 |
+| `mfi` | **−2.0 → −5.6** | **+3.2 → +2.1** | **−3.6 → −3.0** | +0.4 → +1.5 |
+| `rsi` | −0.8 → **−3.8** | **+2.4 → +2.6** | **−2.1 → −0.9** | +1.2 → +0.6 |
+| `adx` | +0.7 → **+5.8** | −1.5 → +0.9 | +1.2 → +1.7 | **−2.5 → −3.6** |
+| `extreme_cluster_penalty` | +1.8 → **+3.4** | +0.3 → −1.2 | **+3.0 → +2.2** | **−2.0 → −2.8** |
+| `rsi_divergence` | +1.0 → **−3.3** | +0.8 → **−3.0** | −1.1 → **−3.2** | +1.0 → **+3.5** |
+
+**This overturns the reading recorded in the previous commit.** That entry
+concluded "the trend-following conditions point the right way and the
+mean-reversion conditions point the wrong way", from two overlapping 2026
+samples. Across separate years it does not hold: `ema200` runs **+3.5 in 2024
+and −2.2 in 2025**, `macd` **+1.4 then −4.7**, and `mfi` and `rsi` flip sign
+*significantly in both directions*. The earlier pattern was a property of the
+2026 window, not of the indicators. Overlapping samples produced a confident
+conclusion that a genuine out-of-sample test destroyed.
+
+What survives:
+1. **`htf` is negative in all four samples** (significant in three). It is the
+   only condition that never changes sign, and it carries the largest weight in
+   the engine after divergence.
+2. **`cmf` is significantly negative in both futures years.**
+3. **Everything else is regime-dependent.** Several conditions clear |t| ≥ 2 in
+   *opposite directions* between years — `extreme_cluster_penalty` +3.0 then
+   −2.8 on spot, `rsi_divergence` −3.2 then +3.5. A fixed weight cannot serve
+   both years; the question is not what weight to pick but whether a fixed
+   weight is the right structure at all.
+
+### Not changed
+Still no weight touched. The finding that matters is not "invert `htf`" — it is
+that the scoring stack's parameters are being asked to hold constant across
+regimes in which the underlying relationships reverse.
+
+### Tests
+- Range fetch walks a requested span past the exchange cap without overlap or
+  reorder, and terminates at the end of history. Suite: 62/62.
+
+---
+
+## 2026-08-29 — feat: horizon sweep + condition ablation
+
+### Added
+- **`scripts/condition_ic.py --horizons 3,6,12,24,48,72`** — every horizon from
+  one pass (the engine loop is the cost; forward returns are a shift). A
+  condition that predicts something keeps its sign as the holding period moves;
+  one that flips is reading a different phenomenon at each scale and a fixed
+  weight cannot serve both.
+- **`backtest.py --disable htf,mfi,rsi`** — exact condition ablation. It reuses
+  the attribution checkpoints: a disabled condition has the accumulators rolled
+  back to their pre-condition values, so an ablation run cannot drift from the
+  real scoring path and no condition body was touched. Flags a condition sets
+  for later blocks (`_rsi_os` and friends) are deliberately *not* unset.
+
+### Measured — the sweep replicates across two samples
+FUTURES 1H / 180d and SPOT 4H / 400d, t-statistic by forward horizon:
+
+| condition | futures (3→72b) | spot (3→18b) | reading |
+|---|---|---|---|
+| `ema200` | +0.4 → **+5.0** | +0.9 → **+2.4** | correct, strengthens with horizon |
+| `cmf` | −0.6 → **+5.0** | −0.1 → **+3.3** | correct at longer horizons |
+| `adx` | −0.1 → **+3.9** | +1.3 → +1.8 | correct |
+| `macd` | +0.7 → **+4.1** | **+2.2** → +0.3 | correct |
+| `htf` | **−3.1 → −4.9** | **−2.3 → −6.1** | **inverted at every horizon, both samples** |
+| `mfi` | −0.7 → **−4.4** | −1.1 → **−3.0** | **inverted** |
+| `rsi` | +0.3 → **−2.4** | −1.3 → **−2.2** | **inverted** |
+| `bollinger` | −0.3 → **−4.0** | flat | inverted in futures |
+
+The pattern is coherent: **the trend-following conditions point the right way
+and the mean-reversion conditions point the wrong way.** On these samples an
+oversold reading was followed by more downside, not a bounce. `htf` is the
+outlier — a trend condition that reads backwards, and the most consistently
+anti-predictive thing in the engine while carrying the largest weight after
+divergence.
+
+Three of the largest weights in the scoring stack — `htf` (2.0), `rsi` (1.5),
+`mfi` (1.5) — are anti-predictive on both samples. That is a plausible
+mechanism for the counterfactual result in the previous commit, where the
+ungated engine produced 49 signals worth −29.65%.
+
+### Ablation, 180-day futures
+```
+baseline            3 trades   -2.40%
+--disable htf       1 trade    -1.14%
+--disable htf,mfi,rsi   no signals at all
+```
+Directionally consistent with the sweep, but n=3→1 settles nothing. That is the
+point: the trade-level test cannot resolve this question at 12 signals a year,
+which is why the candle-level measurement exists.
+
+### Not changed
+No weight was touched. Both samples are BTC and overlap in time, the
+observations are autocorrelated, and the era is one regime. The evidence is
+strong enough to investigate and not strong enough to re-weight on.
+
+### Tests
+- Section 14 — contributions sum to the scores, ablation subtracts exactly one
+  condition and nothing else, empty ablation is a no-op. Suite: 60/60.
+
+---
+
+## 2026-08-29 — feat: per-condition predictive power (scripts/condition_ic.py)
+
+### Added
+- **`signals/engine.py` per-condition attribution.** `generate_signals()` now
+  emits `signal['_contributions']` — the buy/sell delta each numbered condition
+  contributed. Implemented as checkpoints that only *read* the accumulators, so
+  it cannot alter a score: verified across 63 candles against the previous
+  commit with zero differences in `buy_score`, `sell_score` or signal type, and
+  the contributions summing exactly to the final scores.
+- **`scripts/condition_ic.py`.** The full system fires ~12 times a year and can
+  never be validated on its own trade count; its components are evaluated on
+  every candle. This scores each condition's contribution against the forward
+  return over thousands of observations and reports fire rate, rank IC, mean
+  forward return when bullish vs bearish, the spread between them, and a Welch
+  t-statistic.
+
+### Measured
+FUTURES 1H, 180 days, 6-bar horizon — 4314 candles, baseline drift +0.027%:
+```
+htf                       100%  IC -0.013   edge -0.138%   t -3.5
+obv                       100%  IC -0.052   edge -0.057%   t -1.8
+stoch_rsi                  51%  IC +0.039   edge +0.074%   t +1.8
+… 13 more, all |t| < 2
+Distinguishable from noise: 1/16 — and it is inverted
+```
+SPOT 4H, 400 days, 3-bar horizon:
+```
+htf                       100%  IC -0.053   edge -0.142%   t -2.3
+macd                      100%  IC +0.017   edge +0.131%   t +2.1
+Distinguishable from noise: 2/16
+```
+Two findings, stated as findings and not acted on:
+1. **The HTF condition scores backwards in both runs** — different mode,
+   timeframe, period and horizon, same sign, both |t| ≥ 2. It carries the
+   largest weight in the engine after divergence (up to +2.0).
+2. **Almost nothing else separates from noise.** 14 of 16 measurable conditions
+   in futures, 14 of 16 in spot.
+
+The report prints its own caveat: consecutive candles share overlapping forward
+windows, so the observations are autocorrelated and these t-statistics are
+optimistic. `|t| ≥ 2` means "worth investigating", not "proven".
+
+### Found, not fixed
+- **Condition 16 (S/R proximity) can never fire.** `detect_support_resistance()`
+  only returns levels at least `tolerance` = 0.5% away from the close, while the
+  condition scores only when a level is within 0.2×ATR. Measured over 300
+  candles per timeframe: nearest level is ≥0.504% away, the proximity window
+  reaches at most 0.270% (1H) / 0.373% (4H). The ranges cannot overlap, in
+  either mode — so `✓ Bouncing off support` has never once been printed, and
+  both MAX_SCORE constants overstate by 0.75. Fixing it means choosing a new
+  parameter (widen the window, lower the detector tolerance, or delete the
+  condition); that choice should be measured, not guessed.
+
+---
+
+## 2026-08-29 — feat: entry-gate counterfactual
+
+### Added
+- **`backtest.py --gates`** — every signal an entry gate rejects is also
+  simulated forward, so each gate can be judged on what it *threw away* beside
+  what it saved. Each of these gates was added to erase one specific losing
+  trade; that is easy after the fact, and nothing had ever measured the winners
+  that went with it.
+- `_passes_entry_gates()` became `_failing_gates()`, returning **every** gate
+  that rejects a signal rather than the first. With an early return whichever
+  gate is checked first absorbs all the credit and the ones behind it look
+  inert — useless for deciding what to prune. The report separates `blocked`
+  (any gate would have caught it) from `only` (no other gate would have).
+  Counterfactual entries obey the same one-position-per-direction rule as real
+  trades, so a setup that re-fires for ten candles is counted once.
+
+### Measured — 180-day futures run
+```
+gate                 blocked  only   won    net P&L  verdict
+confidence_first          36     3     5    -22.16%  saves money
+trend_confluence          31     0     4    -17.65%  redundant
+fakeout_first             32     0     4    -16.77%  redundant
+regime_counter            23     1     3    -12.77%  saves money
+reentry_first             17     0     1     -9.71%  redundant
+psy_sl_first               7     0     0     -4.21%  redundant
+sr_first                   1     0     0     -2.00%  redundant
+
+Taken     :   3 trades    -2.89%
+Blocked   :  46 trades   -26.76%
+Ungated   :  49 trades   -29.65%
+```
+Two readings worth recording:
+1. **Five of seven gates are fully redundant on this window** — 0 unique blocks.
+   Removing them would not change a single trade taken. Only
+   `confidence_first` (3 unique) and `regime_counter` (1) do work nothing else
+   does.
+2. **The gates are carrying the system, not the score.** The engine produced 49
+   signals; 46 were losers the gates caught. A −29.65% ungated result becomes
+   −2.89%. That points at the scoring stack, not the filters, as the part that
+   is not earning its complexity.
+
+Neither reading is acted on here — one 180-day window is not enough to prune
+on. It is the first evidence either way.
+
+### Tests
+- Gate attribution lists every failing gate, with no duplicates. Suite: 57/57.
+
+---
+
+## 2026-08-29 — feat: walk-forward windows + execution-cost sensitivity
+
+Validation tooling, not tuning. Nothing about the strategy changed.
+
+### Added
+- **`backtest.py --walk-forward N`** — splits the evaluated period into N
+  sequential windows and stats each with the parameters held fixed. A single
+  90-day number cannot distinguish an edge from a lucky window; a profit factor
+  that crosses 1.0 between windows is noise wearing a result's clothes. Windows
+  span the **tested period**, not the first-to-last-trade range, so a stretch
+  that produced no signal is reported as `no signal` rather than silently
+  dropped — with this system that is most of them.
+- **`backtest.py --costs`** — re-prices every trade at other execution-cost
+  levels and shows what the current setting consumes. Exact rather than
+  approximate: since costs stopped shifting entry/stop/target prices, trade
+  selection and exit points no longer depend on them, so a plain trade carries
+  2 legs of cost and one that took TP1 carries 1.5.
+
+### Fixed
+- **HTF data ran out on longer backtests.** `_HTF_LIMIT` was pinned at 1000
+  bars — 166 days of 4H — so a 180-day run lost its 4H trend for the first two
+  weeks, the same quiet degradation that made the resampled HTF useless.
+  `_htf_bars_needed()` now scales the fetch to the window plus 250 bars of
+  EMA200 warmup. On a 180-day futures run this recovered a trade the harness
+  had been skipping.
+- `print_backtest_results()` printed the `LOOKBACK_DAYS` constant as the period
+  regardless of `--days`.
+
+### Measured
+180-day futures run, parameters fixed: **3 trades, 0 wins, −2.88%**, spread
+across 3 of 6 windows; the other 3 produced no signal at all. Cost sensitivity
+on that run: −1.86% gross → −2.40% net at the configured 0.18% round trip.
+
+### Tests
+- `test_pipelines.py` section 13 — window span (including empty windows) and
+  exactness of the cost re-pricing. Suite: 56/56.
+
+---
+
+## 2026-08-29 — fix: backtest fidelity (10 findings) + real drawdown breaker
+
+A full re-audit of the modules not covered by the earlier passes — persistence,
+the loop, notifiers, scraper and the backtest harness — turned up ten defects.
+Most of them sit in `backtest.py`, the tool every tuned parameter in this repo
+was measured against.
+
+### Fixed
+- **The futures backtest simulated ~30 days and called it 90.** Binance caps a
+  single `fetch_ohlcv()` at 1000 rows and does not signal truncation, so the
+  request for `90 × 24 + 200 = 2360` hourly candles quietly returned 1000
+  (42 days of data, ~30 days of simulation after warmup and the max-hold
+  margin). `signals/ohlcv.py:_fetch_ohlcv_paged()` now pages backwards through
+  the cap. Verified: 2360 candles / 98 days, sorted, no overlap.
+- **The backtest's HTF was structurally disabled.** `_compute_htf_from_df()`
+  resampled the base timeframe, which cannot hold enough bars: 90 days of 4H is
+  ~18 weekly bars against a 50-bar minimum, so the spot backtest's 1W trend was
+  NEUTRAL at *every* index and `aligned` was permanently False — condition 6 is
+  worth up to +2.0, the largest weight after divergence. The daily "EMA200" was
+  an EMA50 for the same reason, and futures' 1D was NEUTRAL for the first half
+  of every run. The harness now fetches the same 1D/1W (spot) and 4H/1D
+  (futures) series live uses and reads per-bar indicators from
+  `signals/htf.py:htf_indicator_series()` — one implementation for both paths,
+  verified byte-identical to the previous live output on fixed data. Only bars
+  that had already **closed** are read, so the replay cannot see into a forming
+  bar.
+- **The 24-hour wick window was swapped between modes.** `_passes_entry_gates()`
+  used 24 bars on spot (= 96 hours) and 6 on futures (= 6 hours); live uses 6
+  and 24 respectively, both meaning 24 hours.
+- **Execution costs were charged inconsistently per exit path.** Entry/SL/TP
+  prices were shifted by the round-trip cost *and* an exit cost was deducted
+  again on the trailing/time/vol paths, while TP2 was charged nothing. That
+  flattered every TP2 win and double-charged every trailed exit — precisely the
+  trade-off the trailing factors were tuned on. One model now, `_net_pnl()`,
+  asserted equal to `trading/paper.py::_calc_pnl` across modes, directions and
+  partial states.
+- **The backtest skipped two gates live applies.** S/R entry proximity and
+  re-entry quality were missing, so the harness passed trades live rejects —
+  the opposite direction from the "conservative" disclaimer.
+- **The circuit breaker never measured drawdown.** It read
+  `max(0, -get_closed_pnl())`, which is cumulative net P&L: an account up 30%
+  that gives back 18% reported a 0% drawdown and kept trading through a
+  `max_drawdown_pct` of 15. `trading/history.get_drawdown()` walks the
+  closed-trade equity curve and returns (current, max) peak-to-trough. The
+  equity check is now expressed directly as `100 + total < min_equity_pct`
+  rather than via the same conflated quantity.
+- **The mid-cycle check could not fire a funding exit.** `run_position_check()`
+  called `check_and_close_positions()` without `funding_rate`, so the gate was
+  dead outside full cycles and a position could sit through an expensive
+  funding window.
+- **MACRO_CLOSE left `exit_price` NULL** — the only close path that did not
+  record the fill.
+
+### Removed
+- `backtest.py:_candle_utc_hour()` — dead since the engine started reading
+  `df.index[-1].hour` itself. The indicator import block went with it; every
+  name in it was already unused because `fetch_ohlcv_df()` computes the columns.
+
+### Changed
+- `trading/history.partial_close_position()` docstring claimed the trail moves
+  to breakeven; spot moves it to entry − 0.5×ATR and the caller decides.
+- `CLAUDE.md` backtest-limitations section rewritten — it documented the
+  resampling approach that caused the HTF defect.
+
+### Effect
+Before this commit both backtests produced **zero** signals on the current
+window. After it, futures runs a real 90-day window and produces 3 trades
+(0W/3L, −2.40%, all SELL). Spot still produces none — consistent with the
+stacked-filter question raised in the previous audit, which needs the paper run
+to answer.
+
+### Tests
+- `test_pipelines.py` section 12 — six regression tests: the per-mode wick
+  window, cost parity with the live P&L function, peak-to-trough drawdown, the
+  closed-bar-only HTF read, the HTF alignment rule, and pagination past a
+  stubbed exchange cap. All six verified to fail against the pre-fix tree.
+  Suite: 54/54.
+
+---
+
+## 2026-08-29 — fix: cancelled RSI extreme no longer penalised as a cluster member
+
+### Fixed
+- **The diminishing-returns penalty charged for a score that had been
+  removed.** The correlated-extreme block ran before condition 7, so when a
+  divergence cancelled the RSI OS/OB score (`sell_conditions -= 1.5` /
+  `buy_conditions -= 1.5`, "divergence takes precedence") the penalty had
+  already counted that RSI flag as a cluster member. The side lost 0.75 for a
+  component contributing nothing. Condition 7 now runs ahead of the block and
+  clears `_rsi_os` / `_rsi_ob` when it cancels them, so only extremes still
+  contributing are counted. Divergence itself is never a cluster member, so
+  the reorder does not expose it to the penalty — the reason the block used to
+  sit first. Measured on a synthetic bearish-divergence flush (RSI 19.7, MFI
+  7.5): spot buy score 1.35 → 2.10, the unwarranted −0.75 removed.
+
+### Tests
+- `test_pipelines.py` — `test_cancelled_rsi_extreme_leaves_the_cluster`, on a
+  fixture that prints a higher high on weaker RSI and then flushes into
+  oversold. Verified to fail against the pre-fix source. Suite: 48/48.
+
+---
+
+## 2026-08-29 — fix: dead config, scoring double-count, stale spot cache, gate analytics
+
+### Fixed
+- **`.env` was switching the adaptive threshold off.** `.env.example` shipped
+  `SIGNAL_THRESHOLD=5.0` / `SPOT_THRESHOLD=4.0` uncommented, and
+  `_get_adaptive_threshold()` returns any env value immediately — so every
+  deployment that copied the example ran with a pinned threshold and no
+  frequency or win-rate control at all, at a *looser* bar than the tuned
+  defaults (5.2 / 4.3). Both lines are now commented out in `.env.example`
+  (with the consequence spelled out) and in this repo's `.env`. Also dropped
+  `DISCORD_WEBHOOK_URL` from the example — Discord support was deleted in
+  2026-05 and nothing reads it.
+- **MFI double-counted the price extreme.** The diminishing-returns block
+  discounts RSI OS/OB, BB lower/upper and the StochRSI crossover because they
+  all fire off the same extreme, but MFI ≤20 / ≥80 (±1.5) sat outside the
+  cluster and stacked on top. Condition 20 now runs ahead of the block and
+  contributes `_mfi_os` / `_mfi_ob`; the penalty scales to 4 members
+  (2→−0.75, 3→−1.5, 4→−2.25). Measured on a synthetic flush with RSI 6.2 and
+  MFI 0.0: spot buy score 3.60 → 2.85. **This changes scoring** — fewer and
+  later entries at extremes — and wants re-validation on fresh data.
+- **Spot entries could open at a 3h-old price.** `analyze_spot_signal()` caches
+  its result per 4H candle, so with `--loop 60` three of every four cycles
+  replayed a stale `entry_price` and stale gate inputs into Phase 3. Cached
+  results are now flagged `_cached` and Phase 3 records a `stale_cache` block
+  instead of opening; display, notifications and exit management are unaffected
+  (exits already run off the live price fetched in `run_cycle()`).
+
+### Changed
+- **`analyze.py` entry-gate analysis reads the database.** `section_skip_gates()`
+  regex-matched `spotsignal.log` against a hand-maintained pattern table, while
+  `run_bot._block()` has been writing structured rows to `signal_blocks` (indexed
+  on `gate` and `(mode, gate)`) that nothing queried. It now groups that table by
+  gate, respects `--mode`, shows a representative reason for each gate above 10%,
+  and derives entry conversion from `paper_positions`. New gates appear
+  automatically instead of falling into "other:".
+- **`SIGNAL_MAX_SCORE` 25.75 → 26.50, `SPOT_MAX_SCORE` 21.75 → 22.50.** These are
+  display denominators only (the "score X / max" line). Both had drifted from the
+  weights actually in `generate_signals()`. `config.py` now carries the per-block
+  derivation table so the next condition change can be checked against it.
+
+### Removed
+- **`RISK_CONFIG["max_positions"]` and `FUTURES_CONFIG["max_positions"]`** — never
+  read by any module, and both descriptions were wrong. Spot is capped by
+  `pyramid.max_entries` (3); futures holds at most **one** position at a time,
+  because `run_bot.py` closes an opposite position before opening (close-and-flip)
+  and skips a same-direction one. `CLAUDE.md` corrected — it claimed 2 futures
+  positions (1 LONG + 1 SHORT), a state the code cannot reach.
+- **Unused `SPOT_THRESHOLD` / `SPOT_MAX_SCORE` import** in `signals/spot.py`.
+
+### Tests
+- `test_pipelines.py` section 11 — MFI joining the correlated-extreme cluster,
+  the stale-cache flag on a replayed spot analysis (and that the stored copy
+  stays unflagged), and a guard that Phase 3 consults the flag. Verified to fail
+  against the pre-fix sources. Suite: 47/47.
+
+---
+
+## 2026-08-29 — fix: threshold propagation, HTF confidence, per-mode floor
+
+### Fixed
+- **The threshold the engine gated on was thrown away.** `generate_signals()`
+  stores the *effective* threshold in `signal['_threshold']` — adaptive base
+  plus the regime bump and the session bump. `signals/spot.py` and
+  `signals/futures.py` then overwrote that key with the raw adaptive base
+  immediately after the news overlay, so every downstream consumer measured
+  strength against a number the engine never used:
+  `sizing._compute_confidence()` (factor 1 is `strength / _threshold`, and it
+  drives leverage), `run_bot._check_reentry_quality()` (confidence-tier
+  comparison), the Telegram/terminal "≥ thr" line, and the `threshold` column
+  of `cycle_log`. In a RANGING regime during the Asia session the two values
+  differ by up to 1.0. Both pipelines now leave the engine's value alone.
+  Note for analysis: `cycle_log.threshold` (and therefore `analyze.py`'s
+  ADAPTIVE THRESHOLD DRIFT section) now records the effective threshold, so
+  drift includes session/regime bumps, not just adaptive movement.
+- **The news overlay silently promoted signals back to STRONG.**
+  `get_signal_confidence()` takes `htf` / `signal_type` so that STRONG requires
+  the 1D timeframe to agree with the direction (audit #9 — STRONG scored 12.5%
+  WR vs NORMAL 40% because top-of-move signals score highest).
+  `integrate_news_with_signal()` recalculates confidence after adjusting
+  strength but called it with two arguments, dropping the HTF rule and
+  re-upgrading a signal the engine had deliberately downgraded to NORMAL. The
+  counter-trend block already rejects directions that oppose a non-NEUTRAL 1D,
+  so the live exposure was the HTF-fetch-failure path (`1d = NEUTRAL`) — where
+  a promoted STRONG unlocks spot pyramiding, whose `min_confidence` is STRONG.
+  `integrate_news_with_signal(signal, news_data, htf=None)` now accepts the HTF
+  dict and forwards it; both pipelines pass it.
+- **Futures could gate below `THRESHOLD_MIN`.** The floor applied after the
+  regime and session bumps was hard-coded to `3.0` — the *spot* minimum —
+  for both modes, so futures in a TRENDING regime during the US session gated
+  at 3.5 (4.0 − 0.25 − 0.25) despite `THRESHOLD_MIN = 4.0`. The floor is now
+  per-mode (`SPOT_THRESHOLD_MIN` / `THRESHOLD_MIN`). An explicit env override
+  that already sits below its mode minimum is still honoured — the floor
+  guards the bumps, not the operator's chosen base. No effect on the default
+  config (5.2 − 0.5 = 4.7, already above the floor); it only bites when the
+  adaptive threshold has walked down toward the minimum.
+
+### Tests
+- `test_pipelines.py` section 10 — 5 regression tests: per-mode floors for both
+  modes, sub-minimum override respected, HTF downgrade surviving the news
+  overlay, and a source guard against re-adding the `_threshold` overwrite.
+  Verified to fail against the pre-fix sources (4/5; the spot-floor test passes
+  in both, guarding the path that was already correct). Suite: 44/44.
+
+---
+
+## 2026-08-29 — fix: Phase 2 and Phase 4 error reporting
+
+### Fixed
+- **Phase 2 reported the wrong error.** `analyze_spot_signal()` /
+  `analyze_futures_signal()` caught every exception, logged it, and returned
+  `None`; `run_bot.py` then did `spot_signal["type"]` on that `None`, so the
+  terminal showed `'NoneType' object is not subscriptable` while the real
+  cause — a ccxt `NetworkError` from the Binance 403 — only appeared in the
+  log. Both pipelines now `logger.exception(...)` (full traceback to
+  `spotsignal.log`) and re-raise. `run_bot.py` is the only caller, and it
+  already wraps both calls and keeps the cycle alive, so the swallow bought
+  nothing. Phase 2 also guards against a `None` return and prefixes the
+  exception class, so the message reads
+  `SPOT failed (NetworkError: binance GET https://api.binance.com/...)`.
+- **Phase 4 announced sends that never happened.** `send_signal_alert()`
+  returns early when both signals are `None`, but `run_bot.py` printed
+  "✓ Telegram sent" unconditionally — including on a cycle where Phases 2 and
+  3 had all failed and nothing was transmitted. `send_signal_alert()` and
+  `_send_combined_telegram()` now return the number of messages actually
+  delivered (0 when credentials are missing, rather than a bare `None`), and
+  Phase 4 reports one of three honest outcomes: `Telegram sent (N messages)`,
+  `Skipped — no signal to report`, or `Nothing delivered — check TELEGRAM_* in
+  .env / spotsignal.log`. The third case did not exist before: a Telegram
+  transport failure (bad token, bad chat_id, HTTP error) also read as "sent".
+- **4 regression tests** (`test_pipelines.py` §9) covering the pipeline
+  re-raise, the zero-delivery count, an honest delivered count, and the
+  no-credentials path. Suite 35 → 39.
+
+### Known gap
+- Phase 3 still reports without the exception class
+  (`Phase 3 Failed (binance GET https://...)`), the same pattern fixed above
+  for Phases 2 and 4.
+
+---
+
+## 2026-08-29 — feat: Binance public-data-mirror fallback
+
+### Added
+- **Mirror fallback for spot reads** (`signals/market_data.py`). The bare
+  `exchange = ccxt.binance()` had no fallback, and a full cycle lost Phase 2
+  *and* Phase 3 when api.binance.com answered 403 at the Cloudflare edge
+  (geo-restriction; confirmed a genuine Binance response via `cf-ray`, not a
+  local network issue). `_BinanceWithMirror` now retries the spot reads in
+  `_MIRRORABLE` (`fetch_ohlcv`, `fetch_ticker`, `fetch_tickers`,
+  `fetch_order_book`) against `data-api.binance.vision`, which serves the same
+  public spot endpoints unrestricted. Call sites are unchanged — the proxy
+  delegates by attribute.
+  - `fetchMarkets=['spot']` on the mirror client keeps `load_markets()` off
+    fapi.binance.com, which has no mirror and is blocked alongside the primary.
+  - Futures-only reads (funding, open interest, L/S ratio, basis) deliberately
+    stay on the primary and degrade to NEUTRAL as before — the mirror cannot
+    serve them, so routing them there would swap one failure for another.
+  - The fallback is sticky so a tripped cycle does not pay the timeout twice,
+    and expires after 30 min (`_MIRROR_RETRY_AFTER_S`) so a long `--loop` run
+    returns to the primary, and its futures data, once the block lifts.
+- **6 tests** (`test_pipelines.py` §8) — mirror URL/spot-only config,
+  NetworkError retry, stickiness, cooldown re-probe, futures reads never
+  leaking to the mirror, and `__setattr__` reaching both clients. Offline,
+  matching the suite's no-network contract. Suite 29 → 35.
+
+---
+
+## 2026-08-29 — docs: merge PAPER_TRADE_PLAN into TODO_PLAN
+
+### Changed
+- **`PAPER_TRADE_PLAN.md` merged into `TODO_PLAN.md` and deleted.** The two
+  documents described the same paper-trade validation with conflicting
+  numbers (2 weeks vs 1 week; WR > 35% futures / > 45% spot vs WR ≥ 50%).
+  `TODO_PLAN.md` is the newer, post-audit-#12 document, so its targets win;
+  the older bar is recorded inline as a deliberate fallback, not deleted.
+  Carried over: weekly analysis queries (frequency, gate-block distribution,
+  WR/PF, PnL by F&G zone, daily P&L curve), the red-flag table, and the five
+  tuning levers — all five verified still present in `config.py` / `run_bot.py`.
+  Dropped as obsolete: the never-filled `<start-date>` period, the decision
+  matrix, and "Promote to v2.8.0" — `v2.8.0` (`0f0c2c7`) was tagged
+  2026-05-14, the same day as `v2.8.0-rc1` (`e0a7d08`), so the 2-week
+  validation it gated on never ran.
+
+### Fixed
+- **Wrong rollback target in the retired plan.** It named `cd1f378` as "the
+  `v2.7.0` state"; `v2.7.0` is actually `09f0ba6`, and `cd1f378` is merely an
+  ancestor of it. The merged rollback section points at the tags instead.
+- **`TODO_PLAN.md` drift corrected** — BE-cushion line refs `~236`/`~311` →
+  actual `247`/`330` in `trading/paper.py`; Phase 1 now creates `logs/`, which
+  never existed and would have failed the `nohup` redirect; the "push develop"
+  checklist item marked done (`origin/develop` == `ce85bc1`); adaptive-threshold
+  cold start upgraded from possible to certain (both threshold state files are
+  gone); new Phase 0 pre-flight covering the current empty-DB state.
+
+---
+
+## 2026-08-29 — chore: remove dead code, trim CLAUDE.md to non-derivable guidance
+
+`/doctor` cleanup pass. Removed files nothing could reach, plus documentation a
+session can read straight from the code, and corrected constants that had
+drifted out of date.
+
+### Removed
+- **`notifier.py` shim deleted** — dead code. A `notifier/` package and a
+  `notifier.py` module sat side by side, and Python resolves the package
+  first, so the shim could never be imported. Verified: `import notifier`
+  resolves to `notifier/__init__.py`, and the suite passes without it.
+- **`core_analysis.py` shim deleted** — no module imported it, and it had no
+  `__main__` block, so the documented `python3 core_analysis.py` command was
+  a silent no-op. Removed the command from `CLAUDE.md` and `README.md`.
+- **`test_telegram.py` deleted** — unreferenced one-off credential check.
+- **`spotsignal.log`, `.DS_Store`, and all `__pycache__/` removed** (~1.6 MB),
+  including 14 orphaned `.pyc` files for modules that no longer exist
+  (`signal_engine`, `paper_trader`, `guwek_oracle_v1`, `notifier/discord`, …).
+
+### Fixed
+- **Stale max-score constants** — CLAUDE.md documented `SPOT_MAX_SCORE` as
+  17.25 and `SIGNAL_MAX_SCORE` as 21.25; `config.py` has 21.75 and 25.75.
+  Dropped the hardcoded numbers rather than re-pinning them.
+- **Stale condition count** — the 18-row condition table predated conditions
+  19 (candlestick patterns), 20 (MFI), 21 (CMF) and 22 (taker ratio) in
+  `signals/engine.py`.
+
+### Changed
+- **CLAUDE.md 9,580 → 5,572 chars** (~2,395 → ~1,393 est. context tokens).
+  Cut the config-variable table (superset lives in `.env.example` and
+  `README.md`), the `signals/` module table (each row was that module's own
+  docstring), the 18-row condition table, the "Useful SQL queries" block
+  (identical copy in `README.md`), and the "Adaptive threshold" section
+  (documented in `README.md`, constants in `config.py:111-118`).
+  Kept the run commands, phase behaviour contracts, the `mode=` query
+  convention, the scoring-convention rules, and the backtest caveats.
+- Docstrings in `news_scraper.py` and `trading/history.py` no longer name the
+  deleted `core_analysis` shim.
+
+---
+
 ## 2026-06-13 — audit #12: entry-quality triple — structural SL, R:R floor, entry-wick gate
 
 User-requested follow-up to minimise losses on opening signals. Three

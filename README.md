@@ -279,7 +279,6 @@ ORDER BY id DESC LIMIT 50;
 | `python3 run_bot.py` | Full 4-phase pipeline |
 | `python3 run_bot.py --loop N` | Loop mode — repeat every N minutes |
 | `python3 news_scraper.py` | Phase 1 only — scrape news + macro, export CSVs |
-| `python3 core_analysis.py` | Phase 2 only — read stale CSVs, generate signal |
 | `python3 backtest.py` | Replay 90 days of 1H data (technical conditions only) |
 
 ---
