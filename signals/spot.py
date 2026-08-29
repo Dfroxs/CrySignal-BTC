@@ -128,7 +128,12 @@ def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
         }
         signal['_cached'] = False
         _spot_cache["timestamp"] = candle_ts
-        _spot_cache["signal"] = signal
+        # Deep-copy on STORE as well as on read. run_bot.py mutates the returned
+        # dict — the circuit breaker forces type=HOLD, and a pyramid entry
+        # rewrites stop_loss/take_profit/tp2 — so storing the same object let
+        # those Phase 3 edits become the base signal replayed for the rest of
+        # the 4H candle.
+        _spot_cache["signal"] = copy.deepcopy(signal)
         return signal
 
     except Exception:

@@ -828,6 +828,19 @@ def test_spot_cache_hit_is_flagged_stale():
     finally:
         sp._spot_cache.update(saved)
 
+def test_spot_cache_stores_a_copy_not_the_returned_object():
+    """On a cache MISS the computed signal is both returned and stored. run_bot
+    then mutates what it was given — the circuit breaker forces type=HOLD, a
+    pyramid entry rewrites stop_loss/take_profit/tp2 — so storing the same
+    object made those Phase 3 edits the base signal replayed for the rest of the
+    4H candle. The read path was already deep-copied; the store path was not."""
+    with open("signals/spot.py") as f:
+        src = f.read()
+    assert '_spot_cache["signal"] = copy.deepcopy(signal)' in src, \
+        "the cache store must deep-copy — run_bot mutates the object it is handed"
+    assert '_spot_cache["signal"] = signal\n' not in src, \
+        "a bare reference store has come back"
+
 def test_run_bot_refuses_entry_on_cached_spot_signal():
     """Phase 3 must consult the flag and record the skip as a gate block."""
     with open("run_bot.py") as f:
@@ -1270,6 +1283,7 @@ if __name__ == "__main__":
     run("MFI extreme joins the cluster",          test_mfi_extreme_counts_in_correlated_cluster)
     run("cancelled RSI leaves the cluster",       test_cancelled_rsi_extreme_leaves_the_cluster)
     run("cached spot signal flagged stale",       test_spot_cache_hit_is_flagged_stale)
+    run("spot cache stores a copy",               test_spot_cache_stores_a_copy_not_the_returned_object)
     run("run_bot refuses cached spot entry",      test_run_bot_refuses_entry_on_cached_spot_signal)
 
     print("\n── 12. Backtest fidelity & risk accounting ──")

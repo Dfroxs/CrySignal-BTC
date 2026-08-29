@@ -24,6 +24,11 @@ die()  { printf '\033[31m  ✗ %s\033[0m\n' "$*" >&2; exit 1; }
 # ratio would all degrade to NEUTRAL — 7.5 of the 26.5-point futures ceiling,
 # silently. A paper run on such a host measures a different system.
 say "Checking Binance reachability from this host"
+# Without this guard `curl` exiting 127 becomes `000` below, and the operator is
+# told to destroy a perfectly good VPS because its region looked blocked.
+command -v curl >/dev/null ||
+  die "curl is not installed. Install it first (apt install curl / dnf install curl)
+      and re-run. A missing curl is not a blocked region."
 spot_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 \
   'https://api.binance.com/api/v3/ping' || echo 000)
 fut_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 \
@@ -143,16 +148,16 @@ if ! grep -qE '^TELEGRAM_BOT_TOKEN=.+' .env; then
   warn "TELEGRAM_BOT_TOKEN is empty in .env — the bot will run but stay silent."
 fi
 
-# ── 6. One verification cycle before committing to the loop ─────────────────
+# ── 6. Record what this run is testing, BEFORE anything writes to the DB ──────────────────────────────────────
+say "Recording the run manifest"
+./venv/bin/python scripts/start_paper_run.py || true
+
+# ── 7. One verification cycle before committing to the loop ─────────────────
 say "Running one full cycle as a smoke test"
 if ! ./venv/bin/python run_bot.py; then
   die "The verification cycle failed. Fix that before installing the service —
       a broken loop under Restart=always just fails every 30 seconds forever."
 fi
-
-# ── 7. Record what this run is testing ──────────────────────────────────────
-say "Recording the run manifest"
-./venv/bin/python scripts/start_paper_run.py || true
 
 # ── 8. systemd ──────────────────────────────────────────────────────────────
 say "Installing the systemd service"

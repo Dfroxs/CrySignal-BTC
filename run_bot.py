@@ -902,10 +902,14 @@ def run_position_check():
         print(f"  MID-CYCLE CHECK  ·  BTC ${price:,.0f}")
         print(f"  {'─' * 40}")
 
-        # Without this the funding exit could only ever fire on a full cycle,
-        # so a position could sit through an expensive funding window untouched.
-        from signals.market_data import fetch_funding_rate
-        funding = fetch_funding_rate().get("rate_pct", 0)
+        # The funding exit could only ever fire on a full cycle before this.
+        # Fetch only when a futures position could act on it: the call blocks up
+        # to 5s against fapi.binance.com, and on a host where fapi is blocked
+        # that timeout buys a rate of 0.0 that changes nothing.
+        funding = 0
+        if get_open_positions("futures"):
+            from signals.market_data import fetch_funding_rate
+            funding = fetch_funding_rate().get("rate_pct", 0)
 
         closed_spot = check_and_close_positions(price, mode="spot", current_atr=_last_atr_spot)
         closed_fut = check_and_close_positions(price, mode="futures", current_atr=_last_atr_fut,
