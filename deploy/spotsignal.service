@@ -1,0 +1,37 @@
+[Unit]
+# __USER__ is a placeholder that deploy/setup.sh substitutes before installing.
+# It is NOT systemd's %i — this is a plain unit, not a template.
+Description=SpotSignal BTC/USDT paper-trading bot
+Documentation=https://github.com/Dfroxs/CrySignal-BTC
+# The first cycle fetches from six external APIs; without network-online the
+# unit starts before DNS is up and the whole cycle fails on a cold boot.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=/home/__USER__/SpotSignal
+ExecStart=/home/__USER__/SpotSignal/venv/bin/python run_bot.py --loop 60
+
+# A multi-week validation run must not end quietly. Restart on any exit,
+# including a clean one, and keep trying — a network outage should cost one
+# cycle, not the whole sample.
+Restart=always
+RestartSec=30
+
+# The engine reads the session bump from the CANDLE's UTC hour, so it is
+# unaffected by this. The loop's :01 / :31 schedule follows local time, so
+# pinning UTC makes cycle times predictable and comparable to cycle_log.
+Environment=TZ=UTC
+Environment=PYTHONUNBUFFERED=1
+
+StandardOutput=append:/home/__USER__/SpotSignal/paper_run.log
+StandardError=append:/home/__USER__/SpotSignal/paper_run.log
+
+# Give an in-flight cycle time to finish writing to SQLite before SIGKILL.
+KillSignal=SIGINT
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target
