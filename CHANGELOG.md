@@ -4,6 +4,42 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-29 — fix: gate counterfactual reports per-trade, not just totals
+
+### Fixed
+- **The counterfactual's headline number was misleading.** It reported that the
+  gates turn a −29.16% ungated result into −2.40%, which reads as the gates
+  carrying the system. Comparing totals across different trade counts cannot
+  show that. Per trade:
+
+```
+             trades     total   per trade
+  Taken           3    -2.40%     -0.799%
+  Blocked        46   -26.76%     -0.582%
+  Ungated        49   -29.16%     -0.595%
+```
+
+  **The trades the gates let through are worse per trade than the ones they
+  reject.** Total loss fell only because count fell from 49 to 3 — the effect
+  any filter of that severity produces on a negative-expectancy system,
+  including a random one. The gate set has negative selection value on this
+  window, not positive.
+
+  The report now prints per-trade P&L per gate and for each bucket, and says
+  explicitly whether the gates are selecting or merely thinning.
+
+### Correction
+This retracts the second reading recorded under "feat: entry-gate
+counterfactual" — *"the gates are carrying the system, not the score"*. They are
+not carrying it. That conclusion came from comparing sums over unequal counts,
+which is exactly the error the per-trade column now makes impossible to repeat.
+
+Note also that `confidence_first`, the gate with the most unique blocks, is
+itself a threshold on the score (`strength >= threshold × 1.2`), so "keep the
+gates, drop the scoring stack" was never a coherent split to begin with.
+
+---
+
 ## 2026-08-29 — feat: explicit date ranges + 2024 vs 2025 replication
 
 ### Added

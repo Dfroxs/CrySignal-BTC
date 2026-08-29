@@ -687,8 +687,9 @@ def print_gate_counterfactual(trades, blocked):
         for g in b["gates"]:
             by_gate.setdefault(g, []).append(b)
 
-    print(f"\n   {'gate':<20} {'blocked':>7} {'only':>5} {'won':>5} {'net P&L':>10}  verdict")
-    print(f"   {'-' * 62}")
+    print(f"\n   {'gate':<20} {'blocked':>7} {'only':>5} {'won':>5} {'net P&L':>10} "
+          f"{'per trade':>10}  verdict")
+    print(f"   {'-' * 74}")
     for gate, rows in sorted(by_gate.items(), key=lambda kv: -abs(sum(r["pnl_pct"] for r in kv[1]))):
         won = sum(1 for r in rows if r["pnl_pct"] > 0)
         # `only` = trades no other gate would have caught. A gate with a big
@@ -697,7 +698,7 @@ def print_gate_counterfactual(trades, blocked):
         net = sum(r["pnl_pct"] for r in rows)
         verdict = "COSTS money" if net > 0 else ("saves money" if alone else "redundant")
         print(f"   {gate:<20} {len(rows):>7} {alone:>5} {won:>5} "
-              f"{net:>9.2f}%  {verdict}")
+              f"{net:>9.2f}% {net / len(rows):>9.3f}%  {verdict}")
     print(f"\n   {'blocked'} counts every gate that would have caught the trade, so the\n"
           f"   column sums past the {len(blocked)} distinct blocked signals; "
           f"'only' does not.")
@@ -705,10 +706,31 @@ def print_gate_counterfactual(trades, blocked):
     taken_pnl = sum(t["pnl_pct"] for t in trades
                     if t["outcome"] in ("WIN", "LOSS", "TIME_EXIT", "VOL_EXIT"))
     blocked_pnl = sum(b["pnl_pct"] for b in blocked)
-    print(f"\n   Taken     : {len(trades):>3} trades  {taken_pnl:>7.2f}%")
-    print(f"   Blocked   : {len(blocked):>3} trades  {blocked_pnl:>7.2f}%")
-    print(f"   Ungated   : {len(trades) + len(blocked):>3} trades  "
-          f"{taken_pnl + blocked_pnl:>7.2f}%")
+    n_taken, n_blocked = len(trades), len(blocked)
+    per_taken = taken_pnl / n_taken if n_taken else 0.0
+    per_blocked = blocked_pnl / n_blocked if n_blocked else 0.0
+    print(f"\n   {'':<12}{'trades':>8}{'total':>10}{'per trade':>12}")
+    print(f"   {'-' * 42}")
+    print(f"   {'Taken':<12}{n_taken:>8}{taken_pnl:>9.2f}%{per_taken:>11.3f}%")
+    print(f"   {'Blocked':<12}{n_blocked:>8}{blocked_pnl:>9.2f}%{per_blocked:>11.3f}%")
+    print(f"   {'Ungated':<12}{n_taken + n_blocked:>8}{taken_pnl + blocked_pnl:>9.2f}%"
+          f"{(taken_pnl + blocked_pnl) / max(1, n_taken + n_blocked):>11.3f}%")
+
+    # The number that decides whether the gates SELECT or merely THIN. A gate set
+    # with real selection value leaves behind trades that are better per trade
+    # than the ones it removed. If the taken trades are worse, total P&L only
+    # improved because fewer trades were placed — which any filter achieves on a
+    # negative-expectancy system, including a random one.
+    if n_taken and n_blocked:
+        if per_taken < per_blocked:
+            print(f"\n   ⚠️  Taken trades are WORSE per trade than blocked ones "
+                  f"({per_taken:.3f}% vs {per_blocked:.3f}%).")
+            print(f"   {'':3}The gates reduced total loss by cutting COUNT, not by selecting")
+            print(f"   {'':3}better — the same effect a random filter of this severity would have.")
+        else:
+            print(f"\n   Taken trades beat blocked ones per trade "
+                  f"({per_taken:+.3f}% vs {per_blocked:+.3f}%) — the gates are selecting,")
+            print(f"   {'':3}not merely thinning.")
     if blocked_pnl > 0:
         print(f"\n   ⚠️  The gates net-removed a POSITIVE {blocked_pnl:+.2f}% — "
               f"as a set they cost more than they saved")
