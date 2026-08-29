@@ -968,6 +968,61 @@ def test_htf_at_alignment_matches_live_rule():
     assert _htf_at(agree, ts)["aligned"] is True
     assert _htf_at(differ, ts)["aligned"] is False
 
+def test_range_fetch_walks_forward_to_the_requested_span():
+    """An explicit span is what makes independent replication possible at all —
+    paging backwards from now can only ever produce windows that overlap."""
+    import signals.ohlcv as oh
+    STEP, TOTAL, CAP = 3_600_000, 5_000, 1_000
+    hist = [[i * STEP, 1.0, 1.0, 1.0, 1.0, 1.0] for i in range(TOTAL)]
+
+    class _CappedExchange:
+        calls = 0
+        def parse_timeframe(self, tf):
+            return STEP // 1000
+        def fetch_ohlcv(self, symbol, timeframe=None, since=None, limit=None):
+            _CappedExchange.calls += 1
+            n = min(limit or CAP, CAP)
+            if since is None:
+                return hist[-n:]
+            start = next((i for i, b in enumerate(hist) if b[0] >= since), len(hist))
+            return hist[start:start + n]
+
+    saved = oh.exchange
+    try:
+        oh.exchange = _CappedExchange()
+        lo, hi = 1_500 * STEP, 4_200 * STEP          # 2700 bars, past the 1000 cap
+        bars = oh._fetch_ohlcv_range("BTC/USDT", "1h", lo, hi)
+        ts = [b[0] for b in bars]
+        assert ts[0] == lo, f"span must start at the requested bar, got {ts[0]}"
+        assert ts[-1] == hi, f"span must end at the requested bar, got {ts[-1]}"
+        assert len(bars) == 2701, f"expected 2701 candles, got {len(bars)}"
+        assert ts == sorted(ts) and len(set(ts)) == len(ts), "pages must not overlap or reorder"
+        assert _CappedExchange.calls >= 3, "2700 candles needs more than one capped call"
+    finally:
+        oh.exchange = saved
+
+def test_range_fetch_stops_at_the_end_of_history():
+    """Asking past the end of the exchange's history must terminate, not loop."""
+    import signals.ohlcv as oh
+    STEP = 3_600_000
+    hist = [[i * STEP, 1.0, 1.0, 1.0, 1.0, 1.0] for i in range(50)]
+
+    class _ShortExchange:
+        def parse_timeframe(self, tf):
+            return STEP // 1000
+        def fetch_ohlcv(self, symbol, timeframe=None, since=None, limit=None):
+            start = next((i for i, b in enumerate(hist) if b[0] >= (since or 0)), len(hist))
+            return hist[start:start + (limit or 1000)]
+
+    saved = oh.exchange
+    try:
+        oh.exchange = _ShortExchange()
+        bars = oh._fetch_ohlcv_range("BTC/USDT", "1h", 0, 9_999 * STEP)
+        assert len(bars) == 50, f"should return all it has, got {len(bars)}"
+    finally:
+        oh.exchange = saved
+
+
 def test_ohlcv_pagination_beats_the_exchange_cap():
     """A single fetch_ohlcv() silently truncates at 1000 rows, so the futures
     backtest asked for 2360 candles and simulated 42 days calling it 90."""
@@ -1168,6 +1223,8 @@ if __name__ == "__main__":
     run("HTF ignores the forming bar",            test_htf_at_ignores_the_still_forming_bar)
     run("HTF alignment matches live",             test_htf_at_alignment_matches_live_rule)
     run("OHLCV pagination beats the cap",         test_ohlcv_pagination_beats_the_exchange_cap)
+    run("range fetch walks a requested span",     test_range_fetch_walks_forward_to_the_requested_span)
+    run("range fetch stops at end of history",    test_range_fetch_stops_at_the_end_of_history)
 
     print("\n── 13. Walk-forward & cost sensitivity ──")
     run("windows span the evaluated period",      test_walk_forward_windows_span_the_evaluated_period)

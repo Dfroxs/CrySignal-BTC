@@ -4,6 +4,63 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-29 — feat: explicit date ranges + 2024 vs 2025 replication
+
+### Added
+- **`signals/ohlcv.py:_fetch_ohlcv_range()`** and `fetch_ohlcv_df(since=, until=)`
+  — page *forward* through an explicit span. `_fetch_ohlcv_paged()` walks
+  backwards from now, so every sample it can produce ends today and overlaps
+  every other one; independent replication was not available at all.
+- **`scripts/condition_ic.py --start / --end`**, with HTF warmed from before the
+  window opens so the opening weeks are not scored on half-formed indicators.
+- `backtest.py:_load_htf_series(start=, end=)` for the same reason.
+
+### Measured — 2024 vs 2025, two modes, non-overlapping years
+t-statistic range across horizons; **bold** = |t| ≥ 2 somewhere in the sweep.
+
+| condition | fut 2024 | fut 2025 | spot 2024 | spot 2025 |
+|---|---|---|---|---|
+| `htf` | **−3.7 → −5.9** | −1.0 → −1.7 | **−2.5 → −3.6** | −0.7 → **−3.8** |
+| `cmf` | **−3.1 → −3.0** | **−2.5 → −3.5** | flat | −0.3 → −1.9 |
+| `ema200` | +1.8 → **+3.5** | **−2.6 → −2.2** | +0.6 → +1.9 | +0.5 → +1.8 |
+| `macd` | +1.5 → +1.4 | **−2.8 → −4.7** | **+2.9 → +2.4** | +0.1 → +1.8 |
+| `mfi` | **−2.0 → −5.6** | **+3.2 → +2.1** | **−3.6 → −3.0** | +0.4 → +1.5 |
+| `rsi` | −0.8 → **−3.8** | **+2.4 → +2.6** | **−2.1 → −0.9** | +1.2 → +0.6 |
+| `adx` | +0.7 → **+5.8** | −1.5 → +0.9 | +1.2 → +1.7 | **−2.5 → −3.6** |
+| `extreme_cluster_penalty` | +1.8 → **+3.4** | +0.3 → −1.2 | **+3.0 → +2.2** | **−2.0 → −2.8** |
+| `rsi_divergence` | +1.0 → **−3.3** | +0.8 → **−3.0** | −1.1 → **−3.2** | +1.0 → **+3.5** |
+
+**This overturns the reading recorded in the previous commit.** That entry
+concluded "the trend-following conditions point the right way and the
+mean-reversion conditions point the wrong way", from two overlapping 2026
+samples. Across separate years it does not hold: `ema200` runs **+3.5 in 2024
+and −2.2 in 2025**, `macd` **+1.4 then −4.7**, and `mfi` and `rsi` flip sign
+*significantly in both directions*. The earlier pattern was a property of the
+2026 window, not of the indicators. Overlapping samples produced a confident
+conclusion that a genuine out-of-sample test destroyed.
+
+What survives:
+1. **`htf` is negative in all four samples** (significant in three). It is the
+   only condition that never changes sign, and it carries the largest weight in
+   the engine after divergence.
+2. **`cmf` is significantly negative in both futures years.**
+3. **Everything else is regime-dependent.** Several conditions clear |t| ≥ 2 in
+   *opposite directions* between years — `extreme_cluster_penalty` +3.0 then
+   −2.8 on spot, `rsi_divergence` −3.2 then +3.5. A fixed weight cannot serve
+   both years; the question is not what weight to pick but whether a fixed
+   weight is the right structure at all.
+
+### Not changed
+Still no weight touched. The finding that matters is not "invert `htf`" — it is
+that the scoring stack's parameters are being asked to hold constant across
+regimes in which the underlying relationships reverse.
+
+### Tests
+- Range fetch walks a requested span past the exchange cap without overlap or
+  reorder, and terminates at the end of history. Suite: 62/62.
+
+---
+
 ## 2026-08-29 — feat: horizon sweep + condition ablation
 
 ### Added

@@ -30,7 +30,7 @@ from config import (
 from signals.engine import generate_signals
 from signals.htf import _htf_aligned, htf_indicator_series, indicators_from_row
 from signals.indicators import detect_support_resistance
-from signals.ohlcv import _fetch_ohlcv_paged, fetch_ohlcv_df
+from signals.ohlcv import _fetch_ohlcv_paged, _fetch_ohlcv_range, fetch_ohlcv_df
 from signals.market_data import get_signal_confidence
 
 logger = logging.getLogger(__name__)
@@ -458,7 +458,7 @@ def _make_trade(df, entry_idx, exit_idx, signal, outcome, entry, exit_px, pnl_pc
     }
 
 
-def _load_htf_series(symbol, timeframe, lookback_days):
+def _load_htf_series(symbol, timeframe, lookback_days, start=None, end=None):
     """Fetch the SAME higher timeframes live uses and precompute per-bar indicators.
 
     Replaces resampling the base timeframe, which could never hold enough bars:
@@ -469,7 +469,14 @@ def _load_htf_series(symbol, timeframe, lookback_days):
     """
     frames = {}
     for tf in _HTF_FOR.get(timeframe, ("4h", "1d")):
-        bars = _fetch_ohlcv_paged(symbol, tf, _htf_bars_needed(tf, lookback_days))
+        if start is not None:
+            # Warm the EMA200 well before the window opens, or the first weeks
+            # of an explicit span would read NEUTRAL for want of history.
+            since = int((pd.Timestamp(start) - _TF_DELTA[tf] * _HTF_WARMUP).timestamp() * 1000)
+            until = int(pd.Timestamp(end).timestamp() * 1000) if end is not None else None
+            bars = _fetch_ohlcv_range(symbol, tf, since, until)
+        else:
+            bars = _fetch_ohlcv_paged(symbol, tf, _htf_bars_needed(tf, lookback_days))
         d = pd.DataFrame(bars, columns=["timestamp", "open", "high", "low", "close", "volume"])
         d.index = pd.to_datetime(d["timestamp"], unit="ms")
         frames[tf] = (htf_indicator_series(d), _TF_DELTA[tf])

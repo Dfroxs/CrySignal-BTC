@@ -75,16 +75,56 @@ def _fetch_ohlcv_paged(symbol, timeframe, limit):
     return bars[-limit:]
 
 
-def fetch_ohlcv_df(symbol='BTC/USDT', timeframe='1h', limit=500, vwap_period=24):
-    bars = _fetch_ohlcv_paged(symbol, timeframe, limit)
+def _fetch_ohlcv_range(symbol, timeframe, since_ms, until_ms=None):
+    """Page FORWARD from *since_ms* to *until_ms* inclusive.
+
+    `_fetch_ohlcv_paged` walks backwards from now, which can only ever produce a
+    window ending today. Testing one year against another needs an explicit
+    span — otherwise every sample overlaps every other one and "independent
+    replication" is not available at all.
+    """
+    tf_ms = exchange.parse_timeframe(timeframe) * 1000
+    bars, cursor = [], int(since_ms)
+    while True:
+        chunk = exchange.fetch_ohlcv(symbol, timeframe=timeframe,
+                                     since=cursor, limit=_MAX_BARS_PER_CALL)
+        if bars:
+            chunk = [c for c in chunk if c[0] > bars[-1][0]]
+        if not chunk:
+            break
+        bars.extend(chunk)
+        cursor = bars[-1][0] + tf_ms
+        if until_ms is not None and bars[-1][0] >= until_ms:
+            break
+        if len(chunk) < _MAX_BARS_PER_CALL:
+            break
+    if until_ms is not None:
+        bars = [b for b in bars if b[0] <= until_ms]
+    return bars
+
+
+def fetch_ohlcv_df(symbol='BTC/USDT', timeframe='1h', limit=500, vwap_period=24,
+                   since=None, until=None):
+    """Fetch OHLCV and attach every indicator column the engine reads.
+
+    Pass *since* / *until* (epoch ms) for an explicit historical span; otherwise
+    the most recent *limit* candles are returned.
+    """
+    if since is not None:
+        bars = _fetch_ohlcv_range(symbol, timeframe, since, until)
+    else:
+        bars = _fetch_ohlcv_paged(symbol, timeframe, limit)
     df = pd.DataFrame(bars, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df = df.set_index('timestamp')
 
     # Sanity check upstream — bad OHLCV (empty / NaN in core cols) would
     # produce nonsense indicators downstream that silently feed the engine.
-    if not _validate_ohlcv(df, timeframe):
+    # A historical span is stale by definition — only the live path cares.
+    if since is None and not _validate_ohlcv(df, timeframe):
         raise ValueError(f"OHLCV validation failed for {symbol} {timeframe}")
+    if since is not None and len(df) < 10:
+        raise ValueError(f"Only {len(df)} candles for {symbol} {timeframe} in that span")
 
     df['EMA_200'] = calculate_ema(df['close'], 200)
     df['RSI_14'] = calculate_rsi(df['close'])

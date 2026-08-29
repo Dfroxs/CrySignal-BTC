@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 G, R, Y, DIM, BLD, RST = "\033[32m", "\033[31m", "\033[33m", "\033[2m", "\033[1m", "\033[0m"
 
 
-def collect(mode="futures", days=180, horizons=(6,)):
+def collect(mode="futures", days=180, horizons=(6,), start=None, end=None):
     """Run the engine over every candle and pair each condition's contribution
     with the returns that followed, at every requested horizon.
 
@@ -55,16 +55,34 @@ def collect(mode="futures", days=180, horizons=(6,)):
     """
     tf = "4h" if mode == "spot" else "1h"
     per_day = 6 if tf == "4h" else 24
-    limit = days * per_day + MIN_WARMUP
+    vwap_period = 6 if tf == "4h" else 24
     threshold = SPOT_THRESHOLD if mode == "spot" else SIGNAL_THRESHOLD
 
-    logger.info("Fetching %d days of %s %s ...", days, mode, tf)
-    df = fetch_ohlcv_df("BTC/USDT", tf, limit=limit, vwap_period=6 if tf == "4h" else 24)
-    htf_frames = _load_htf_series("BTC/USDT", tf, days)
+    if start is not None:
+        # Warmup candles are fetched BEFORE the window so the first scored candle
+        # already has a settled EMA200 — otherwise the opening weeks of a
+        # historical span are scored on half-formed indicators.
+        span = pd.Timedelta(hours=4 if tf == "4h" else 1) * MIN_WARMUP
+        since_ms = int((pd.Timestamp(start) - span).timestamp() * 1000)
+        until_ms = int(pd.Timestamp(end).timestamp() * 1000) if end is not None else None
+        logger.info("Fetching %s %s from %s to %s ...", mode, tf, start, end or "now")
+        df = fetch_ohlcv_df("BTC/USDT", tf, vwap_period=vwap_period,
+                            since=since_ms, until=until_ms)
+        htf_frames = _load_htf_series("BTC/USDT", tf, days, start=start, end=end)
+        first = int(df.index.searchsorted(pd.Timestamp(start)))
+        loop_start = max(MIN_WARMUP, first)
+    else:
+        logger.info("Fetching %d days of %s %s ...", days, mode, tf)
+        df = fetch_ohlcv_df("BTC/USDT", tf, limit=days * per_day + MIN_WARMUP,
+                            vwap_period=vwap_period)
+        htf_frames = _load_htf_series("BTC/USDT", tf, days)
+        loop_start = MIN_WARMUP
 
     rows = []
-    end = len(df) - max(horizons)
-    for i in range(MIN_WARMUP, end):
+    stop = len(df) - max(horizons)
+    if stop <= loop_start:
+        raise SystemExit(f"Span too short: {len(df)} candles, need > {loop_start + max(horizons)}")
+    for i in range(loop_start, stop):
         window = df.iloc[:i + 1].copy()
         try:
             htf = _htf_at(htf_frames, window.index[-1])
@@ -82,7 +100,9 @@ def collect(mode="futures", days=180, horizons=(6,)):
             row[f"_fwd{h}"] = (df["close"].iloc[i + h] - now) / now * 100
         rows.append(row)
 
-    return pd.DataFrame(rows).fillna(0.0)
+    out = pd.DataFrame(rows).fillna(0.0)
+    out.attrs["span"] = f"{df.index[loop_start]:%Y-%m-%d} → {df.index[stop - 1]:%Y-%m-%d}"
+    return out
 
 
 def _spearman(a, b):
@@ -131,10 +151,11 @@ def analyse(data, horizon):
 def report(results, data, mode, days, horizon):
     fwd = data[f"_fwd{horizon}"]
     print("\n" + "=" * 78)
-    print(f"  🔬 CONDITION PREDICTIVE POWER — {mode.upper()}, {days}d, "
-          f"{horizon}-bar forward return".center(78))
+    print(f"  🔬 CONDITION PREDICTIVE POWER — {mode.upper()}, "
+          f"{data.attrs.get('span', f'{days}d')}, {horizon}-bar forward".center(78))
     print("=" * 78)
-    print(f"\n   Candles evaluated : {len(data)}")
+    print(f"\n   Span              : {data.attrs.get('span', '—')}")
+    print(f"   Candles evaluated : {len(data)}")
     print(f"   Baseline drift    : {fwd.mean():+.3f}% per {horizon} bars "
           f"(σ {fwd.std():.2f}%)")
     print(f"\n   {'condition':<24} {'fires':>6} {'IC':>7} {'fwd+':>8} {'fwd-':>8} "
@@ -182,8 +203,8 @@ def report_sweep(data, horizons, mode, days):
     names.sort(key=lambda n: -max(abs(per[h][n]["t"]) for h in horizons))
 
     print("\n" + "=" * 78)
-    print(f"  📐 HORIZON SWEEP — {mode.upper()}, {days}d "
-          f"(t-statistic per forward horizon)".center(78))
+    print(f"  📐 HORIZON SWEEP — {mode.upper()}, {data.attrs.get('span', f'{days}d')} "
+          f"(t per horizon)".center(78))
     print("=" * 78)
     head = "".join(f"{str(h) + 'b':>9}" for h in horizons)
     print(f"\n   {'condition':<24}{head}   sign")
@@ -216,13 +237,17 @@ def main():
                     help="Bars of forward return for the main table (default 6)")
     ap.add_argument("--horizons", default="",
                     help="Comma-separated horizons to sweep, e.g. 3,6,12,24,48")
+    ap.add_argument("--start", default=None, metavar="YYYY-MM-DD",
+                    help="Explicit window start — lets one period be tested against another")
+    ap.add_argument("--end", default=None, metavar="YYYY-MM-DD",
+                    help="Explicit window end (default: now)")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     sweep = [int(h) for h in args.horizons.split(",") if h.strip()] if args.horizons else []
     horizons = sorted(set(sweep) | {args.horizon})
 
-    data = collect(args.mode, args.days, tuple(horizons))
+    data = collect(args.mode, args.days, tuple(horizons), args.start, args.end)
     if data.empty:
         print("No data collected.")
         return
