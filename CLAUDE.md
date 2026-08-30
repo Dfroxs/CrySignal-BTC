@@ -177,7 +177,19 @@ An HTF fetch that fails degrades to `htf=None` with a warning rather than aborti
 - `loss_forensics.py` — post-mortem on individual losing trades.
 
 Run the heavy ones on a workstation, not the VPS: `backtest.py` and
-`condition_ic.py` hold frames of thousands of rows and will exhaust 1 GB.
+`condition_ic.py` hold frames of thousands of rows and will exhaust 1 GB. They
+need nothing from the server — both replay market data fetched from the
+exchange. Only `analyze.py` reads the run's database:
+
+```bash
+scp <host>:~/playground/CrySignal-BTC/data/signal_history.db data/server.db
+./venv/bin/python analyze.py --db data/server.db
+```
+
+`--db` exists so a pulled copy can be analysed without overwriting the local
+database, which is the only copy of whatever it holds. Every report names its
+source file and the span it covers, because two hosts otherwise produce reports
+that are indistinguishable.
 
 ## Changelog
 

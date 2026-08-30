@@ -4,6 +4,22 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-30 — feat: `analyze.py --db`
+
+The paper run lives on a server; analysis runs on a workstation. `DB_PATH` was
+hard-coded, so the only way to read the run's data locally was to `scp` over the
+local database — destroying the only copy of whatever it held, and making two
+hosts' reports indistinguishable afterwards.
+
+`--db PATH` points the report anywhere. Every non-JSON run now opens with its
+source file, size, and the span of cycles it covers, so a report can be
+attributed after the fact.
+
+Tests: `--db` redirects the connection and the report names the file; the flag
+still defaults to the local database. Suite: 69/69.
+
+---
+
 ## v2.9.0 — 2026-08-30
 
 24 commits since v2.8.0. The theme is measurement: most of this release is

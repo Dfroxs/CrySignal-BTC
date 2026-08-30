@@ -1251,6 +1251,58 @@ def test_condition_max_covers_every_scored_condition():
     assert not unknown, f"conditions missing from CONDITION_MAX: {unknown}"
 
 
+# ── 15. analyze.py --db ──────────────────────────────────────────────────────
+
+def test_analyze_db_flag_targets_another_database():
+    """The paper run lives on a server and analysis runs on a workstation. --db
+    must point the report at a pulled copy — the alternative is overwriting the
+    local database, which is the only copy of whatever it holds."""
+    import io
+    import os
+    import sys
+    import tempfile
+    from contextlib import redirect_stdout
+
+    import analyze
+    import trading.history as h
+
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    saved_db_path, saved_argv = analyze.DB_PATH, sys.argv
+    saved_hist, saved_conn = h.SIGNAL_HISTORY_DB, h.DB
+    try:
+        # Build the real schema rather than a hand-rolled one, so the test keeps
+        # exercising analyze's actual queries as the schema evolves.
+        h.SIGNAL_HISTORY_DB, h.DB = path, None
+        c = h._conn()
+        c.execute("INSERT INTO cycle_log (timestamp, mode, type, price, strength, threshold) "
+                  "VALUES ('2026-09-01 00:00:00', 'spot', 'HOLD', 80000, 5.0, 4.3)")
+        c.commit()
+        h.DB.close()
+        h.SIGNAL_HISTORY_DB, h.DB = saved_hist, saved_conn
+
+        sys.argv = ["analyze.py", "--db", path, "--section", "overview"]
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            analyze.main()
+        out = buf.getvalue()
+
+        assert path in out, "the report must name the database it came from"
+        assert "cycles : 1" in out, f"span line missing or wrong:\n{out[:400]}"
+        assert analyze.DB_PATH == path, "--db must actually redirect the connection"
+    finally:
+        analyze.DB_PATH, sys.argv = saved_db_path, saved_argv
+        h.SIGNAL_HISTORY_DB, h.DB = saved_hist, saved_conn
+        os.unlink(path)
+
+def test_analyze_defaults_to_the_local_database():
+    """Omitting --db must not silently point somewhere else."""
+    import analyze
+    import inspect
+    src = inspect.getsource(analyze.main)
+    assert 'default=DB_PATH' in src, "--db must default to the module's DB_PATH"
+
+
 if __name__ == "__main__":
     print("\n══ Pipeline Dummy-Data Tests ══\n")
 
@@ -1348,6 +1400,10 @@ if __name__ == "__main__":
     run("default active set comes from config",   test_default_active_set_comes_from_config)
     run("thresholds track the active set",        test_thresholds_track_the_active_condition_set)
     run("CONDITION_MAX covers every condition",   test_condition_max_covers_every_scored_condition)
+
+    print("\n── 15. analyze.py --db ──")
+    run("--db targets another database",          test_analyze_db_flag_targets_another_database)
+    run("--db defaults to the local database",    test_analyze_defaults_to_the_local_database)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
