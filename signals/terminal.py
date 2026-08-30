@@ -1,5 +1,6 @@
 """Terminal display — colour-coded, box-drawn signal analysis output."""
 
+import sys
 from datetime import datetime
 
 from config import (
@@ -14,7 +15,10 @@ from signals.market_data import get_adaptive_threshold, get_spot_adaptive_thresh
 from signals.sizing import calculate_futures_position, calculate_position_size
 
 # ANSI colour codes
-_C = {
+# Escape codes are noise in a log file — see the note in run_bot.py.
+_TTY = sys.stdout.isatty()
+
+_C = {k: (v if _TTY else "") for k, v in {
     "rst":  "\033[0m",
     "bld":  "\033[1m",
     "dim":  "\033[2m",
@@ -24,7 +28,7 @@ _C = {
     "cyn":  "\033[96m",
     "wht":  "\033[97m",
     "gry":  "\033[90m",
-}
+}.items()}
 
 _M = 92  # total output width
 

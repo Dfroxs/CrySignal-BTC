@@ -1422,6 +1422,53 @@ def test_news_failure_degrades_loudly():
     assert any("News sentiment unavailable" in m for m in msgs), msgs
 
 
+# ── 18. Log output is readable in a file ─────────────────────────────────────
+
+def test_interrupt_is_a_clean_stop_not_a_traceback():
+    """systemd sends SIGINT and it lands in the loop's time.sleep(), so an
+    ordinary `systemctl stop` used to print a traceback. Under Restart=always
+    that is one fake traceback per restart, in the file whose whole purpose is
+    that a real one stands out."""
+    import run_bot
+    saved = run_bot.main
+    try:
+        run_bot.main = lambda: (_ for _ in ()).throw(KeyboardInterrupt())
+        run_bot._run()          # must return, not raise
+    finally:
+        run_bot.main = saved
+
+def test_progress_output_is_plain_when_not_a_terminal():
+    """Under systemd stdout is a file: escape codes are stored verbatim and
+    `\r` overwrites nothing, so progress lines pile onto the line after them —
+    'Telegram sent (1 message)ions...'. The run is read from that file for
+    weeks."""
+    import subprocess
+    import sys
+    code = (
+        "import run_bot;"
+        "run_bot._loading('transient');"
+        "run_bot._ok('done');"
+        "run_bot._err('failed');"
+        "run_bot._section('TITLE')"
+    )
+    # A subprocess with a pipe for stdout is exactly the non-TTY case.
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True).stdout
+    assert b"\x1b[" not in out, "ANSI escapes must not reach a log file"
+    assert b"\r" not in out, "carriage returns overwrite nothing in a file"
+    assert b"transient" not in out, "the spinner line has no meaning in a file"
+    assert b"done" in out and b"failed" in out, "real output must survive"
+
+def test_colours_return_on_a_terminal():
+    """The stripping is conditional, not a removal — an interactive run keeps
+    its colour."""
+    import run_bot
+    import signals.terminal as term
+    for mod in (run_bot, term):
+        assert hasattr(mod, "_TTY"), f"{mod.__name__} must decide on stdout, not hard-code"
+    if run_bot._TTY:
+        assert run_bot._G, "colour should be present when attached to a terminal"
+
+
 if __name__ == "__main__":
     print("\n══ Pipeline Dummy-Data Tests ══\n")
 
@@ -1534,6 +1581,11 @@ if __name__ == "__main__":
     run("regime failure degrades loudly",         test_regime_failure_degrades_loudly)
     run("ADX failure degrades loudly",            test_adx_failure_degrades_loudly)
     run("news failure degrades loudly",           test_news_failure_degrades_loudly)
+
+    print("\n── 18. Log output in a file ──")
+    run("interrupt is a clean stop",              test_interrupt_is_a_clean_stop_not_a_traceback)
+    run("progress output is plain in a file",     test_progress_output_is_plain_when_not_a_terminal)
+    run("colours return on a terminal",           test_colours_return_on_a_terminal)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

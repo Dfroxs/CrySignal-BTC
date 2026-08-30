@@ -4,6 +4,35 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-30 — fix: the run log was hard to read, in two ways
+
+Both surfaced from the deployed log itself. Neither affects trading; both affect
+whether weeks of that log can be read.
+
+### Fixed
+- **A normal stop printed a traceback.** systemd sends SIGINT (`KillSignal` in
+  the unit) and it lands in the loop's `time.sleep()`, so `systemctl stop` ended
+  in `KeyboardInterrupt` with a full traceback. Under `Restart=always` that is
+  one fake traceback per restart, in the file whose entire purpose is that a
+  real one stands out. `_run()` now treats an interrupt as what it is; `atexit`
+  still closes the database.
+
+- **Terminal progress output garbled the file.** Under systemd stdout is a file,
+  and a file is not a terminal: ANSI escapes are stored verbatim and `\r`
+  overwrites nothing, so each spinner line piled onto the line that followed it
+  — `Phase 4  Telegram sent  (1 message)ions...` in the deployed log. Colour is
+  now conditional on `sys.stdout.isatty()` in both `run_bot.py` and
+  `signals/terminal.py`, and `_loading()` is dropped entirely off a terminal
+  since the `_ok()`/`_err()` that follows carries the same information plus the
+  outcome. Verified: 0 escape sequences and 0 carriage returns in piped output.
+
+### Tests
+An interrupt must return rather than raise; piped output must contain no
+escapes, no carriage returns and no spinner text while keeping the real lines;
+and the stripping must be conditional rather than a removal. Suite: 79/79.
+
+---
+
 ## 2026-08-30 — fix: the news layer ran on 17% of its own data
 
 Found while checking for more of what the macro-timezone bug turned out to be:
