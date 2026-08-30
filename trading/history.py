@@ -92,6 +92,11 @@ def _init_tables():
             stablecoin_b  REAL,
             oi_change     REAL,
             basis_pct     REAL,
+            taker_ratio   REAL,
+            gold          REAL,
+            gold_change   REAL,
+            vix           REAL,
+            vix_change    REAL,
             fear_greed    INTEGER,
             news_sentiment TEXT,
             htf_data      TEXT,
@@ -135,6 +140,25 @@ def _init_tables():
     """)
     c.commit()
     _migrate_paper_positions()
+    _migrate_cycle_log()
+
+
+def _migrate_cycle_log():
+    """Add market-structure columns fetched every cycle but never stored.
+
+    taker buy/sell ratio, gold and VIX were pulled on every cycle and discarded.
+    They matter more than the rest: backtest.py has to score funding, L/S, open
+    interest, basis, taker, gold and VIX as NEUTRAL because no free historical
+    API serves them, so this log is the only place that record can come from —
+    and an hour that goes by unrecorded cannot be recovered later.
+    """
+    c = _conn()
+    for col in ("taker_ratio", "gold", "gold_change", "vix", "vix_change"):
+        try:
+            c.execute(f"ALTER TABLE cycle_log ADD COLUMN {col} REAL")
+        except Exception:
+            pass  # column already exists
+    c.commit()
 
 
 def _migrate_paper_positions():
@@ -323,6 +347,9 @@ def log_cycle(signal, df, market_structure, htf, mode):
     btcdom   = mkt.get("btc_dom", {})
     stable   = mkt.get("stablecoin", {})
     oi       = mkt.get("open_interest", {})
+    taker    = mkt.get("taker", {})          # futures only — NULL on spot rows
+    gold     = mkt.get("gold", {})
+    vix      = mkt.get("vix", {})
 
     # HTF as JSON
     htf_clean = {}
@@ -376,6 +403,11 @@ def log_cycle(signal, df, market_structure, htf, mode):
         round(stable.get("total_b", 0), 2) if stable else 0,
         round(oi.get("change_pct", 0), 4) if oi else 0,
         round(funding.get("basis_pct", 0), 6) if funding else 0,
+        round(taker.get("ratio"), 4) if taker.get("ratio") is not None else None,
+        round(gold.get("current"), 2) if gold.get("current") else None,
+        round(gold.get("change_pct"), 3) if gold.get("current") else None,
+        round(vix.get("current"), 2) if vix.get("current") else None,
+        round(vix.get("change_pct"), 3) if vix.get("current") else None,
         signal.get("fear_greed_value"),
         signal.get("news_sentiment", "NEUTRAL"),
         htf_json,
@@ -389,8 +421,9 @@ def log_cycle(signal, df, market_structure, htf, mode):
             gap_to_fire, rsi, stoch_k, stoch_d, macd, macd_signal, vwap, ema200, atr,
             obv_slope, bb_upper, bb_lower, rsi_div, funding_rate, ls_ratio, dxy,
             dxy_change, sp500, sp500_change, btc_dom, stablecoin_b, oi_change,
-            basis_pct, fear_greed, news_sentiment, htf_data, reasons, open_positions)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            basis_pct, taker_ratio, gold, gold_change, vix, vix_change,
+            fear_greed, news_sentiment, htf_data, reasons, open_positions)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         row,
     )
     c.commit()

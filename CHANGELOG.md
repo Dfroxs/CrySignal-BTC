@@ -4,6 +4,303 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-30 — feat: cycle_log records the taker ratio, gold and VIX
+
+Closes the gap noted when step 1 was closed. With development stopped, the
+running bot's only remaining value is the record it builds — so a field fetched
+and discarded is the one kind of loss that cannot be repaired later.
+
+### Added
+`taker_ratio`, `gold`, `gold_change`, `vix`, `vix_change` on `cycle_log`. All
+five were fetched every cycle and thrown away.
+
+They matter more than the average column. `backtest.py` must score funding,
+long/short ratio, open interest, basis, taker ratio, gold and VIX as NEUTRAL
+because **no free historical API serves them** — 7.5 of the 26.5-point futures
+ceiling, permanently untestable against history. This log is the only place
+that record can come from, and an hour that passes unrecorded is gone.
+
+`_migrate_cycle_log()` adds the columns to databases that predate them, which
+includes the one already running on the server. Spot rows leave `taker_ratio`
+NULL rather than 0 — spot never fetches it, and a zero would read as a real
+measurement to whatever analyses this data later.
+
+### Tests
+Values are written and read back; an absent taker ratio lands as NULL rather
+than 0; and a database created without the columns gains them without
+disturbing the rows already collected, twice in a row. Suite: 82/82.
+
+---
+
+## 2026-08-30 — STEP 1 CLOSED: no component survived. Development stops here.
+
+### Result
+Two hypotheses, both pre-registered before their data was seen, both rejected by
+their own criteria:
+
+| hypothesis | criterion | required | got |
+|---|---|---|---|
+| `macd` | positive sign across cells | ≥ 8 of 10 | **6 of 10** |
+| `htf` | negative sign @ horizon 6 | ≥ 9 of 10 | **7 of 10** |
+| `htf` | negative sign @ horizons 3 / 12 / 24 | ≥ 8 of 10 each | **7 / 6 / 8** |
+
+17 conditions were examined across **29 cells** spanning 8 assets and 7 years
+(BTC, ETH, SOL, BNB, XRP, ADA, LINK, DOGE, LTC, TRX, ETC, XLM, EOS; 2019–2025).
+**Nothing held.**
+
+The `htf` result was tempting to rescue: the effect strengthens with horizon
+(|t| ≥ 2 in 2 cells at 3 bars, 6 cells at 24) and concentrates in TRX, ETC and
+EOS. Moving the goalposts to horizon 24 after seeing that would be picking a
+pattern, not testing one — the same error already made twice with this exact
+condition. The pre-registration said failure on any criterion ends the search,
+and it does.
+
+### What this does and does not mean
+It does **not** mean systematic trading cannot work, or that crypto has no
+inefficiencies.
+
+It means the 22 conditions in `signals/engine.py` contain no component whose
+predictive power survives a change of market or period. Directional prediction
+from public indicators is the most crowded version of the problem: the data is
+free, the indicators are decades old, and there is no structural advantage on
+this side of the trade. A null result here is the expected outcome, not bad luck.
+
+Reaching it took one day and a few hours of compute. The alternative was a
+multi-year paper run accumulating 15 trades a year toward the same conclusion
+around 2031 — if the sample ever became large enough, which it would not.
+
+### Project status
+**Active development stops.** No parameter will be retuned; retuning weights
+against noise is what produced the current `config.py`, and every one of those
+values is now known to rest on 2–8 closed trades from mutually blocking
+sequences.
+
+**The paper run continues**, with a different purpose — see below.
+
+### The run's remaining value: it is building a dataset that does not exist
+`backtest.py` scores funding, long/short ratio, open interest, basis, taker
+ratio, gold, VIX and the news overlay as NEUTRAL, because **no free historical
+API serves them**. That is 7.5 of the 26.5-point futures ceiling and 3.5 of
+22.5 on spot — permanently untestable against history.
+
+Every cycle, the live bot fetches all of it. `cycle_log` already persists 37
+fields hourly: funding rate, L/S ratio, OI change, basis, DXY, S&P 500,
+stablecoin supply, BTC dominance, Fear & Greed, news sentiment, plus the full
+technical snapshot.
+
+A year of that is ~8,760 hourly observations of precisely the data no backtest
+in this repository could ever use. For any future project — funding-rate
+arbitrage among them — that record is worth more than the strategy that
+generated it.
+
+**Gap worth closing:** taker buy/sell ratio, gold and VIX are fetched every
+cycle and discarded; `cycle_log` has no column for them. Every hour without
+those columns is an hour of data that cannot be recovered later.
+
+---
+
+## 2026-08-30 — PRE-REGISTRATION: the final test, for `htf`
+
+Recorded before the tool that runs it is finished, and before any of the data is
+seen. **If this fails, the search ends — there is no third candidate.**
+
+### Why there is a test at all
+`macd` was rejected by its own pre-registered criteria (positive in 6 of 10
+cells, needed 8; and −2.7 on LINK 2021). In the same output `htf` held a
+negative sign in 10 of 10 fresh cells, which combined with the first matrix is
+18 of 19 — the single exception being SOL 2023, the year SOL went from roughly
+$10 to $100.
+
+Announcing that would be exactly the error pre-registration exists to prevent:
+picking a new winner from 17 candidates *after* the registered one failed. The
+only legitimate way to use it is as a hypothesis for a fresh test, on data that
+has never been looked at, with criteria fixed first.
+
+Two honest caveats. We have now examined 17 conditions across 19 cells; with
+that many looks, eventually finding *something* that appears to hold is close to
+certain. And the same claim about `htf` was made and retracted yesterday, on a
+sample that happened to exclude any violent trend.
+
+### Hypothesis
+The `htf` condition's contribution is **negatively** correlated with forward
+returns — the HTF-alignment score points the wrong way.
+
+### Data — untouched in asset and year
+`LTC, TRX, ETC, XLM, EOS` × `2019, 2020`. None of these five assets and neither
+year has been used in any measurement in this project.
+
+### Pass criteria, all three required
+1. Negative sign in **≥ 9 of 10** cells at horizon 6.
+2. `|t| ≥ 2` in **≥ 3** cells.
+3. Negative sign in **≥ 8 of 10** cells at **each** of horizons 3, 12 and 24 —
+   a real effect keeps its sign as the holding period changes. `macd` was never
+   put to this test; it is the discriminator that matters most.
+
+Failure on any one criterion ends the search. No re-selection, no adjusted
+thresholds, no fourth candidate.
+
+---
+
+## 2026-08-30 — search: 1 of 17 conditions held its sign across 9 markets
+
+Step 1 of finding out whether there is any component worth building on. The bar:
+a condition must hold its **sign** in every cell of BTC/ETH/SOL × 2023/2024/2025,
+with |t| ≥ 2 in at least two. Spot 4H, 6-bar forward, ~2,180 candles per cell.
+
+### Result: `macd`, and only `macd`
+```
+              BTC23  BTC24  BTC25  ETH23  ETH24  ETH25  SOL23  SOL24  SOL25
+macd           +2.3   +2.8   +1.3   +1.3   +2.5   +2.1   +1.1   -0.2   +2.3
+```
+The weakest cell, SOL 2024 at −0.2, is effectively zero and passes only because
+the filter treats |t| < 0.5 as no signal rather than as a negative one.
+
+### Retraction: `htf` is not universally inverted
+```
+htf            -2.5   -3.1   -2.2   -4.9   -2.1   -2.8   +4.1   -2.4   -2.8
+                                                          ↑
+```
+Eight of nine negative — then SOL 2023 at **+4.1**, strongly positive. 2023 is
+the year SOL went from roughly $10 to $100; in a trend that violent, HTF
+alignment does exactly what it was designed to do.
+
+So `htf` is negative *except in a strong trend*, and the four BTC samples that
+produced the earlier claim happened to contain none. The statement that it is
+"inverted in every sample", repeated several times on 2026-08-29, is withdrawn.
+
+### Why one survivor is close to meaningless
+17 conditions were tested. Expected survivors from pure noise, by how
+independent the cells really are:
+
+| assumption | P(a condition holds sign) | expected survivors |
+|---|---|---|
+| 9 independent cells | 0.4% | 0.1 |
+| effectively ~4 (correlated assets) | 12.5% | **2.1** |
+| effectively ~3 | 25.0% | **4.2** |
+
+BTC, ETH and SOL move together and the years are contiguous, so nine cells are
+nowhere near nine independent samples. Under any realistic assumption, **one
+survivor is fewer than chance alone would produce.** This search cannot
+distinguish `macd` from a false positive.
+
+### Next
+`macd` is pre-registered as a single hypothesis and tested on data not used to
+find it — BNB, XRP, ADA, LINK, DOGE × 2021, 2022 — with pass criteria fixed in
+advance: positive sign in ≥8 of 10 cells, |t| ≥ 2 in ≥3, and sign stable across
+horizons 6, 12 and 24. Testing one pre-registered hypothesis removes the
+multiple-comparison problem entirely. Failure on any criterion ends the search.
+
+---
+
+## 2026-08-30 — finding: a threshold sweep does not measure selectivity
+
+Investigating why the best threshold for 2024 was the worst for 2025. It is not
+regime, and it is not noise in the usual sense. Two mechanisms, both structural.
+
+### Lowering the threshold replaces trades, it does not add them
+
+`spot 2024`, same window, two thresholds:
+
+```
+thr 4.3    $43,242 → LOSS  −2.62%
+thr 2.8    $43,672 → WIN   +5.03%     ← the $43,242 trade is absent entirely
+           $43,099 → WIN   +3.52%
+```
+
+`run_backtest` blocks a same-direction signal while a position is open
+(`open_until`). A lower threshold fires an **earlier** signal, that position
+stays open for 14 candles, and the trade the higher threshold would have taken
+falls inside that window and never happens.
+
+So a threshold sweep is not a selectivity dial along one fixed sequence of
+trades. **Each value samples a different sequence.** "More selective" and "less
+selective" are not what is being compared, and the results are non-monotonic by
+construction rather than by chance — `spot 2024` gives −4.79% at 4.3, +0.35% at
+3.5, and +3.71% at both 2.8 and 2.2.
+
+### The samples are smaller than the signal count suggests
+
+`⚪ OPEN` rows — positions still alive at `max_hold` — are recorded with 0.00%
+and excluded from every statistic:
+
+| run | signals | actually closed |
+|---|---|---|
+| spot 2024 @ 4.3 | 3 | **2** |
+| spot 2024 @ 2.8 | 8 | **5** |
+
+`−4.79%` is two trades. `+3.71%` is five. The "threshold inversion across years"
+recorded an hour earlier in this session was a comparison of 2 trades against 5,
+and is withdrawn.
+
+### Consequence
+Every threshold comparison in this project so far — including the original
+5.2 / 4.3 calibration and yesterday's pruning experiment — compares samples of
+2 to 8 closed trades drawn from mutually exclusive trade sequences. **No
+threshold can be calibrated from a backtest this short**: the value that wins is
+the one that happened to select a particular sequence, and that sequence will
+not recur.
+
+This is a better explanation than "the indicators are unstable" for why nothing
+held across years today — conditions, weights and thresholds alike. The
+measuring instrument produces samples that are both tiny and mutually blocking.
+
+---
+
+## 2026-08-30 — CORRECTION: the "profitable" backtest numbers were measured at the wrong threshold
+
+Three entries below, the v2.9.0 release summary, and the v2.9.0/v2.9.1 tag
+messages all report the system as profitable on spot in 2024 and 2025 and on
+futures 2024 H1. **Those numbers were produced at thresholds roughly half the
+configured ones**, and the claim does not survive re-measurement.
+
+### How it happened
+The figures came from the pruning experiment. `DISABLED_CONDITIONS` was
+populated at the time, so `SPOT_MAX_SCORE` was 12.50 and the threshold derived
+from it was **2.39**, not 4.3; futures likewise ran at **3.24**, not 5.2.
+`--all-conditions` restores the condition set but **not** the threshold — the
+threshold is computed in `config.py` at import, before any flag is read. So the
+runs labelled "full set" scored every condition against a bar built for a pruned
+one.
+
+That made the comparison inside the pruning experiment self-consistent — both
+arms used the same bar — but it made the absolute figures wrong, and those were
+the ones quoted as the system's performance.
+
+### The corrected picture, at the configured thresholds
+
+| window | reported | actual |
+|---|---|---|
+| spot 2024 | +3.71%, PF 1.58, 8 trades | **−4.79%, PF 0.00, 3 trades** |
+| spot 2025 | +0.55%, PF 1.23, 7 trades | +1.37%, PF 6.26, 4 trades |
+| futures 2024 H1 | +0.64%, PF 1.39, 5 trades | **−2.49%, PF 0.00, 3 trades** |
+| futures 180d 2026 | −2.40%, PF 0.00, 3 trades | unchanged |
+
+**One of four windows is profitable, not three.** Confirmed by reproduction: a
+threshold sweep reproduces `+3.71%, PF 1.58, 8 trades` at 2.8 and 2.2, and
+`SIGNAL_THRESHOLD=3.24` reproduces `+0.64%, PF 1.39, 5 trades` exactly.
+
+### What the sweep also showed
+```
+spot 2024   thr 4.3 → −4.79%   3.5 → +0.35%   2.8 → +3.71%   2.2 → +3.71%
+spot 2025   thr 4.3 → +1.37%   3.5 → +0.92%   2.8 → +1.33%   2.2 → −1.39%
+```
+The best threshold for 2024 is the second-worst for 2025, and the best for 2025
+is the worst for 2024. That is the same instability the cross-year condition
+sweep found: no value holds. Choosing a threshold from one year selects close to
+the opposite of what the next year needs.
+
+### Consequence
+The recommendation to lower the bar and add assets is withdrawn. It assumed an
+edge that needed more samples; these numbers do not support that premise.
+Multiplying an unproven system across five assets yields five times the data
+about the same uncertainty.
+
+Earlier entries are left as written rather than edited, with this correction
+above them — the same convention used for the two conclusions overturned on
+2026-08-29.
+
+---
+
 ## 2026-08-30 — fix: the run log was hard to read, in two ways
 
 Both surfaced from the deployed log itself. Neither affects trading; both affect
