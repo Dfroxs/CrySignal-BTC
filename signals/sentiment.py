@@ -11,6 +11,39 @@ from signals.market_data import fetch_fear_and_greed
 logger = logging.getLogger(__name__)
 
 
+def _parse_feed_timestamps(series):
+    """Parse RSS pubDate values, which arrive in several RFC 2822 spellings.
+
+    `pd.to_datetime(errors='coerce')` infers ONE format from the first non-null
+    element and coerces everything that does not match to NaT. The feeds mix
+    spellings — FinancialJuice ends in `GMT`, CoinTelegraph and the rest in
+    `+0000` — so whichever source happened to be written first decided which
+    rows survived. Measured on a real CSV: 3 of 18 rows parsed, and reversing
+    the row order flipped which 3.
+
+    Silent, and it starved the whole news layer: `crypto_score` was computed
+    from a fraction of the headlines that had been collected, chosen by
+    ordering rather than by content.
+
+    `email.utils.parsedate_to_datetime` is the format-correct parser and is
+    already what news_scraper.py uses for its own staleness filter; pandas is
+    the fallback for anything it rejects.
+    """
+    from email.utils import parsedate_to_datetime
+
+    def one(raw):
+        if not isinstance(raw, str) or not raw.strip():
+            return pd.NaT
+        try:
+            dt = parsedate_to_datetime(raw)
+        except (TypeError, ValueError):
+            return pd.to_datetime(raw, errors="coerce", utc=True)
+        # RFC 2822 permits a missing zone; treat those as UTC rather than dropping.
+        return pd.Timestamp(dt).tz_localize("UTC") if dt.tzinfo is None else pd.Timestamp(dt).tz_convert("UTC")
+
+    return series.map(one)
+
+
 def get_combined_sentiment(fng=None):
     if fng is None:
         fng = fetch_fear_and_greed()
@@ -34,7 +67,7 @@ def get_combined_sentiment(fng=None):
             df['category'] = 'crypto'
 
         if not df.empty and 'timestamp' in df.columns:
-            df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce', utc=True)
+            df['timestamp'] = _parse_feed_timestamps(df['timestamp'])
             cutoff = datetime.now(UTC) - timedelta(hours=24)
             fresh = df[df['timestamp'] >= cutoff]
             df = fresh.sort_values('timestamp', ascending=False) if not fresh.empty else df.head(0)
@@ -60,8 +93,11 @@ def get_combined_sentiment(fng=None):
             news_data['sources_checked'] = df['source'].unique().tolist()
             news_data['geo_bullish'] = geo_bullish
             news_data['geo_bearish'] = geo_bearish
-    except Exception:
-        pass
+    except Exception as exc:
+        # Everything above stays at its default: NEUTRAL sentiment, zero
+        # confidence, no headlines. The signal still scores, just without the
+        # news layer — worth a line in the log rather than nothing at all.
+        logger.warning("News sentiment unavailable (%s) — scoring without it", exc)
 
     fng_score = (fng['value'] - 50) / 50
     crypto_score = (crypto_bullish - crypto_bearish) / max(crypto_bullish + crypto_bearish, 1)

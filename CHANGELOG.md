@@ -4,6 +4,51 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-30 — fix: the news layer ran on 17% of its own data
+
+Found while checking for more of what the macro-timezone bug turned out to be:
+an assumption about external data that nothing ever tested.
+
+### Fixed
+- **RSS timestamps were parsed order-dependently.** `pd.to_datetime(errors=
+  'coerce')` infers one format from the first non-null element and coerces
+  everything that does not match to `NaT`. The feeds mix RFC 2822 spellings —
+  FinancialJuice ends in `GMT`, CoinTelegraph, CoinDesk, BeInCrypto and Decrypt
+  in `+0000` — so whichever scraper happened to be written first decided which
+  rows survived. On the live CSV: **3 of 18 rows parsed, and reversing the row
+  order flipped which 3.** After the fix, 18 of 18 parse and the rows passing
+  the 24-hour freshness filter go from 2 to 15.
+
+  `crypto_score` was therefore computed from a fraction of the headlines that
+  had been collected, selected by ordering rather than content — and since
+  FinancialJuice carries macro and geopolitical wires rather than crypto ones,
+  the surviving subset was systematically the wrong one. `news_scraper.py`
+  already used `email.utils.parsedate_to_datetime` for its own staleness
+  filter; `sentiment.py` now uses the same parser.
+
+- **Four handlers that changed trading behaviour said nothing.** Each returned a
+  default that reads as neutral and is not:
+  - regime classification failure → `UNKNOWN`, which zeroes the threshold bump
+    **and** makes `_is_counter_trend_regime()` return False, so the
+    counter-trend gate stops blocking anything;
+  - ADX pre-compute failure → `0.0`, halving the MACD crossover weight
+    (1.5 → 0.75) for the whole cycle;
+  - news CSV failure → the entire sentiment layer absent;
+  - unparseable `opened_at` → the time exit disabled for that position, which
+    can then never age out.
+
+  All four now log. `signals/engine.py` had no `logger` at all, so the two
+  warnings added there would have raised `NameError` inside an except block —
+  visible only once something else had already gone wrong.
+
+### Tests
+Failures are injected into `classify_regime`, `calculate_adx` and the news
+reader; each must both survive and log. Order-independence of the timestamp
+parser is asserted across three orderings, since that is the actual invariant
+the old code broke. Suite: 76/76.
+
+---
+
 ## 2026-08-30 — fix: the macro calendar is UTC, not Eastern Time
 
 ### Fixed

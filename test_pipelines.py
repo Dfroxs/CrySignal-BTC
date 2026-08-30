@@ -1326,6 +1326,34 @@ def test_macro_calendar_is_read_as_utc():
         assert (dt.hour, dt.minute) == (hour, minute), \
             f"{raw} → {dt:%H:%M}, expected {hour:02d}:{minute:02d} ({why})"
 
+def test_feed_timestamps_survive_mixed_rfc2822_spellings():
+    """RSS pubDate arrives in several spellings — FinancialJuice ends in `GMT`,
+    CoinTelegraph and the rest in `+0000`. `pd.to_datetime(errors='coerce')`
+    infers ONE format from the first element and coerces the rest to NaT, so
+    which rows survived depended on which scraper happened to be written first.
+
+    The order-independence assertion is the real invariant: on a live CSV the
+    old path parsed 3 of 18, and reversing the row order flipped which 3."""
+    import pandas as pd
+    from signals.sentiment import _parse_feed_timestamps
+    gmt = "Sat, 29 Aug 2026 11:14:17 GMT"
+    off = "Sat, 29 Aug 2026 12:39:59 +0000"
+    for order in ([gmt, off, off], [off, gmt, gmt], [off, gmt, off]):
+        out = _parse_feed_timestamps(pd.Series(order))
+        assert out.notna().all(), f"order-dependent parse: {order} → {list(out)}"
+        assert all(v.tzinfo is not None for v in out), "timestamps must be aware"
+        assert all(v.utcoffset().total_seconds() == 0 for v in out), "must land in UTC"
+
+def test_feed_timestamp_parser_survives_junk():
+    """A malformed row must become NaT and be filtered, never raise — one bad
+    feed entry cannot be allowed to take out the whole sentiment layer."""
+    import pandas as pd
+    from signals.sentiment import _parse_feed_timestamps
+    out = _parse_feed_timestamps(pd.Series(["not a date", "", None,
+                                            "Sat, 29 Aug 2026 12:39:59 +0000"]))
+    assert out.isna().sum() == 3
+    assert out.notna().sum() == 1
+
 def test_macro_parser_does_not_use_a_named_timezone():
     """A regression here is silent — the gate keeps firing, just at the wrong
     hours — so guard the mechanism rather than only the output."""
@@ -1336,6 +1364,62 @@ def test_macro_parser_does_not_use_a_named_timezone():
     names |= {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
     assert "ZoneInfo" not in names and "zoneinfo" not in names, \
         "the calendar is UTC; converting through a named zone reintroduces the offset"
+
+
+# ── 17. Silent-failure handlers actually run ─────────────────────────────────
+
+def _assert_degrades_with_a_warning(module, attr, check):
+    """Inject a failure into `module.attr` and confirm the handler both survives
+    and says something. A NameError inside an except block is invisible until
+    the day something else has already gone wrong."""
+    import logging
+    saved = getattr(module, attr)
+    records = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    handler = _Capture()
+    logging.getLogger(module.__name__).addHandler(handler)
+    try:
+        setattr(module, attr, lambda *a, **k: (_ for _ in ()).throw(RuntimeError("injected")))
+        check()
+    finally:
+        setattr(module, attr, saved)
+        logging.getLogger(module.__name__).removeHandler(handler)
+    assert records, f"{module.__name__}.{attr} failed silently — no warning logged"
+    return records
+
+def test_regime_failure_degrades_loudly():
+    """UNKNOWN regime is not a neutral default: it zeroes the threshold bump and
+    makes run_bot._is_counter_trend_regime() return False, so the counter-trend
+    gate stops blocking. That must not happen quietly."""
+    import signals.engine as eng
+    out = {}
+    def run():
+        out["sig"] = eng.generate_signals(_synthetic_df(), mode="futures",
+                                          threshold_override=5.2)
+    msgs = _assert_degrades_with_a_warning(eng, "classify_regime", run)
+    assert out["sig"]["regime"] == "UNKNOWN"
+    assert any("counter-trend gate inert" in m for m in msgs), msgs
+
+def test_adx_failure_degrades_loudly():
+    """A zero ADX halves the MACD crossover weight for the whole cycle."""
+    import signals.engine as eng
+    def run():
+        eng.generate_signals(_synthetic_df(), mode="futures", threshold_override=5.2)
+    msgs = _assert_degrades_with_a_warning(eng, "calculate_adx", run)
+    assert any("MACD scored at reduced weight" in m for m in msgs), msgs
+
+def test_news_failure_degrades_loudly():
+    """If the news CSV cannot be read the signal still scores — without the news
+    layer, and previously without a word about it."""
+    import signals.sentiment as sent
+    def run():
+        sent.get_combined_sentiment(fng={"value": 50, "label": "Neutral"})
+    msgs = _assert_degrades_with_a_warning(sent, "pd", run)
+    assert any("News sentiment unavailable" in m for m in msgs), msgs
 
 
 if __name__ == "__main__":
@@ -1442,7 +1526,14 @@ if __name__ == "__main__":
 
     print("\n── 16. ForexFactory calendar timezone ──")
     run("calendar is read as UTC",                test_macro_calendar_is_read_as_utc)
+    run("mixed RFC-2822 spellings all parse",     test_feed_timestamps_survive_mixed_rfc2822_spellings)
+    run("junk timestamps degrade to NaT",         test_feed_timestamp_parser_survives_junk)
     run("no named timezone in the parser",        test_macro_parser_does_not_use_a_named_timezone)
+
+    print("\n── 17. Silent-failure handlers ──")
+    run("regime failure degrades loudly",         test_regime_failure_degrades_loudly)
+    run("ADX failure degrades loudly",            test_adx_failure_degrades_loudly)
+    run("news failure degrades loudly",           test_news_failure_degrades_loudly)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
