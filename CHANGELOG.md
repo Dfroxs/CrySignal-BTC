@@ -4,6 +4,61 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-30 — CORRECTION: the "profitable" backtest numbers were measured at the wrong threshold
+
+Three entries below, the v2.9.0 release summary, and the v2.9.0/v2.9.1 tag
+messages all report the system as profitable on spot in 2024 and 2025 and on
+futures 2024 H1. **Those numbers were produced at thresholds roughly half the
+configured ones**, and the claim does not survive re-measurement.
+
+### How it happened
+The figures came from the pruning experiment. `DISABLED_CONDITIONS` was
+populated at the time, so `SPOT_MAX_SCORE` was 12.50 and the threshold derived
+from it was **2.39**, not 4.3; futures likewise ran at **3.24**, not 5.2.
+`--all-conditions` restores the condition set but **not** the threshold — the
+threshold is computed in `config.py` at import, before any flag is read. So the
+runs labelled "full set" scored every condition against a bar built for a pruned
+one.
+
+That made the comparison inside the pruning experiment self-consistent — both
+arms used the same bar — but it made the absolute figures wrong, and those were
+the ones quoted as the system's performance.
+
+### The corrected picture, at the configured thresholds
+
+| window | reported | actual |
+|---|---|---|
+| spot 2024 | +3.71%, PF 1.58, 8 trades | **−4.79%, PF 0.00, 3 trades** |
+| spot 2025 | +0.55%, PF 1.23, 7 trades | +1.37%, PF 6.26, 4 trades |
+| futures 2024 H1 | +0.64%, PF 1.39, 5 trades | **−2.49%, PF 0.00, 3 trades** |
+| futures 180d 2026 | −2.40%, PF 0.00, 3 trades | unchanged |
+
+**One of four windows is profitable, not three.** Confirmed by reproduction: a
+threshold sweep reproduces `+3.71%, PF 1.58, 8 trades` at 2.8 and 2.2, and
+`SIGNAL_THRESHOLD=3.24` reproduces `+0.64%, PF 1.39, 5 trades` exactly.
+
+### What the sweep also showed
+```
+spot 2024   thr 4.3 → −4.79%   3.5 → +0.35%   2.8 → +3.71%   2.2 → +3.71%
+spot 2025   thr 4.3 → +1.37%   3.5 → +0.92%   2.8 → +1.33%   2.2 → −1.39%
+```
+The best threshold for 2024 is the second-worst for 2025, and the best for 2025
+is the worst for 2024. That is the same instability the cross-year condition
+sweep found: no value holds. Choosing a threshold from one year selects close to
+the opposite of what the next year needs.
+
+### Consequence
+The recommendation to lower the bar and add assets is withdrawn. It assumed an
+edge that needed more samples; these numbers do not support that premise.
+Multiplying an unproven system across five assets yields five times the data
+about the same uncertainty.
+
+Earlier entries are left as written rather than edited, with this correction
+above them — the same convention used for the two conclusions overturned on
+2026-08-29.
+
+---
+
 ## 2026-08-30 — fix: the run log was hard to read, in two ways
 
 Both surfaced from the deployed log itself. Neither affects trading; both affect
