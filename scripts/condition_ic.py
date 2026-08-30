@@ -230,7 +230,7 @@ def report_sweep(data, horizons, mode, days):
     print("=" * 78 + "\n")
 
 
-def run_matrix(symbols, years, mode, horizon):
+def run_matrix(symbols, years, mode, horizons):
     """Score every condition across symbols x years and report only what holds.
 
     A condition that clears |t| >= 2 in one cell has told you about one market in
@@ -243,8 +243,9 @@ def run_matrix(symbols, years, mode, horizon):
         for yr in years:
             key = f"{sym.split('/')[0]} {yr}"
             try:
-                data = collect(mode, 365, (horizon,), f"{yr}-01-01", f"{yr}-12-31", sym)
-                cells[key] = {r["condition"]: r for r in analyse(data, horizon)}
+                data = collect(mode, 365, tuple(horizons), f"{yr}-01-01", f"{yr}-12-31", sym)
+                # One engine pass per cell; every horizon is a shift on top of it.
+                cells[key] = {h: {r["condition"]: r for r in analyse(data, h)} for h in horizons}
                 logger.info("%s: %d candles", key, len(data))
             except Exception as exc:
                 failures.append((key, str(exc)[:70]))
@@ -252,7 +253,37 @@ def run_matrix(symbols, years, mode, horizon):
     return cells, failures
 
 
-def report_matrix(cells, failures, mode, horizon):
+def report_one(cells, failures, name, horizons, mode):
+    """Judge a single pre-registered hypothesis across cells and horizons.
+
+    Testing one named condition is what removes the multiple-comparison problem:
+    with 17 conditions and correlated cells, something appears to hold by chance
+    alone. Reading only the row you committed to in advance is the whole point.
+    """
+    keys = list(cells)
+    print("\n" + "=" * 78)
+    print(f"  🎯 PRE-REGISTERED TEST — {name}, {mode.upper()}".center(78))
+    print("=" * 78)
+    if failures:
+        print(f"\n  {Y}skipped: {', '.join(k for k, _ in failures)}{RST}")
+
+    head = "".join(f"{k:>11}" for k in keys)
+    print(f"\n  {'horizon':<10}{head}      neg   |t|≥2")
+    print("  " + "-" * (10 + 11 * len(keys) + 14))
+    rows = {}
+    for h in horizons:
+        ts = [cells[k][h].get(name, {}).get("t", 0.0) for k in keys]
+        neg = sum(1 for x in ts if x < 0)
+        strong = sum(1 for x in ts if abs(x) >= 2.0)
+        rows[h] = (ts, neg, strong)
+        cells_str = "".join(
+            f"{G if x >= 2 else (R if x <= -2 else DIM)}{x:>+11.1f}{RST}" for x in ts)
+        print(f"  {str(h) + ' bar':<10}{cells_str}   {neg:>4}/{len(ts)}   {strong:>4}")
+    return rows
+
+
+def report_matrix(cells_by_h, failures, mode, horizon):
+    cells = {k: v[horizon] for k, v in cells_by_h.items()}
     if not cells:
         print("\n  No cell completed — nothing to report.\n")
         return
@@ -323,6 +354,10 @@ def main():
                     help="Comma-separated symbols for --matrix")
     ap.add_argument("--years", default="2023,2024,2025",
                     help="Comma-separated years for --matrix")
+    ap.add_argument("--only", default=None, metavar="CONDITION",
+                    help="Judge ONE pre-registered condition across cells and horizons. "
+                         "Reading a single committed row is what removes the "
+                         "multiple-comparison problem.")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -332,8 +367,12 @@ def main():
     if args.matrix:
         syms = [s.strip() for s in args.symbols.split(",") if s.strip()]
         yrs = [y.strip() for y in args.years.split(",") if y.strip()]
-        cells, failures = run_matrix(syms, yrs, args.mode, args.horizon)
-        report_matrix(cells, failures, args.mode, args.horizon)
+        hs = sorted(set(horizons))
+        cells, failures = run_matrix(syms, yrs, args.mode, hs)
+        if args.only:
+            report_one(cells, failures, args.only, hs, args.mode)
+        else:
+            report_matrix(cells, failures, args.mode, args.horizon)
         return
 
     data = collect(args.mode, args.days, tuple(horizons), args.start, args.end, args.symbol)
