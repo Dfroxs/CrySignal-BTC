@@ -4,6 +4,60 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-30 — finding: a threshold sweep does not measure selectivity
+
+Investigating why the best threshold for 2024 was the worst for 2025. It is not
+regime, and it is not noise in the usual sense. Two mechanisms, both structural.
+
+### Lowering the threshold replaces trades, it does not add them
+
+`spot 2024`, same window, two thresholds:
+
+```
+thr 4.3    $43,242 → LOSS  −2.62%
+thr 2.8    $43,672 → WIN   +5.03%     ← the $43,242 trade is absent entirely
+           $43,099 → WIN   +3.52%
+```
+
+`run_backtest` blocks a same-direction signal while a position is open
+(`open_until`). A lower threshold fires an **earlier** signal, that position
+stays open for 14 candles, and the trade the higher threshold would have taken
+falls inside that window and never happens.
+
+So a threshold sweep is not a selectivity dial along one fixed sequence of
+trades. **Each value samples a different sequence.** "More selective" and "less
+selective" are not what is being compared, and the results are non-monotonic by
+construction rather than by chance — `spot 2024` gives −4.79% at 4.3, +0.35% at
+3.5, and +3.71% at both 2.8 and 2.2.
+
+### The samples are smaller than the signal count suggests
+
+`⚪ OPEN` rows — positions still alive at `max_hold` — are recorded with 0.00%
+and excluded from every statistic:
+
+| run | signals | actually closed |
+|---|---|---|
+| spot 2024 @ 4.3 | 3 | **2** |
+| spot 2024 @ 2.8 | 8 | **5** |
+
+`−4.79%` is two trades. `+3.71%` is five. The "threshold inversion across years"
+recorded an hour earlier in this session was a comparison of 2 trades against 5,
+and is withdrawn.
+
+### Consequence
+Every threshold comparison in this project so far — including the original
+5.2 / 4.3 calibration and yesterday's pruning experiment — compares samples of
+2 to 8 closed trades drawn from mutually exclusive trade sequences. **No
+threshold can be calibrated from a backtest this short**: the value that wins is
+the one that happened to select a particular sequence, and that sequence will
+not recur.
+
+This is a better explanation than "the indicators are unstable" for why nothing
+held across years today — conditions, weights and thresholds alike. The
+measuring instrument produces samples that are both tiny and mutually blocking.
+
+---
+
 ## 2026-08-30 — CORRECTION: the "profitable" backtest numbers were measured at the wrong threshold
 
 Three entries below, the v2.9.0 release summary, and the v2.9.0/v2.9.1 tag

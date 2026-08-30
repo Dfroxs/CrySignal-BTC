@@ -161,6 +161,29 @@ An HTF fetch that fails degrades to `htf=None` with a warning rather than aborti
 
 `--gates` reports per-trade P&L on both sides. Comparing totals across unequal trade counts cannot show whether the gates *select* or merely *thin*; only the per-trade figures can.
 
+### A threshold sweep does not measure selectivity
+
+Two things make threshold comparisons in this harness misleading, and both are
+structural rather than statistical:
+
+1. **Lowering the threshold replaces trades rather than adding them.**
+   `open_until` blocks a same-direction signal while a position is open, so a
+   lower bar fires an earlier signal whose position then swallows the window the
+   higher bar's trade would have used. Measured on spot 2024: the losing trade
+   at $43,242 that the 4.3 threshold takes does not exist at 2.8, where two
+   different winners appear near the same price instead. Each threshold samples
+   a **different sequence**, so results are non-monotonic by construction.
+
+2. **`OPEN` rows inflate the apparent sample.** A position still alive at
+   `max_hold` is recorded at 0.00% and excluded from every statistic. Spot 2024
+   reports 3 signals at threshold 4.3 but closes **2**; 8 signals at 2.8 but
+   closes **5**.
+
+Together these mean no threshold in this repository has ever been calibrated on
+more than a handful of closed trades drawn from mutually exclusive sequences —
+including the configured 5.2 / 4.3. Treat a sweep as a description of what
+happened, never as a basis for picking a value.
+
 ## scripts/
 
 - `condition_ic.py` — scores each condition's contribution against forward
