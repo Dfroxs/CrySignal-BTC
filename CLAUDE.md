@@ -2,6 +2,26 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## A validation run is live — parameters are frozen
+
+`v2.9.0` runs unattended on a VPS (`~/playground/CrySignal-BTC`, systemd unit
+`spotsignal`), collecting the out-of-sample sample the project has never had.
+`data/paper_run_manifest.json` on that host pins the commit and every parameter
+it is testing.
+
+**Do not change a threshold, weight, gate or risk parameter while it runs.** An
+edit mid-run voids the sample — which is exactly how the previous attempt at
+this ended up unusable. Land changes on `develop`; the server tracks `main` and
+is updated deliberately:
+
+```bash
+cd ~/playground/CrySignal-BTC && git pull && sudo systemctl restart spotsignal
+```
+
+`deploy/setup.sh` provisions a fresh host end to end. Its step 0 refuses to
+proceed unless Binance answers 200 — see the silent-failure note below for why
+that check is not optional.
+
 ## Running the bot
 
 ```bash
@@ -21,6 +41,22 @@ venv/bin/pip install -r requirements.txt
 ## Configuration
 
 All tunable values are in `config.py`, overridable via environment variables. Copy `.env.example` to `.env` — it lists every supported variable.
+
+⚠️ Setting `SIGNAL_THRESHOLD` or `SPOT_THRESHOLD` in `.env` **switches the
+adaptive controller off entirely** — `_get_adaptive_threshold()` returns the
+override and never runs its frequency or win-rate logic. Both lines ship
+commented out for that reason.
+
+⚠️ **When Binance is unreachable the bot does not fail — it degrades.** Funding,
+L/S, open interest, basis and taker ratio each fall back to NEUTRAL on their own,
+so the system keeps running as a quieter, weaker version of itself: 7.5 of the
+26.5-point futures ceiling, gone, with nothing in the signal to say so. The spot
+mirror in `signals/market_data.py` covers spot reads only; futures endpoints have
+no fallback. Detect it after the fact with:
+
+```sql
+SELECT COUNT(*) FROM cycle_log WHERE mode='futures' AND funding_rate = 0;
+```
 
 ## Architecture
 
@@ -84,6 +120,24 @@ Thresholds are derived as a **fraction of that ceiling**, not absolute numbers, 
 
 Every condition also emits `signal['_contributions'][name] = (buy_delta, sell_delta)` via a read-only checkpoint. `scripts/condition_ic.py` correlates those against forward returns; `backtest.py --disable` ablates them.
 
+### Threshold layering — do not re-floor in the engine
+
+Three things adjust the bar, and each owns a different layer:
+
+1. `market_data._get_adaptive_threshold()` moves the **base** on signal
+   frequency and win rate, and clamps it with `max(base - step, t_min)`. The
+   per-mode minimum lives here and nowhere else.
+2. `generate_signals()` adds the **session and regime bumps** on top, in full.
+3. Only `_ABS_MIN_THRESHOLD` (0.5) remains as a floor — below that a threshold
+   is an off switch, not a bar.
+
+Re-applying the per-mode minimum after step 2 looks like a safety fix and is
+not: once the controller has walked the base down to `THRESHOLD_MIN`,
+`max(4.0 − 0.25 − 0.25, 4.0)` discards both negative bumps at exactly the moment
+a lower bar is the controller's intent, leaving only the `+0.5` Asia bump. This
+was shipped and reverted within one release; `test_engine_does_not_reapply_the_mode_minimum`
+guards it.
+
 ## Backtest limitations
 
 `backtest.py` only tests technical conditions (EMA, RSI, MACD, volume, BB, HTF, divergence, OBV, StochRSI, ADX, S/R, VWAP). All market structure conditions (funding, L/S, DXY, S&P, stablecoin, BTC.D, OI, basis) score as NEUTRAL — no historical API exists for these. Results are therefore **conservative** compared to live trading.
@@ -106,6 +160,24 @@ An HTF fetch that fails degrades to `htf=None` with a warning rather than aborti
 ```
 
 `--gates` reports per-trade P&L on both sides. Comparing totals across unequal trade counts cannot show whether the gates *select* or merely *thin*; only the per-trade figures can.
+
+## scripts/
+
+- `condition_ic.py` — scores each condition's contribution against forward
+  returns over thousands of candles. The full system fires ~12–15 times a year
+  and can never be validated on its own trade count; its components are
+  evaluated every candle. `--start/--end` makes one period testable against
+  another, `--horizons` sweeps holding periods from a single pass.
+- `start_paper_run.py` — writes `data/paper_run_manifest.json` on the host that
+  will run it. A manifest describes one run on one machine, so it is generated
+  there and never committed.
+- `backtest_offline.py` — deterministic replay from `data/btc_*_90d.csv`
+  (not in the repo). It patches `fetch_ohlcv_df`; the HTF loader bypasses that
+  patch by design and degrades to `htf=None`.
+- `loss_forensics.py` — post-mortem on individual losing trades.
+
+Run the heavy ones on a workstation, not the VPS: `backtest.py` and
+`condition_ic.py` hold frames of thousands of rows and will exhaust 1 GB.
 
 ## Changelog
 
