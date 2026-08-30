@@ -217,9 +217,11 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# SpotSignal run state — data/paper_run_manifest.json is tracked on purpose
-# (it records the frozen parameters of a validation run); everything else
-# under data/ is output that grows every cycle.
+# SpotSignal run state. Nothing under data/ is tracked — including the paper
+# run manifest, which describes one run on one host and is generated there by
+# scripts/start_paper_run.py. A committed manifest would describe a run that
+# never happened on whatever machine cloned it.
+data/paper_run_manifest.json
 data/*.db
 data/*.csv
 data/backups/

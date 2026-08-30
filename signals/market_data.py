@@ -109,7 +109,10 @@ class _BinanceWithMirror:
             if not self._on_mirror():
                 try:
                     return getattr(self._primary, name)(*args, **kwargs)
-                except ccxt.NetworkError as exc:
+                except (ccxt.NetworkError, ccxt.PermissionDenied) as exc:
+                    # A 403 whose body is a Binance JSON error becomes
+                    # PermissionDenied (an ExchangeError), not NetworkError —
+                    # the geo-block this wrapper exists for can arrive either way.
                     logger.warning(
                         "binance %s failed (%s) — falling back to %s for %ds",
                         name, exc, _MIRROR_HOST, _MIRROR_RETRY_AFTER_S,

@@ -4,6 +4,193 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## v2.9.0 — 2026-08-30
+
+24 commits since v2.8.0. The theme is measurement: most of this release is
+about finding out that the tools used to judge the strategy were themselves
+wrong, fixing them, and then honouring what they said afterwards — including
+when that overturned a conclusion recorded earlier in the same release.
+
+### The backtest was not measuring what it claimed
+Ten defects in the harness every tuned parameter had been measured against:
+
+- The futures backtest simulated **~30 days and reported 90**. Binance caps a
+  single `fetch_ohlcv()` at 1000 rows without signalling truncation.
+- **HTF was structurally disabled.** Resampling the base timeframe cannot
+  produce 200 daily bars from 90 days, so spot's 1W trend was NEUTRAL at every
+  index and `aligned` was permanently False — zeroing the largest weight after
+  divergence. The daily "EMA200" was an EMA50.
+- The 24-hour wick window was **swapped between modes** (96h on spot, 6h on
+  futures).
+- Execution costs were charged **once on TP2 and twice on trailing exits** —
+  precisely the trade-off the trailing factors were tuned on.
+- Two entry gates live applies were missing, making the harness *looser* than
+  live rather than conservative.
+
+### Risk controls that did not control
+- **The circuit breaker never measured drawdown.** It read
+  `max(0, -cumulative_pnl)`, which reports 0% for an account 18% below its peak
+  but still net positive.
+- `.env.example` shipped threshold overrides uncommented, so any deployment
+  that copied it ran with the adaptive controller switched off entirely, at a
+  looser bar than the tuned defaults.
+- The spot cache stored its entry by reference, so Phase 3 edits — a
+  breaker-forced HOLD, a pyramid's tightened stop — became the base signal
+  replayed for the rest of the 4H candle.
+
+### New measurement tooling
+`--walk-forward N`, `--costs`, `--gates`, `--disable`, `--all-conditions`,
+`--start/--end`, and `scripts/condition_ic.py` with a horizon sweep. Every
+condition now emits its own contribution through a read-only checkpoint,
+verified inert against 63 candles.
+
+### What the tooling then said
+- **Almost nothing in the scoring stack is stable across years.** Tested on
+  2024 against 2025 in both modes, `ema200` runs +3.5 then −2.2, `macd` +1.4
+  then −4.7; `mfi` and `rsi` flip sign *significantly in both directions*. Only
+  `htf` keeps its sign — negative in all four samples.
+- **The gates thin rather than select.** Trades they let through are worse per
+  trade (−0.799%) than the ones they reject (−0.557%); total loss falls only
+  because count does.
+- **The pruning experiment failed.** Dropping the nine conditions with no stable
+  predictive power made results worse out-of-sample, so `DISABLED_CONDITIONS` is
+  empty and scoring is unchanged. The machinery stays for the next attempt.
+
+### Two conclusions recorded in this release were later overturned by it
+"The gates are carrying the system" came from comparing sums over unequal trade
+counts. "Trend-following works, mean-reversion doesn't" came from two
+overlapping 2026 samples and did not survive a genuine out-of-sample test. Both
+retractions are in the entries above rather than edited away.
+
+### Deployment
+`deploy/setup.sh` and a systemd unit, both written for an unattended
+multi-week run: it refuses to proceed unless Binance answers 200 from the host,
+installs Python 3.14 through uv without touching the distro interpreter, adds
+swap below 2 GB of RAM, records a run manifest **before** anything writes to the
+database, and enables the service only after a full verification cycle passes.
+
+### Validation status
+**Unvalidated.** The paper run this release exists to enable has not produced a
+sample yet. Over 2024 and 2025 the unmodified system is profitable on spot in
+both years (+3.71% PF 1.58, +0.55% PF 1.23) and on futures 2024 H1 (+0.64% PF
+1.39) — roughly 15 trades in total, far too few to call an edge.
+
+Tests: 67/67, up from 39.
+
+---
+
+## 2026-08-30 — fix: session/regime bumps apply in full again
+
+Closes the fifteenth review finding, the one held back for a decision.
+
+### Fixed
+`market_data._get_adaptive_threshold()` already ends with
+`max(base - step, t_min)`, so the base it hands the engine is never below the
+mode minimum. Re-applying that same floor after the session and regime bumps
+therefore discarded every negative one whenever the controller had walked the
+base down to its floor — `max(4.0 − 0.25 − 0.25, 4.0)` — which is exactly the
+state a lower bar is meant to answer. Only the +0.5 Asia bump ever survived,
+leaving the mechanism one-directional.
+
+The mode minimum governs the adaptive **base**. The bumps are a transient layer
+above it and now move the effective bar past it:
+
+```
+futures  base 4.00  regime −0.25  session −0.25  →  effective 3.50
+spot     base 3.00  regime −0.25  session −0.25  →  effective 2.50
+```
+
+What remains in the engine is a single absolute sanity floor
+(`_ABS_MIN_THRESHOLD = 0.5`): below that a threshold stops being a bar and
+becomes an off switch.
+
+This supersedes the per-mode floor added earlier in this branch. That change
+fixed a real bug — the floor was hard-coded to 3.0, the *spot* minimum, applied
+to both modes — but fixed it in the wrong place, duplicating a clamp the
+controller already owns.
+
+### Tests
+The three tests that encoded the old contract are replaced by four that encode
+the new one: bumps apply in full in both modes, the effective bar is allowed
+below the base floor, the sanity floor holds against a pathological override,
+and an AST check that the engine no longer references either mode minimum —
+text search would trip on the comment explaining why. Suite: 67/67.
+
+---
+
+## 2026-08-30 — fix: remaining code-review findings
+
+Second pass on the 15-finding review. Fourteen are now closed; the fifteenth is
+a behavioural question recorded below rather than changed unilaterally.
+
+### Fixed — measurement correctness
+- **The gate counterfactual compared a filtered numerator with an unfiltered
+  count.** `taken_pnl` excluded OPEN rows while `n_taken` counted them, and
+  every OPEN shadow (`_simulate_forward` never returns None — it falls through
+  to an `"OPEN"` row at max_hold) padded the blocked denominator with a zero.
+  Both sides now filter on a single `RESOLVED` tuple. **Re-measured: the
+  earlier conclusion survives** — taken −0.799%/trade vs blocked −0.557%/trade,
+  so the gates still thin rather than select. The figures moved (blocked 46 → 47,
+  −26.76% → −26.16%) because the trailing fix below changed some outcomes.
+- **The backtest trailed futures wider than the bot does.** After TP1 it pulled
+  the trail to `entry − 0.5×ATR` in both modes; `trading/paper.py` does that for
+  spot only and snaps futures to breakeven. Futures win rate and profit factor
+  were systematically overstated, and the trailing factors were tuned against
+  those numbers.
+- **Per-gate verdict called a gate "COSTS money" before checking redundancy.**
+  A gate with `only == 0` changes no trade if removed; that is the more
+  actionable fact and now wins the label.
+- **`analyze.py` counted infrastructure skips as trading gates.** The rewrite
+  dropped the old explicit exclusion while this branch added a `stale_cache`
+  block that fires on up to 3 of every 4 cycles. On sample data it took 82% of
+  the histogram, pushing both real gates under the display threshold and
+  deflating entry conversion. Infrastructure skips are now excluded and
+  reported separately.
+
+### Fixed — robustness
+- **`--gates` crashed on the period it exists to investigate.** With no taken
+  trades `run_backtest` returned `{"blocked": [...]}`, which is truthy, so
+  `print_backtest_results` fell past `if not stats` and raised `KeyError:
+  'start_price'`. It now guards on a key real stats always carry.
+- **A failed HTF fetch aborted the whole backtest.** `_load_htf_series` sits
+  outside any try and indexed `d.index[0]` unguarded, so a transient error, a
+  geo-block, or a span the exchange has no bars for killed the run — where the
+  per-candle try/except it replaced degraded to `htf=None` and continued. It now
+  degrades with a warning, which also un-breaks `scripts/backtest_offline.py`:
+  that script patches `fetch_ohlcv_df`, and the HTF loader bypasses it by design.
+
+### Changed
+- `_htf_at` binary-searches precomputed bar close times instead of rebuilding a
+  DatetimeIndex, a boolean mask and a DataFrame slice per candle. The old form
+  was O(candles × htf_bars); `scripts/condition_ic.py` pays it once per candle
+  across 180–400 days.
+- Removed `_simulate_forward`'s dead `ec` parameter — it implied a per-call cost
+  model that stopped existing when `_costs()` moved to module scope — and an
+  unused `datetime` import left by `_candle_utc_hour`'s deletion.
+- `CLAUDE.md`: the documented `generate_signals` signature was missing
+  `disabled`; the "thresholds should be ~25–30% of max" rule contradicted
+  `config.py`, which now pins 19.6% / 19.1%; `CONDITION_MAX`,
+  `DISABLED_CONDITIONS`, `_contributions` and the six new backtest flags were
+  undocumented.
+
+### Recorded, not changed
+**The per-mode threshold floor makes the negative session/regime bumps inert on
+futures.** `get_adaptive_threshold()` already clamps the base at
+`THRESHOLD_MIN`, so `mode_min = min(THRESHOLD_MIN, threshold)` is 4.0 whenever
+the controller has walked the base down to its floor — and
+`max(4.0 − 0.25 − 0.25, 4.0)` discards both the US-session and TRENDING bumps.
+Only the +0.5 Asia bump ever survives, so the mechanism became one-directional
+at exactly the moment a lower bar is the point. This is a consequence of the
+floor fix earlier in this branch; changing it again alters live scoring, so it
+waits for a decision rather than being reverted mid-stream.
+
+### Tests
+Suite: 66/66. The `_htf_at` tests were updated to the new
+`(series, close_times)` frame contract and now also assert that an empty frame
+set returns `None` instead of raising.
+
+---
+
 ## 2026-08-29 — feat: condition-set machinery; the pruning experiment failed
 
 Option (a) from the review — prune the scoring stack — was implemented,

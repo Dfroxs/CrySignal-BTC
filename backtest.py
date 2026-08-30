@@ -16,8 +16,8 @@ Usage:
 
 import argparse
 import logging
-from datetime import datetime
 
+import numpy as np
 import pandas as pd
 
 from config import (
@@ -45,6 +45,12 @@ MIN_WARMUP = 200  # candles for EMA200
 
 # Higher timeframes per base timeframe — must match signals/htf.py.
 _HTF_FOR = {"4h": ("1d", "1w"), "1h": ("4h", "1d")}
+# A trade only counts once it has an outcome. _simulate_forward never returns
+# None — it falls through to an "OPEN" row when the position is still alive at
+# max_hold — so anything that averages P&L has to filter first or it divides by
+# a denominator padded with zero-P&L rows.
+RESOLVED = ("WIN", "LOSS", "TIME_EXIT", "VOL_EXIT")
+
 _TF_DELTA = {"4h": pd.Timedelta(hours=4), "1d": pd.Timedelta(days=1),
              "1w": pd.Timedelta(weeks=1)}
 _HTF_WARMUP = 250          # bars of EMA200 warmup before the window even starts
@@ -78,7 +84,6 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
     limit = lookback_days * (24 if timeframe == "1h" else 6) + MIN_WARMUP
     max_hold = MAX_HOLD_CANDLES.get(timeframe, 72)
     threshold = SPOT_THRESHOLD if mode == "spot" else SIGNAL_THRESHOLD
-    ec = EXECUTION_CONFIG
 
     if start is not None:
         span = pd.Timedelta(hours=4 if timeframe == "4h" else 1) * MIN_WARMUP
@@ -106,7 +111,14 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
     # Counterfactuals get the same one-position-per-direction rule as real
     # trades, so a setup that keeps re-firing for ten candles is counted once.
     cf_open_until = {"BUY": -1, "SELL": -1}
-    htf_frames = _load_htf_series(symbol, timeframe, lookback_days, start=start, end=end)
+    # A backtest without HTF is degraded but still useful; one that dies on a
+    # transient fetch error is not. scripts/backtest_offline.py also lands here:
+    # it patches fetch_ohlcv_df, which the HTF loader deliberately bypasses.
+    try:
+        htf_frames = _load_htf_series(symbol, timeframe, lookback_days, start=start, end=end)
+    except Exception as exc:
+        logger.warning("HTF unavailable (%s) — condition 6 scores NEUTRAL for this run", exc)
+        htf_frames = {}
     # Same-side cooldown after exit (audit #9). Stops the bot from immediately
     # re-entering the exact setup that just stopped out. 5 candles on 1H, 2 on 4H.
     cooldown_n = 5 if timeframe == "1h" else 2
@@ -148,7 +160,7 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
         gates = _failing_gates(signal, mode, window, last_resolved)
         if gates:
             if counterfactual and i > cf_open_until[signal["type"]]:
-                shadow = _simulate_forward(df, i, signal, max_hold, timeframe, mode, ec)
+                shadow = _simulate_forward(df, i, signal, max_hold, timeframe, mode)
                 if shadow:
                     shadow["gates"] = gates
                     blocked.append(shadow)
@@ -156,9 +168,7 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
             continue
 
         # ── Forward simulation with trailing stop + partial TP ──
-        result = _simulate_forward(
-            df, i, signal, max_hold, timeframe, mode, ec,
-        )
+        result = _simulate_forward(df, i, signal, max_hold, timeframe, mode)
         if result:
             trades.append(result)
             exit_idx = i + result["candles_held"]
@@ -298,7 +308,7 @@ def _failing_gates(signal, mode, window, last_resolved=None):
 # Forward simulation — trailing stop + partial TP
 # ---------------------------------------------------------------------------
 
-def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
+def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode):
     """Walk forward from entry_idx, managing trailing stop and partial TP."""
     entry_raw = signal["entry_price"]
     sl_raw = signal["stop_loss"]
@@ -371,11 +381,15 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
             if not partial_closed and high >= tp1:
                 signal["_partial_taken"] = True
                 partial_pnl = (tp1 - entry) / entry * 100 - _costs(mode, 2)
-                # Pull trail to entry − 0.5×ATR (was: snap to entry). At exact
-                # BE, fees made every remainder a fee-tax LOSS even when TP1 hit.
-                # Half-ATR cushion above the SL preserves most of the locked
-                # gain while letting normal noise breathe.
-                trail = max(trail, entry - 0.5 * atr_now if atr_now > 0 else entry)
+                # Mirror trading/paper.py exactly: SPOT pulls the trail to
+                # entry − 0.5×ATR (at true BE, fees made every remainder a
+                # fee-tax loss even when TP1 hit), FUTURES snaps to breakeven.
+                # Applying the spot cushion to futures gave backtested futures a
+                # looser stop than the bot actually runs, overstating WR and PF.
+                if mode == "spot" and atr_now > 0:
+                    trail = max(trail, entry - 0.5 * atr_now)
+                else:
+                    trail = max(trail, entry)
                 partial_closed = True
 
             # TP2 after partial
@@ -400,8 +414,11 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, ec):
             if not partial_closed and low <= tp1:
                 signal["_partial_taken"] = True
                 partial_pnl = (entry - tp1) / entry * 100 - _costs(mode, 2)
-                # Mirror of BUY path: cushion 0.5×ATR above entry instead of snapping to entry.
-                trail = min(trail, entry + 0.5 * atr_now if atr_now > 0 else entry)
+                # Mirror of the BUY path, and of trading/paper.py's SELL branch.
+                if mode == "spot" and atr_now > 0:
+                    trail = min(trail, entry + 0.5 * atr_now)
+                else:
+                    trail = min(trail, entry)
                 partial_closed = True
 
             if partial_closed and tp2 and low <= tp2:
@@ -488,9 +505,15 @@ def _load_htf_series(symbol, timeframe, lookback_days, start=None, end=None):
             bars = _fetch_ohlcv_range(symbol, tf, since, until)
         else:
             bars = _fetch_ohlcv_paged(symbol, tf, _htf_bars_needed(tf, lookback_days))
+        if not bars:
+            raise ValueError(f"exchange returned no {tf} bars")
         d = pd.DataFrame(bars, columns=["timestamp", "open", "high", "low", "close", "volume"])
         d.index = pd.to_datetime(d["timestamp"], unit="ms")
-        frames[tf] = (htf_indicator_series(d), _TF_DELTA[tf])
+        series = htf_indicator_series(d)
+        # Precompute each bar's CLOSE time once. _htf_at was rebuilding this
+        # index, a boolean mask and a DataFrame slice for every candle — O(bars)
+        # per lookup across thousands of candles.
+        frames[tf] = (series, (series.index + _TF_DELTA[tf]).values)
         logger.info("HTF %s: %d bars (%s → %s)", tf, len(d), d.index[0].date(), d.index[-1].date())
     return frames
 
@@ -502,15 +525,18 @@ def _htf_at(frames, ts):
     remainder of the bar backwards in time, so the backtest lags by at most one
     HTF bar instead — conservative in the right direction.
     """
+    if not frames:
+        return None
     htf = {"aligned": False}
     keys = list(frames)
-    for tf, (series, delta) in frames.items():
-        closed = series[series.index + delta <= ts]
-        if closed.empty:
+    for tf, (series, close_times) in frames.items():
+        # Bars are ordered, so a binary search beats masking the whole series.
+        pos = int(np.searchsorted(close_times, np.datetime64(ts), side="right")) - 1
+        if pos < 0:
             htf[tf] = "NEUTRAL"
             htf[f"{tf}_indicators"] = {}
             continue
-        ind = indicators_from_row(closed.iloc[-1])
+        ind = indicators_from_row(series.iloc[pos])
         htf[tf] = ind["trend"]
         htf[f"{tf}_indicators"] = ind
 
@@ -528,7 +554,7 @@ def _htf_at(frames, ts):
 
 def _compute_stats(trades, start_price):
     """Return summary statistics dict."""
-    closed = [t for t in trades if t["outcome"] in ("WIN", "LOSS", "TIME_EXIT", "VOL_EXIT")]
+    closed = [t for t in trades if t["outcome"] in RESOLVED]
     wins = [t for t in closed if t["outcome"] == "WIN"]
     losses = [t for t in closed if t["outcome"] != "WIN"]
 
@@ -584,7 +610,7 @@ def walk_forward(trades, n_windows, start=None, end=None):
     numbers hold up in periods they were not chosen on? A profit factor that
     swings from 2.0 to 0.3 across windows is noise wearing a result's clothes.
     """
-    closed = [t for t in trades if t["outcome"] in ("WIN", "LOSS", "TIME_EXIT", "VOL_EXIT")]
+    closed = [t for t in trades if t["outcome"] in RESOLVED]
     stamped = sorted(
         ((pd.Timestamp(t["entry_time"]), t) for t in closed), key=lambda x: x[0]
     )
@@ -622,7 +648,7 @@ def cost_sensitivity(trades, mode, levels=(0.0, 0.05, 0.09, 0.15, 0.25)):
     fee = ec["futures_fee_pct"] if mode == "futures" else ec["spot_fee_pct"]
     current = fee + ec.get("slippage_pct", 0.05)
 
-    closed = [t for t in trades if t["outcome"] in ("WIN", "LOSS", "TIME_EXIT", "VOL_EXIT")]
+    closed = [t for t in trades if t["outcome"] in RESOLVED]
     out = []
     for level in sorted(set(levels) | {round(current, 4)}):
         rows = []
@@ -689,6 +715,13 @@ def print_gate_counterfactual(trades, blocked):
     print("\n" + "=" * 70)
     print("  🚦 ENTRY GATE COUNTERFACTUAL".center(70))
     print("=" * 70)
+    # Both sides must be filtered the same way. taken_pnl already excluded OPEN
+    # rows while n_taken counted them, and every OPEN shadow padded the blocked
+    # denominator with a zero — between them they moved the per-trade figures
+    # that decide the SELECT-vs-THIN verdict.
+    trades = [t for t in trades if t["outcome"] in RESOLVED]
+    blocked = [b for b in blocked if b["outcome"] in RESOLVED]
+
     if not blocked:
         print("\n   No signals were blocked in this period.\n" + "=" * 70 + "\n")
         return
@@ -707,15 +740,16 @@ def print_gate_counterfactual(trades, blocked):
         # `blocked` count but `only` = 0 is redundant: dropping it changes nothing.
         alone = sum(1 for r in rows if len(r["gates"]) == 1)
         net = sum(r["pnl_pct"] for r in rows)
-        verdict = "COSTS money" if net > 0 else ("saves money" if alone else "redundant")
+        # Redundancy is the more actionable fact: a gate nothing else would have
+        # caught is the only kind whose removal changes a trade.
+        verdict = "redundant" if alone == 0 else ("COSTS money" if net > 0 else "saves money")
         print(f"   {gate:<20} {len(rows):>7} {alone:>5} {won:>5} "
               f"{net:>9.2f}% {net / len(rows):>9.3f}%  {verdict}")
     print(f"\n   {'blocked'} counts every gate that would have caught the trade, so the\n"
           f"   column sums past the {len(blocked)} distinct blocked signals; "
           f"'only' does not.")
 
-    taken_pnl = sum(t["pnl_pct"] for t in trades
-                    if t["outcome"] in ("WIN", "LOSS", "TIME_EXIT", "VOL_EXIT"))
+    taken_pnl = sum(t["pnl_pct"] for t in trades)
     blocked_pnl = sum(b["pnl_pct"] for b in blocked)
     n_taken, n_blocked = len(trades), len(blocked)
     per_taken = taken_pnl / n_taken if n_taken else 0.0
@@ -770,7 +804,9 @@ def print_cost_sensitivity(rows):
 
 def print_backtest_results(trades, stats):
     """Pretty-print backtest results."""
-    if not stats:
+    # With --gates the no-trade path returns {"blocked": [...]}, which is truthy.
+    # Guard on a key the real stats always carry instead.
+    if not stats or "start_price" not in stats:
         print("\n⚠️  No backtest results to display.\n")
         return
 

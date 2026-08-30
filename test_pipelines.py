@@ -705,33 +705,55 @@ def _engine_threshold(mode, override):
     sig = generate_signals(_synthetic_df(), htf=None, market_structure=None,
                            sr=None, mode=mode, threshold_override=override)
     assert sig["_regime"]["threshold_bump"] < 0, \
-        "fixture must produce a negative regime bump for the floor to be exercised"
-    return sig["_threshold"]
+        "fixture must produce a negative regime bump for these tests to mean anything"
+    return sig
 
-def test_futures_threshold_floor_is_futures_minimum():
-    """Session + regime bumps must not push futures below THRESHOLD_MIN.
+_SESSION_BUMP = -0.25   # the fixture's last candle is 14:00 UTC — US session
 
-    Was: floor hard-coded to 3.0 (the SPOT minimum), so futures gated at 3.5.
-    """
+def test_session_and_regime_bumps_apply_in_full():
+    """The bumps must move the effective bar even when the adaptive base already
+    sits at its mode minimum — that is exactly when the controller wants a lower
+    bar. Re-applying the per-mode floor here clipped them to nothing, leaving
+    only the +0.5 Asia bump and making the mechanism one-directional."""
     from config import THRESHOLD_MIN
-    thr = _engine_threshold("futures", THRESHOLD_MIN)
-    assert thr >= THRESHOLD_MIN, f"futures threshold {thr} below THRESHOLD_MIN {THRESHOLD_MIN}"
+    sig = _engine_threshold("futures", THRESHOLD_MIN)
+    expected = THRESHOLD_MIN + sig["_regime"]["threshold_bump"] + _SESSION_BUMP
+    assert abs(sig["_threshold"] - expected) < 0.011, \
+        f"bumps were clipped: {sig['_threshold']} != {expected}"
+    assert sig["_threshold"] < THRESHOLD_MIN, \
+        "a negative bump must be able to take the effective bar below the base floor"
 
-def test_spot_threshold_floor_is_spot_minimum():
-    """Spot keeps its own floor — this path must not regress with the futures fix."""
+def test_spot_bumps_apply_in_full_too():
     from config import SPOT_THRESHOLD_MIN
-    thr = _engine_threshold("spot", SPOT_THRESHOLD_MIN)
-    assert thr >= SPOT_THRESHOLD_MIN, f"spot threshold {thr} below SPOT_THRESHOLD_MIN"
+    sig = _engine_threshold("spot", SPOT_THRESHOLD_MIN)
+    expected = SPOT_THRESHOLD_MIN + sig["_regime"]["threshold_bump"] + _SESSION_BUMP
+    assert abs(sig["_threshold"] - expected) < 0.011, \
+        f"bumps were clipped: {sig['_threshold']} != {expected}"
 
-def test_explicit_sub_minimum_override_is_respected():
-    """An env override already below the mode minimum is a deliberate choice —
-    the floor guards the bumps, not the operator's chosen base. Derived from
-    THRESHOLD_MIN rather than hard-coded: the minimum scales with the active
-    condition set, so a literal would stop testing what it claims to."""
-    from config import THRESHOLD_MIN
-    override = round(THRESHOLD_MIN - 0.5, 2)
-    thr = _engine_threshold("futures", override)
-    assert thr == override, f"override {override} was clamped up to {thr}"
+def test_absolute_sanity_floor_holds():
+    """A pathological override must not yield a zero or negative bar — below the
+    sanity floor a threshold stops being a bar and becomes an off switch."""
+    from signals.engine import _ABS_MIN_THRESHOLD, generate_signals
+    sig = generate_signals(_synthetic_df(), htf=None, market_structure=None,
+                           sr=None, mode="futures", threshold_override=0.1)
+    assert sig["_threshold"] == _ABS_MIN_THRESHOLD, \
+        f"expected the sanity floor {_ABS_MIN_THRESHOLD}, got {sig['_threshold']}"
+
+def test_engine_does_not_reapply_the_mode_minimum():
+    """The per-mode floor belongs to the adaptive controller, which ends with
+    `max(base - step, t_min)`. Enforcing it in both places is what made the
+    bumps inert."""
+    import ast
+    with open("signals/engine.py") as f:
+        tree = ast.parse(f.read())
+    # AST, not text search: the comment explaining why the floor was removed
+    # names the constant, and a substring check would trip on its own rationale.
+    referenced = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    referenced |= {a.name for n in ast.walk(tree)
+                   if isinstance(n, ast.ImportFrom) for a in n.names}
+    leaked = referenced & {"THRESHOLD_MIN", "SPOT_THRESHOLD_MIN"}
+    assert not leaked, \
+        f"engine must not re-floor at the mode minimum — market_data already does: {leaked}"
 
 def test_news_overlay_preserves_htf_confidence_downgrade():
     """STRONG requires 1D HTF agreement (audit #9). The post-news recalculation
@@ -827,6 +849,19 @@ def test_spot_cache_hit_is_flagged_stale():
         assert sp._spot_cache["signal"]["_cached"] is False, "stored copy must stay unflagged"
     finally:
         sp._spot_cache.update(saved)
+
+def test_spot_cache_stores_a_copy_not_the_returned_object():
+    """On a cache MISS the computed signal is both returned and stored. run_bot
+    then mutates what it was given — the circuit breaker forces type=HOLD, a
+    pyramid entry rewrites stop_loss/take_profit/tp2 — so storing the same
+    object made those Phase 3 edits the base signal replayed for the rest of the
+    4H candle. The read path was already deep-copied; the store path was not."""
+    with open("signals/spot.py") as f:
+        src = f.read()
+    assert '_spot_cache["signal"] = copy.deepcopy(signal)' in src, \
+        "the cache store must deep-copy — run_bot mutates the object it is handed"
+    assert '_spot_cache["signal"] = signal\n' not in src, \
+        "a bare reference store has come back"
 
 def test_run_bot_refuses_entry_on_cached_spot_signal():
     """Phase 3 must consult the flag and record the skip as a gate block."""
@@ -934,6 +969,20 @@ def test_drawdown_is_peak_to_trough():
         h.SIGNAL_HISTORY_DB, h.DB = saved_path, saved_db
         os.unlink(path)
 
+def _htf_frames(spec):
+    """Build the (series, close_times) tuples _load_htf_series produces.
+
+    Close times are precomputed there so _htf_at can binary-search instead of
+    masking the whole series on every candle; the tests must use the same shape
+    or they stop exercising the real lookup.
+    """
+    import pandas as pd
+    out = {}
+    for tf, (trends, freq, delta) in spec.items():
+        s = _htf_frame(trends, freq)
+        out[tf] = (s, (s.index + delta).values)
+    return out
+
 def _htf_frame(trends, freq, start="2026-01-01"):
     import pandas as pd
     idx = pd.date_range(start, periods=len(trends), freq=freq)
@@ -947,10 +996,10 @@ def test_htf_at_ignores_the_still_forming_bar():
     backwards in time. Only bars that had already closed may be read."""
     import pandas as pd
     from backtest import _htf_at
-    daily  = _htf_frame(["BULLISH", "BULLISH", "BEARISH"], "1D")   # 01-01, 01-02, 01-03
-    weekly = _htf_frame(["BULLISH"], "1W")
-    frames = {"1d": (daily, pd.Timedelta(days=1)),
-              "1w": (weekly, pd.Timedelta(weeks=1))}
+    frames = _htf_frames({
+        "1d": (["BULLISH", "BULLISH", "BEARISH"], "1D", pd.Timedelta(days=1)),
+        "1w": (["BULLISH"], "1W", pd.Timedelta(weeks=1)),
+    })
     htf = _htf_at(frames, pd.Timestamp("2026-01-03 12:00"))
     assert htf["1d"] == "BULLISH", \
         f"the 01-03 bar had not closed at 12:00 — got {htf['1d']} (look-ahead)"
@@ -964,12 +1013,15 @@ def test_htf_at_alignment_matches_live_rule():
     day  = pd.Timedelta(days=1)
     ts   = pd.Timestamp("2026-03-01")
 
-    agree  = {"1d": (_htf_frame(["BULLISH"] * 40, "1D"), day),
-              "1w": (_htf_frame(["BULLISH"] * 8, "1W"), week)}
-    differ = {"1d": (_htf_frame(["BULLISH"] * 40, "1D"), day),
-              "1w": (_htf_frame(["BEARISH"] * 8, "1W"), week)}
+    agree  = _htf_frames({"1d": (["BULLISH"] * 40, "1D", day),
+                          "1w": (["BULLISH"] * 8, "1W", week)})
+    differ = _htf_frames({"1d": (["BULLISH"] * 40, "1D", day),
+                          "1w": (["BEARISH"] * 8, "1W", week)})
     assert _htf_at(agree, ts)["aligned"] is True
     assert _htf_at(differ, ts)["aligned"] is False
+    # An empty frame set means the HTF fetch failed; the run must continue with
+    # condition 6 neutral rather than dying.
+    assert _htf_at({}, ts) is None
 
 def test_range_fetch_walks_forward_to_the_requested_span():
     """An explicit span is what makes independent replication possible at all —
@@ -1260,9 +1312,10 @@ if __name__ == "__main__":
     run("no credentials → 0, not None",           test_combined_telegram_returns_zero_without_credentials)
 
     print("\n── 10. Threshold & confidence consistency ──")
-    run("futures floor = THRESHOLD_MIN",          test_futures_threshold_floor_is_futures_minimum)
-    run("spot floor = SPOT_THRESHOLD_MIN",        test_spot_threshold_floor_is_spot_minimum)
-    run("sub-minimum override respected",         test_explicit_sub_minimum_override_is_respected)
+    run("session/regime bumps apply in full",     test_session_and_regime_bumps_apply_in_full)
+    run("spot bumps apply in full",               test_spot_bumps_apply_in_full_too)
+    run("absolute sanity floor holds",            test_absolute_sanity_floor_holds)
+    run("engine does not re-floor at mode min",   test_engine_does_not_reapply_the_mode_minimum)
     run("news overlay keeps HTF downgrade",       test_news_overlay_preserves_htf_confidence_downgrade)
     run("pipelines keep effective _threshold",    test_pipelines_keep_effective_threshold)
 
@@ -1270,6 +1323,7 @@ if __name__ == "__main__":
     run("MFI extreme joins the cluster",          test_mfi_extreme_counts_in_correlated_cluster)
     run("cancelled RSI leaves the cluster",       test_cancelled_rsi_extreme_leaves_the_cluster)
     run("cached spot signal flagged stale",       test_spot_cache_hit_is_flagged_stale)
+    run("spot cache stores a copy",               test_spot_cache_stores_a_copy_not_the_returned_object)
     run("run_bot refuses cached spot entry",      test_run_bot_refuses_entry_on_cached_spot_signal)
 
     print("\n── 12. Backtest fidelity & risk accounting ──")

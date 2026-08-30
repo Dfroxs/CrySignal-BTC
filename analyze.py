@@ -276,6 +276,18 @@ def section_skip_gates(conn, mode_filter):
         _info("signal_blocks is empty — run_bot.py writes one row per gate rejection")
         return
 
+    # Infrastructure skips are not trading judgements and must not dilute the
+    # gates that are. `stale_cache` fires on up to 3 of every 4 cycles with
+    # --loop 60 (the replayed 4H spot analysis), so leaving it in tops the
+    # histogram, pushes every real gate under the display thresholds, and
+    # deflates entry conversion with a counter unrelated to entries.
+    INFRASTRUCTURE = {"stale_cache", "positions_cleared", "pyramid_atr_invalid"}
+    infra_rows = [r for r in rows if r["gate"] in INFRASTRUCTURE]
+    rows = [r for r in rows if r["gate"] not in INFRASTRUCTURE]
+    if not rows:
+        _info(f"Only infrastructure skips recorded ({len(infra_rows)}) — no trading gate fired")
+        return
+
     counts = Counter(r["gate"] for r in rows)
     total  = sum(counts.values())
 
@@ -296,6 +308,11 @@ def section_skip_gates(conn, mode_filter):
         print(f"  {n:3d}  {_c(bar, col)}  {gate}  ({pct:.0f}%)")
         if pct > 10:
             print(f"       {DIM}{sample[gate][:70]}{RST}")
+
+    if infra_rows:
+        infra = Counter(r["gate"] for r in infra_rows)
+        detail = ", ".join(f"{g} {n}" for g, n in infra.most_common())
+        print(f"\n   {DIM}Infrastructure skips, excluded above: {detail}{RST}")
 
     opened = _rows(conn, f"SELECT COUNT(*) AS n FROM paper_positions{where}", params)[0]["n"]
     print(f"\n  Positions opened : {opened}")

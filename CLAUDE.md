@@ -73,9 +73,16 @@ Legacy CSV (`data/signal_history.csv`) is still written as fallback. `migrate_fr
 
 ## Signal scoring — when adding new conditions
 
-- If adding to **futures only**: wrap in `if mode == 'futures':` inside `signals/engine.py:generate_signals()`, do not change `SPOT_MAX_SCORE`.
-- If adding to **both modes**: update both `SIGNAL_MAX_SCORE` and `SPOT_MAX_SCORE` in `config.py`, and verify that both thresholds still represent ~25–30% of their respective max scores.
-- `generate_signals(df, htf, market_structure, sr, mode='futures', threshold_override=None)` — `threshold_override` is how `signals/spot.py` and `signals/futures.py` inject their per-mode adaptive threshold.
+`generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures', threshold_override=None, disabled=None)`
+
+- `threshold_override` is how `signals/spot.py` and `signals/futures.py` inject their per-mode adaptive threshold.
+- `disabled` selects the active condition set: `None` applies `config.DISABLED_CONDITIONS`, an empty collection scores everything, and a list ablates exactly those names. Ablation rolls the accumulators back at the condition's checkpoint, so it cannot drift from the real scoring path — but flags a condition sets for later blocks (`_rsi_os` and friends) are *not* unset.
+
+**Adding a condition means adding a row to `config.CONDITION_MAX`**, keyed by the name its `_mark()` checkpoint emits, with its BUY-side ceiling for `(spot, futures)`. Use `0.00` for the mode that skips it. `SIGNAL_MAX_SCORE` and `SPOT_MAX_SCORE` are summed from that table over the active set — do not hand-edit them.
+
+Thresholds are derived as a **fraction of that ceiling**, not absolute numbers, so pruning a condition lowers the bar with it. The fractions in `config.py` reproduce the historical 5.2 / 4.3 / 4.0 / 8.0 / 3.0 / 7.0 exactly at the pre-pruning maxima of 26.50 and 22.50 — that is 19.6% and 19.1% of max, not the ~25–30% an earlier revision of this file claimed.
+
+Every condition also emits `signal['_contributions'][name] = (buy_delta, sell_delta)` via a read-only checkpoint. `scripts/condition_ic.py` correlates those against forward returns; `backtest.py --disable` ablates them.
 
 ## Backtest limitations
 
@@ -83,7 +90,22 @@ Legacy CSV (`data/signal_history.csv`) is still written as fallback. `migrate_fr
 
 HTF comes from the real 1D/1W (spot) or 4H/1D (futures) series fetched from the exchange, using the same `htf_indicator_series()` the live path uses — not from resampling the base timeframe, which could not hold enough bars for an EMA200. The backtest reads only HTF bars that had already **closed** at the candle being evaluated, so it lags live by at most one HTF bar rather than leaking the rest of a forming bar backwards.
 
-`_fetch_ohlcv_paged()` pages around the exchange's 1000-bar cap on a single `fetch_ohlcv()` call — without it a request for 2360 hourly candles silently returned 1000.
+`_fetch_ohlcv_paged()` pages around the exchange's 1000-bar cap on a single `fetch_ohlcv()` call — without it a request for 2360 hourly candles silently returned 1000. `_fetch_ohlcv_range()` pages forward through an explicit span so one period can be tested against another.
+
+An HTF fetch that fails degrades to `htf=None` with a warning rather than aborting the run — `scripts/backtest_offline.py` relies on that, since it patches `fetch_ohlcv_df` and the HTF loader deliberately bypasses it.
+
+### Backtest flags
+
+```
+--start / --end YYYY-MM-DD   explicit window, so 2024 can be tested against 2025
+--walk-forward N             split the window into N sequential periods, parameters fixed
+--gates                      also simulate every signal the entry gates rejected
+--costs                      re-price every trade at other execution-cost levels
+--disable a,b                ablate conditions on top of config.DISABLED_CONDITIONS
+--all-conditions             ignore DISABLED_CONDITIONS for this run
+```
+
+`--gates` reports per-trade P&L on both sides. Comparing totals across unequal trade counts cannot show whether the gates *select* or merely *thin*; only the per-trade figures can.
 
 ## Changelog
 
