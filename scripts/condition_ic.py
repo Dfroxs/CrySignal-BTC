@@ -44,7 +44,8 @@ logger = logging.getLogger(__name__)
 G, R, Y, DIM, BLD, RST = "\033[32m", "\033[31m", "\033[33m", "\033[2m", "\033[1m", "\033[0m"
 
 
-def collect(mode="futures", days=180, horizons=(6,), start=None, end=None):
+def collect(mode="futures", days=180, horizons=(6,), start=None, end=None,
+            symbol="BTC/USDT"):
     """Run the engine over every candle and pair each condition's contribution
     with the returns that followed, at every requested horizon.
 
@@ -65,17 +66,17 @@ def collect(mode="futures", days=180, horizons=(6,), start=None, end=None):
         span = pd.Timedelta(hours=4 if tf == "4h" else 1) * MIN_WARMUP
         since_ms = int((pd.Timestamp(start) - span).timestamp() * 1000)
         until_ms = int(pd.Timestamp(end).timestamp() * 1000) if end is not None else None
-        logger.info("Fetching %s %s from %s to %s ...", mode, tf, start, end or "now")
-        df = fetch_ohlcv_df("BTC/USDT", tf, vwap_period=vwap_period,
+        logger.info("Fetching %s %s %s from %s to %s ...", symbol, mode, tf, start, end or "now")
+        df = fetch_ohlcv_df(symbol, tf, vwap_period=vwap_period,
                             since=since_ms, until=until_ms)
-        htf_frames = _load_htf_series("BTC/USDT", tf, days, start=start, end=end)
+        htf_frames = _load_htf_series(symbol, tf, days, start=start, end=end)
         first = int(df.index.searchsorted(pd.Timestamp(start)))
         loop_start = max(MIN_WARMUP, first)
     else:
         logger.info("Fetching %d days of %s %s ...", days, mode, tf)
-        df = fetch_ohlcv_df("BTC/USDT", tf, limit=days * per_day + MIN_WARMUP,
+        df = fetch_ohlcv_df(symbol, tf, limit=days * per_day + MIN_WARMUP,
                             vwap_period=vwap_period)
-        htf_frames = _load_htf_series("BTC/USDT", tf, days)
+        htf_frames = _load_htf_series(symbol, tf, days)
         loop_start = MIN_WARMUP
 
     rows = []
@@ -229,6 +230,80 @@ def report_sweep(data, horizons, mode, days):
     print("=" * 78 + "\n")
 
 
+def run_matrix(symbols, years, mode, horizon):
+    """Score every condition across symbols x years and report only what holds.
+
+    A condition that clears |t| >= 2 in one cell has told you about one market in
+    one year. The bar here is deliberately harsher: the SIGN must hold in every
+    cell. Everything measured in this project so far failed that test, which is
+    why it is the test.
+    """
+    cells, failures = {}, []
+    for sym in symbols:
+        for yr in years:
+            key = f"{sym.split('/')[0]} {yr}"
+            try:
+                data = collect(mode, 365, (horizon,), f"{yr}-01-01", f"{yr}-12-31", sym)
+                cells[key] = {r["condition"]: r for r in analyse(data, horizon)}
+                logger.info("%s: %d candles", key, len(data))
+            except Exception as exc:
+                failures.append((key, str(exc)[:70]))
+                logger.warning("%s skipped: %s", key, exc)
+    return cells, failures
+
+
+def report_matrix(cells, failures, mode, horizon):
+    if not cells:
+        print("\n  No cell completed — nothing to report.\n")
+        return
+    keys = list(cells)
+    names = sorted({n for c in cells.values() for n in c})
+    names = [n for n in names
+             if any(cells[k].get(n, {}).get("n_pos") or cells[k].get(n, {}).get("n_neg")
+                    for k in keys)]
+
+    print("\n" + "=" * 78)
+    print(f"  🧭 CROSS-MARKET SEARCH — {mode.upper()}, {horizon}-bar forward".center(78))
+    print("=" * 78)
+    if failures:
+        print(f"\n  {Y}skipped: {', '.join(k for k, _ in failures)}{RST}")
+
+    head = "".join(f"{k:>12}" for k in keys)
+    print(f"\n  {'condition':<24}{head}   verdict")
+    print("  " + "-" * (24 + 12 * len(keys) + 12))
+
+    survivors = []
+    for n in names:
+        ts = [cells[k].get(n, {}).get("t", 0.0) for k in keys]
+        signs = {1 if x > 0 else (-1 if x < 0 else 0) for x in ts if abs(x) > 0.5}
+        strong = sum(1 for x in ts if abs(x) >= 2.0)
+        if len(signs) == 1 and strong >= 2:
+            verdict, col = (f"HOLDS {'+' if 1 in signs else '−'} ({strong}/{len(ts)} strong)",
+                            G if 1 in signs else R)
+            survivors.append((n, 1 if 1 in signs else -1, strong, ts))
+        elif len(signs) > 1:
+            verdict, col = "flips", Y
+        else:
+            verdict, col = "flat", DIM
+        row = "".join(f"{G if x >= 2 else (R if x <= -2 else DIM)}{x:>+12.1f}{RST}" for x in ts)
+        print(f"  {n:<24}{row}   {col}{verdict}{RST}")
+
+    print(f"\n  {BLD}Conditions holding their sign across every cell: {len(survivors)}/{len(names)}{RST}")
+    if survivors:
+        for n, s, strong, _ in survivors:
+            print(f"    {G if s > 0 else R}{n}{RST} — sign {'positive' if s > 0 else 'NEGATIVE'}, "
+                  f"|t| ≥ 2 in {strong} of {len(keys)} cells")
+        print(f"\n  {DIM}A negative sign is not useless — it is an inverted signal. What it is"
+              f" not{RST}")
+        print(f"  {DIM}is proof: cells share overlapping market history, so these are not"
+              f" independent.{RST}")
+    else:
+        print(f"    {DIM}Nothing survived. On this evidence there is no component to build on,"
+              f" and{RST}")
+        print(f"    {DIM}steps 2–4 would be building on noise.{RST}")
+    print("=" * 78 + "\n")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--mode", choices=["spot", "futures"], default="futures")
@@ -241,13 +316,27 @@ def main():
                     help="Explicit window start — lets one period be tested against another")
     ap.add_argument("--end", default=None, metavar="YYYY-MM-DD",
                     help="Explicit window end (default: now)")
+    ap.add_argument("--symbol", default="BTC/USDT", help="Single-run symbol")
+    ap.add_argument("--matrix", action="store_true",
+                    help="Search symbols x years and report only what holds its sign everywhere")
+    ap.add_argument("--symbols", default="BTC/USDT,ETH/USDT,SOL/USDT",
+                    help="Comma-separated symbols for --matrix")
+    ap.add_argument("--years", default="2023,2024,2025",
+                    help="Comma-separated years for --matrix")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     sweep = [int(h) for h in args.horizons.split(",") if h.strip()] if args.horizons else []
     horizons = sorted(set(sweep) | {args.horizon})
 
-    data = collect(args.mode, args.days, tuple(horizons), args.start, args.end)
+    if args.matrix:
+        syms = [s.strip() for s in args.symbols.split(",") if s.strip()]
+        yrs = [y.strip() for y in args.years.split(",") if y.strip()]
+        cells, failures = run_matrix(syms, yrs, args.mode, args.horizon)
+        report_matrix(cells, failures, args.mode, args.horizon)
+        return
+
+    data = collect(args.mode, args.days, tuple(horizons), args.start, args.end, args.symbol)
     if data.empty:
         print("No data collected.")
         return
