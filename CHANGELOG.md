@@ -4,6 +4,57 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-30 — search: 1 of 17 conditions held its sign across 9 markets
+
+Step 1 of finding out whether there is any component worth building on. The bar:
+a condition must hold its **sign** in every cell of BTC/ETH/SOL × 2023/2024/2025,
+with |t| ≥ 2 in at least two. Spot 4H, 6-bar forward, ~2,180 candles per cell.
+
+### Result: `macd`, and only `macd`
+```
+              BTC23  BTC24  BTC25  ETH23  ETH24  ETH25  SOL23  SOL24  SOL25
+macd           +2.3   +2.8   +1.3   +1.3   +2.5   +2.1   +1.1   -0.2   +2.3
+```
+The weakest cell, SOL 2024 at −0.2, is effectively zero and passes only because
+the filter treats |t| < 0.5 as no signal rather than as a negative one.
+
+### Retraction: `htf` is not universally inverted
+```
+htf            -2.5   -3.1   -2.2   -4.9   -2.1   -2.8   +4.1   -2.4   -2.8
+                                                          ↑
+```
+Eight of nine negative — then SOL 2023 at **+4.1**, strongly positive. 2023 is
+the year SOL went from roughly $10 to $100; in a trend that violent, HTF
+alignment does exactly what it was designed to do.
+
+So `htf` is negative *except in a strong trend*, and the four BTC samples that
+produced the earlier claim happened to contain none. The statement that it is
+"inverted in every sample", repeated several times on 2026-08-29, is withdrawn.
+
+### Why one survivor is close to meaningless
+17 conditions were tested. Expected survivors from pure noise, by how
+independent the cells really are:
+
+| assumption | P(a condition holds sign) | expected survivors |
+|---|---|---|
+| 9 independent cells | 0.4% | 0.1 |
+| effectively ~4 (correlated assets) | 12.5% | **2.1** |
+| effectively ~3 | 25.0% | **4.2** |
+
+BTC, ETH and SOL move together and the years are contiguous, so nine cells are
+nowhere near nine independent samples. Under any realistic assumption, **one
+survivor is fewer than chance alone would produce.** This search cannot
+distinguish `macd` from a false positive.
+
+### Next
+`macd` is pre-registered as a single hypothesis and tested on data not used to
+find it — BNB, XRP, ADA, LINK, DOGE × 2021, 2022 — with pass criteria fixed in
+advance: positive sign in ≥8 of 10 cells, |t| ≥ 2 in ≥3, and sign stable across
+horizons 6, 12 and 24. Testing one pre-registered hypothesis removes the
+multiple-comparison problem entirely. Failure on any criterion ends the search.
+
+---
+
 ## 2026-08-30 — finding: a threshold sweep does not measure selectivity
 
 Investigating why the best threshold for 2024 was the worst for 2025. It is not
