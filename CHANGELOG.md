@@ -4,6 +4,48 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-30 — PRE-REGISTRATION: the final test, for `htf`
+
+Recorded before the tool that runs it is finished, and before any of the data is
+seen. **If this fails, the search ends — there is no third candidate.**
+
+### Why there is a test at all
+`macd` was rejected by its own pre-registered criteria (positive in 6 of 10
+cells, needed 8; and −2.7 on LINK 2021). In the same output `htf` held a
+negative sign in 10 of 10 fresh cells, which combined with the first matrix is
+18 of 19 — the single exception being SOL 2023, the year SOL went from roughly
+$10 to $100.
+
+Announcing that would be exactly the error pre-registration exists to prevent:
+picking a new winner from 17 candidates *after* the registered one failed. The
+only legitimate way to use it is as a hypothesis for a fresh test, on data that
+has never been looked at, with criteria fixed first.
+
+Two honest caveats. We have now examined 17 conditions across 19 cells; with
+that many looks, eventually finding *something* that appears to hold is close to
+certain. And the same claim about `htf` was made and retracted yesterday, on a
+sample that happened to exclude any violent trend.
+
+### Hypothesis
+The `htf` condition's contribution is **negatively** correlated with forward
+returns — the HTF-alignment score points the wrong way.
+
+### Data — untouched in asset and year
+`LTC, TRX, ETC, XLM, EOS` × `2019, 2020`. None of these five assets and neither
+year has been used in any measurement in this project.
+
+### Pass criteria, all three required
+1. Negative sign in **≥ 9 of 10** cells at horizon 6.
+2. `|t| ≥ 2` in **≥ 3** cells.
+3. Negative sign in **≥ 8 of 10** cells at **each** of horizons 3, 12 and 24 —
+   a real effect keeps its sign as the holding period changes. `macd` was never
+   put to this test; it is the discriminator that matters most.
+
+Failure on any one criterion ends the search. No re-selection, no adjusted
+thresholds, no fourth candidate.
+
+---
+
 ## 2026-08-30 — search: 1 of 17 conditions held its sign across 9 markets
 
 Step 1 of finding out whether there is any component worth building on. The bar:
