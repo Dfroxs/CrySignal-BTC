@@ -1303,6 +1303,41 @@ def test_analyze_defaults_to_the_local_database():
     assert 'default=DB_PATH' in src, "--db must default to the module's DB_PATH"
 
 
+# ── 16. ForexFactory calendar timezone ───────────────────────────────────────
+
+def test_macro_calendar_is_read_as_utc():
+    """The feed publishes in UTC. Reading it as Eastern put every event four
+    hours late in summer, so the macro gate stayed open through the actual
+    release and then force-closed every position two hours after it had passed.
+
+    Each case below is an event whose release time never moves, so the mapping
+    is checkable without the feed: if the feed were Eastern, NFP would print as
+    8:30am rather than 12:30pm."""
+    from signals.sentiment import _parse_macro_timestamp
+    cases = [
+        ("09-04-2026 12:30pm", 12, 30, "Non-Farm Payrolls, 08:30 ET"),
+        ("09-02-2026 12:15pm", 12, 15, "ADP Non-Farm, 08:15 ET"),
+        ("09-01-2026 2:00pm",  14,  0, "ISM Manufacturing PMI, 10:00 ET"),
+        ("08-30-2026 11:50pm", 23, 50, "JP Industrial Production, 08:50 JST"),
+    ]
+    for raw, hour, minute, why in cases:
+        dt = _parse_macro_timestamp(raw)
+        assert dt.utcoffset().total_seconds() == 0, f"{raw} must be UTC ({why})"
+        assert (dt.hour, dt.minute) == (hour, minute), \
+            f"{raw} → {dt:%H:%M}, expected {hour:02d}:{minute:02d} ({why})"
+
+def test_macro_parser_does_not_use_a_named_timezone():
+    """A regression here is silent — the gate keeps firing, just at the wrong
+    hours — so guard the mechanism rather than only the output."""
+    import ast
+    with open("signals/sentiment.py") as f:
+        tree = ast.parse(f.read())
+    names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    names |= {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+    assert "ZoneInfo" not in names and "zoneinfo" not in names, \
+        "the calendar is UTC; converting through a named zone reintroduces the offset"
+
+
 if __name__ == "__main__":
     print("\n══ Pipeline Dummy-Data Tests ══\n")
 
@@ -1404,6 +1439,10 @@ if __name__ == "__main__":
     print("\n── 15. analyze.py --db ──")
     run("--db targets another database",          test_analyze_db_flag_targets_another_database)
     run("--db defaults to the local database",    test_analyze_defaults_to_the_local_database)
+
+    print("\n── 16. ForexFactory calendar timezone ──")
+    run("calendar is read as UTC",                test_macro_calendar_is_read_as_utc)
+    run("no named timezone in the parser",        test_macro_parser_does_not_use_a_named_timezone)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

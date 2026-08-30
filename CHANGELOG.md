@@ -4,6 +4,46 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-30 — fix: the macro calendar is UTC, not Eastern Time
+
+### Fixed
+`check_upcoming_macro_events()` parsed ForexFactory timestamps as
+`America/New_York`. The feed publishes in **UTC**. Verified against five events
+whose release times never move:
+
+```
+Non-Farm Payrolls      08:30 ET   feed says 12:30pm  = 12:30 UTC
+Unemployment Claims    08:30 ET   feed says 12:30pm  = 12:30 UTC
+ADP Non-Farm           08:15 ET   feed says 12:15pm  = 12:15 UTC
+ISM Manufacturing PMI  10:00 ET   feed says  2:00pm  = 14:00 UTC
+JP Industrial Prod.    08:50 JST  feed says 11:50pm  = 23:50 UTC (prev day)
+```
+
+Under an Eastern reading NFP would print as 8:30am. It does not.
+
+Every event was therefore placed **four hours late** in summer and five in
+winter, and both halves of that were harmful. For the 12 September NFP:
+
+```
+real gate window   10:30 – 12:30 UTC
+window used        14:30 – 16:30 UTC
+```
+
+The gate stayed **open through the actual release**, so the bot traded straight
+into it unprotected — and then fired two hours after the event had passed,
+forcing HOLD and MACRO_CLOSE on every open position for nothing. A protection
+that was simultaneously absent when needed and destructive when not.
+
+This was flagged as unverified on 2026-08-29 and carried into the v2.9.0 paper
+run before anyone fetched the feed to check.
+
+### Tests
+Four fixed-time events pin the mapping without needing the network, plus an AST
+guard that the parser uses no named timezone — a regression here is silent, the
+gate keeps firing, just at the wrong hours. Suite: 71/71.
+
+---
+
 ## 2026-08-30 — feat: `analyze.py --db`
 
 The paper run lives on a server; analysis runs on a workstation. `DB_PATH` was
