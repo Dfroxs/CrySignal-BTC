@@ -4,6 +4,34 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-30 — feat: cycle_log records the taker ratio, gold and VIX
+
+Closes the gap noted when step 1 was closed. With development stopped, the
+running bot's only remaining value is the record it builds — so a field fetched
+and discarded is the one kind of loss that cannot be repaired later.
+
+### Added
+`taker_ratio`, `gold`, `gold_change`, `vix`, `vix_change` on `cycle_log`. All
+five were fetched every cycle and thrown away.
+
+They matter more than the average column. `backtest.py` must score funding,
+long/short ratio, open interest, basis, taker ratio, gold and VIX as NEUTRAL
+because **no free historical API serves them** — 7.5 of the 26.5-point futures
+ceiling, permanently untestable against history. This log is the only place
+that record can come from, and an hour that passes unrecorded is gone.
+
+`_migrate_cycle_log()` adds the columns to databases that predate them, which
+includes the one already running on the server. Spot rows leave `taker_ratio`
+NULL rather than 0 — spot never fetches it, and a zero would read as a real
+measurement to whatever analyses this data later.
+
+### Tests
+Values are written and read back; an absent taker ratio lands as NULL rather
+than 0; and a database created without the columns gains them without
+disturbing the rows already collected, twice in a row. Suite: 82/82.
+
+---
+
 ## 2026-08-30 — STEP 1 CLOSED: no component survived. Development stops here.
 
 ### Result

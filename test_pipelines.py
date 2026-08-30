@@ -1469,6 +1469,120 @@ def test_colours_return_on_a_terminal():
         assert run_bot._G, "colour should be present when attached to a terminal"
 
 
+# ── 19. cycle_log records everything it fetches ──────────────────────────────
+
+def _log_one_cycle(db_path, market_structure):
+    import numpy as np
+    import pandas as pd
+    import trading.history as h
+    saved = h.SIGNAL_HISTORY_DB, h.DB, h.SIGNAL_HISTORY_CSV
+    h.SIGNAL_HISTORY_DB, h.DB = db_path, None
+    h.SIGNAL_HISTORY_CSV = db_path + ".nocsv"      # keep the CSV fallback out of it
+    try:
+        df = pd.DataFrame({
+            "close": [80000.0] * 10, "RSI_14": [55.0] * 10, "StochRSI_K": [60.0] * 10,
+            "StochRSI_D": [58.0] * 10, "MACD": [10.0] * 10, "MACD_Signal": [5.0] * 10,
+            "VWAP_24": [79900.0] * 10, "EMA_200": [78000.0] * 10, "ATR_14": [300.0] * 10,
+            "BB_Upper": [81000.0] * 10, "BB_Lower": [79000.0] * 10, "OBV": np.arange(10.0)})
+        sig = {"type": "HOLD", "buy_score": 5.0, "sell_score": 2.0, "strength": 5.0,
+               "_threshold": 4.05, "rsi_divergence": "NONE", "fear_greed_value": 69,
+               "news_sentiment": "BULLISH", "reasons": []}
+        h.log_cycle(sig, df, market_structure, {"1d": "BULLISH"}, "futures")
+    finally:
+        try:
+            h.DB.close()
+        except Exception:
+            pass
+        h.SIGNAL_HISTORY_DB, h.DB, h.SIGNAL_HISTORY_CSV = saved
+
+def test_cycle_log_stores_taker_gold_and_vix():
+    """These three were fetched every cycle and thrown away. They matter more
+    than most: backtest.py must score funding, L/S, OI, basis, taker, gold and
+    VIX as NEUTRAL because no free historical API serves them, so this log is
+    the only place that record can come from — and an unrecorded hour cannot be
+    recovered afterwards."""
+    import os
+    import sqlite3
+    import tempfile
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        _log_one_cycle(path, {
+            "funding": {"rate_pct": 0.0092, "basis_pct": -0.037},
+            "long_short": {"ratio": 1.19},
+            "taker": {"ratio": 1.234, "bias": "BULLISH"},
+            "gold": {"current": 2455.75, "change_pct": -0.62},
+            "vix": {"current": 17.31, "change_pct": 3.44},
+            "dxy": {}, "sp500": {}, "btc_dom": {}, "stablecoin": {}, "open_interest": {},
+        })
+        c = sqlite3.connect(path)
+        c.row_factory = sqlite3.Row
+        r = c.execute("SELECT taker_ratio, gold, gold_change, vix, vix_change "
+                      "FROM cycle_log").fetchone()
+        c.close()
+        assert r["taker_ratio"] == 1.234, r["taker_ratio"]
+        assert (r["gold"], r["gold_change"]) == (2455.75, -0.62)
+        assert (r["vix"], r["vix_change"]) == (17.31, 3.44)
+    finally:
+        os.unlink(path)
+
+def test_spot_rows_leave_futures_only_fields_null():
+    """Spot never fetches the taker ratio. It must land as NULL rather than a
+    zero that a future analysis would read as a real measurement."""
+    import os
+    import sqlite3
+    import tempfile
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        _log_one_cycle(path, {"funding": {}, "long_short": {}, "dxy": {}, "sp500": {},
+                              "btc_dom": {}, "stablecoin": {}, "open_interest": {},
+                              "gold": {"current": 2455.75, "change_pct": -0.62},
+                              "vix": {"current": 17.31, "change_pct": 3.44}})
+        c = sqlite3.connect(path)
+        r = c.execute("SELECT taker_ratio FROM cycle_log").fetchone()
+        c.close()
+        assert r[0] is None, f"absent taker must be NULL, got {r[0]!r}"
+    finally:
+        os.unlink(path)
+
+def test_existing_database_gains_the_columns():
+    """The server's database predates these columns. The migration must add them
+    without touching the rows already collected, and survive a re-run."""
+    import os
+    import sqlite3
+    import tempfile
+    import trading.history as h
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    saved = h.SIGNAL_HISTORY_DB, h.DB
+    try:
+        c = sqlite3.connect(path)
+        c.execute("CREATE TABLE cycle_log (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                  "timestamp TEXT NOT NULL, mode TEXT NOT NULL, type TEXT NOT NULL, "
+                  "price REAL)")
+        c.execute("INSERT INTO cycle_log (timestamp, mode, type, price) "
+                  "VALUES ('2026-08-30 00:00', 'spot', 'HOLD', 80000)")
+        c.commit()
+        c.close()
+
+        h.SIGNAL_HISTORY_DB, h.DB = path, None
+        conn = h._conn()
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(cycle_log)")}
+        assert {"taker_ratio", "gold", "gold_change", "vix", "vix_change"} <= cols, cols
+        assert conn.execute("SELECT COUNT(*) FROM cycle_log").fetchone()[0] == 1, \
+            "the migration must not disturb rows already collected"
+        h.DB = None
+        h._conn()      # idempotent — ALTER on an existing column must not raise
+    finally:
+        try:
+            h.DB.close()
+        except Exception:
+            pass
+        h.SIGNAL_HISTORY_DB, h.DB = saved
+        os.unlink(path)
+
+
 if __name__ == "__main__":
     print("\n══ Pipeline Dummy-Data Tests ══\n")
 
@@ -1586,6 +1700,11 @@ if __name__ == "__main__":
     run("interrupt is a clean stop",              test_interrupt_is_a_clean_stop_not_a_traceback)
     run("progress output is plain in a file",     test_progress_output_is_plain_when_not_a_terminal)
     run("colours return on a terminal",           test_colours_return_on_a_terminal)
+
+    print("\n── 19. cycle_log completeness ──")
+    run("taker/gold/VIX are stored",              test_cycle_log_stores_taker_gold_and_vix)
+    run("spot leaves futures-only fields NULL",   test_spot_rows_leave_futures_only_fields_null)
+    run("existing database gains the columns",    test_existing_database_gains_the_columns)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
