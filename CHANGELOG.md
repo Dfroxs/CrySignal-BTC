@@ -4,6 +4,73 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-30 — STEP 1 CLOSED: no component survived. Development stops here.
+
+### Result
+Two hypotheses, both pre-registered before their data was seen, both rejected by
+their own criteria:
+
+| hypothesis | criterion | required | got |
+|---|---|---|---|
+| `macd` | positive sign across cells | ≥ 8 of 10 | **6 of 10** |
+| `htf` | negative sign @ horizon 6 | ≥ 9 of 10 | **7 of 10** |
+| `htf` | negative sign @ horizons 3 / 12 / 24 | ≥ 8 of 10 each | **7 / 6 / 8** |
+
+17 conditions were examined across **29 cells** spanning 8 assets and 7 years
+(BTC, ETH, SOL, BNB, XRP, ADA, LINK, DOGE, LTC, TRX, ETC, XLM, EOS; 2019–2025).
+**Nothing held.**
+
+The `htf` result was tempting to rescue: the effect strengthens with horizon
+(|t| ≥ 2 in 2 cells at 3 bars, 6 cells at 24) and concentrates in TRX, ETC and
+EOS. Moving the goalposts to horizon 24 after seeing that would be picking a
+pattern, not testing one — the same error already made twice with this exact
+condition. The pre-registration said failure on any criterion ends the search,
+and it does.
+
+### What this does and does not mean
+It does **not** mean systematic trading cannot work, or that crypto has no
+inefficiencies.
+
+It means the 22 conditions in `signals/engine.py` contain no component whose
+predictive power survives a change of market or period. Directional prediction
+from public indicators is the most crowded version of the problem: the data is
+free, the indicators are decades old, and there is no structural advantage on
+this side of the trade. A null result here is the expected outcome, not bad luck.
+
+Reaching it took one day and a few hours of compute. The alternative was a
+multi-year paper run accumulating 15 trades a year toward the same conclusion
+around 2031 — if the sample ever became large enough, which it would not.
+
+### Project status
+**Active development stops.** No parameter will be retuned; retuning weights
+against noise is what produced the current `config.py`, and every one of those
+values is now known to rest on 2–8 closed trades from mutually blocking
+sequences.
+
+**The paper run continues**, with a different purpose — see below.
+
+### The run's remaining value: it is building a dataset that does not exist
+`backtest.py` scores funding, long/short ratio, open interest, basis, taker
+ratio, gold, VIX and the news overlay as NEUTRAL, because **no free historical
+API serves them**. That is 7.5 of the 26.5-point futures ceiling and 3.5 of
+22.5 on spot — permanently untestable against history.
+
+Every cycle, the live bot fetches all of it. `cycle_log` already persists 37
+fields hourly: funding rate, L/S ratio, OI change, basis, DXY, S&P 500,
+stablecoin supply, BTC dominance, Fear & Greed, news sentiment, plus the full
+technical snapshot.
+
+A year of that is ~8,760 hourly observations of precisely the data no backtest
+in this repository could ever use. For any future project — funding-rate
+arbitrage among them — that record is worth more than the strategy that
+generated it.
+
+**Gap worth closing:** taker buy/sell ratio, gold and VIX are fetched every
+cycle and discarded; `cycle_log` has no column for them. Every hour without
+those columns is an hour of data that cannot be recovered later.
+
+---
+
 ## 2026-08-30 — PRE-REGISTRATION: the final test, for `htf`
 
 Recorded before the tool that runs it is finished, and before any of the data is

@@ -2,17 +2,30 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## A validation run is live — parameters are frozen
+## Development is stopped. The bot runs to collect data, not to be improved.
 
-`v2.9.0` runs unattended on a VPS (`~/playground/CrySignal-BTC`, systemd unit
-`spotsignal`), collecting the out-of-sample sample the project has never had.
-`data/paper_run_manifest.json` on that host pins the commit and every parameter
-it is testing.
+A cross-market search (2026-08-30) tested all 22 scoring conditions across 29
+cells — 8 assets, 7 years. Two candidates were pre-registered and both were
+rejected by their own criteria. **No component's predictive power survived a
+change of market or period.** See CHANGELOG "STEP 1 CLOSED".
 
-**Do not change a threshold, weight, gate or risk parameter while it runs.** An
-edit mid-run voids the sample — which is exactly how the previous attempt at
-this ended up unusable. Land changes on `develop`; the server tracks `main` and
-is updated deliberately:
+**Do not retune weights, thresholds or gates.** Every value in `config.py` is
+now known to rest on 2–8 closed trades drawn from mutually blocking sequences,
+and retuning against noise is what produced them. If a future idea needs
+testing, pre-register it and test it on untouched data — `scripts/condition_ic.py
+--matrix --only` exists for exactly that.
+
+**What the running bot is for now:** `backtest.py` must score funding, L/S,
+open interest, basis, taker ratio, gold, VIX and the news overlay as NEUTRAL,
+because no free historical API serves them — 7.5 of the 26.5-point futures
+ceiling, permanently untestable against history. The live bot fetches all of it
+every cycle and `cycle_log` persists 37 fields hourly. A year of that is ~8,760
+observations of data no backtest here could ever use, and is worth more than
+the strategy that generated it.
+
+`v2.9.2` runs unattended on a VPS (`~/playground/CrySignal-BTC`, systemd unit
+`spotsignal`). Land changes on `develop`; the server tracks `main` and is
+updated deliberately:
 
 ```bash
 cd ~/playground/CrySignal-BTC && git pull && sudo systemctl restart spotsignal
