@@ -34,19 +34,30 @@ logger = logging.getLogger(__name__)
 
 
 # ── Terminal progress helpers ────────────────────────────────────────────────
+#
+# Under systemd stdout is a file, and a file is not a terminal: escape codes are
+# stored verbatim and `\r` overwrites nothing, so progress lines pile on top of
+# the line that follows them ("Telegram sent (1 message)ions..."). A validation
+# run is read from that file for weeks, so it has to stay legible.
 
-_W  = "\033[0m"   # reset
-_B  = "\033[1m"   # bold
-_G  = "\033[92m"  # green
-_Y  = "\033[93m"  # yellow
-_R  = "\033[91m"  # red
-_DIM = "\033[2m"  # dim
+_TTY = sys.stdout.isatty()
+
+_W  = "\033[0m"  if _TTY else ""   # reset
+_B  = "\033[1m"  if _TTY else ""   # bold
+_G  = "\033[92m" if _TTY else ""   # green
+_Y  = "\033[93m" if _TTY else ""   # yellow
+_R  = "\033[91m" if _TTY else ""   # red
+_DIM = "\033[2m" if _TTY else ""   # dim
 
 def _step(icon, text, color=None, end="\n"):
     c = color or _W
     print(f"  {c}{icon}{_W}  {text}", end=end, flush=True)
 
 def _loading(text):
+    """Transient progress line. Dropped entirely when not on a terminal — the
+    _ok()/_err() that follows carries the same information with the outcome."""
+    if not _TTY:
+        return
     print(f"  {_DIM}⟳{_W}  {text}", end="\r", flush=True)
 
 def _ok(text):
@@ -998,5 +1009,20 @@ def main():
         run_cycle()
 
 
+def _run():
+    """Entry point that treats an interrupt as a normal stop.
+
+    systemd sends SIGINT (KillSignal in the unit) and it lands in the loop's
+    time.sleep(), so an ordinary `systemctl stop` used to print a traceback into
+    the log. Under Restart=always that is one fake traceback per restart, in a
+    file whose whole purpose is that a real one stands out.
+    """
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("Interrupted — shutting down")
+        _ok("Stopped")   # atexit still closes the database
+
+
 if __name__ == "__main__":
-    main()
+    _run()
