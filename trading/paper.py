@@ -149,8 +149,12 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
                         pos["type"], pos_id, age_hours, exit_pnl,
                     )
                     continue  # skip remaining checks for this position
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as exc:
+                # A malformed opened_at means this position can never age out —
+                # the time exit is the only thing that closes a trade the market
+                # has stopped moving on.
+                logger.warning("Position %s has an unreadable opened_at (%s) — time exit disabled for it",
+                               pos_id, exc)
 
         # ── Exit 0b: volatility expansion ──
         # Only force-close on vol expansion when the position is UNDERWATER —

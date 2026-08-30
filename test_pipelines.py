@@ -1251,6 +1251,177 @@ def test_condition_max_covers_every_scored_condition():
     assert not unknown, f"conditions missing from CONDITION_MAX: {unknown}"
 
 
+# ── 15. analyze.py --db ──────────────────────────────────────────────────────
+
+def test_analyze_db_flag_targets_another_database():
+    """The paper run lives on a server and analysis runs on a workstation. --db
+    must point the report at a pulled copy — the alternative is overwriting the
+    local database, which is the only copy of whatever it holds."""
+    import io
+    import os
+    import sys
+    import tempfile
+    from contextlib import redirect_stdout
+
+    import analyze
+    import trading.history as h
+
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    saved_db_path, saved_argv = analyze.DB_PATH, sys.argv
+    saved_hist, saved_conn = h.SIGNAL_HISTORY_DB, h.DB
+    try:
+        # Build the real schema rather than a hand-rolled one, so the test keeps
+        # exercising analyze's actual queries as the schema evolves.
+        h.SIGNAL_HISTORY_DB, h.DB = path, None
+        c = h._conn()
+        c.execute("INSERT INTO cycle_log (timestamp, mode, type, price, strength, threshold) "
+                  "VALUES ('2026-09-01 00:00:00', 'spot', 'HOLD', 80000, 5.0, 4.3)")
+        c.commit()
+        h.DB.close()
+        h.SIGNAL_HISTORY_DB, h.DB = saved_hist, saved_conn
+
+        sys.argv = ["analyze.py", "--db", path, "--section", "overview"]
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            analyze.main()
+        out = buf.getvalue()
+
+        assert path in out, "the report must name the database it came from"
+        assert "cycles : 1" in out, f"span line missing or wrong:\n{out[:400]}"
+        assert analyze.DB_PATH == path, "--db must actually redirect the connection"
+    finally:
+        analyze.DB_PATH, sys.argv = saved_db_path, saved_argv
+        h.SIGNAL_HISTORY_DB, h.DB = saved_hist, saved_conn
+        os.unlink(path)
+
+def test_analyze_defaults_to_the_local_database():
+    """Omitting --db must not silently point somewhere else."""
+    import analyze
+    import inspect
+    src = inspect.getsource(analyze.main)
+    assert 'default=DB_PATH' in src, "--db must default to the module's DB_PATH"
+
+
+# ── 16. ForexFactory calendar timezone ───────────────────────────────────────
+
+def test_macro_calendar_is_read_as_utc():
+    """The feed publishes in UTC. Reading it as Eastern put every event four
+    hours late in summer, so the macro gate stayed open through the actual
+    release and then force-closed every position two hours after it had passed.
+
+    Each case below is an event whose release time never moves, so the mapping
+    is checkable without the feed: if the feed were Eastern, NFP would print as
+    8:30am rather than 12:30pm."""
+    from signals.sentiment import _parse_macro_timestamp
+    cases = [
+        ("09-04-2026 12:30pm", 12, 30, "Non-Farm Payrolls, 08:30 ET"),
+        ("09-02-2026 12:15pm", 12, 15, "ADP Non-Farm, 08:15 ET"),
+        ("09-01-2026 2:00pm",  14,  0, "ISM Manufacturing PMI, 10:00 ET"),
+        ("08-30-2026 11:50pm", 23, 50, "JP Industrial Production, 08:50 JST"),
+    ]
+    for raw, hour, minute, why in cases:
+        dt = _parse_macro_timestamp(raw)
+        assert dt.utcoffset().total_seconds() == 0, f"{raw} must be UTC ({why})"
+        assert (dt.hour, dt.minute) == (hour, minute), \
+            f"{raw} → {dt:%H:%M}, expected {hour:02d}:{minute:02d} ({why})"
+
+def test_feed_timestamps_survive_mixed_rfc2822_spellings():
+    """RSS pubDate arrives in several spellings — FinancialJuice ends in `GMT`,
+    CoinTelegraph and the rest in `+0000`. `pd.to_datetime(errors='coerce')`
+    infers ONE format from the first element and coerces the rest to NaT, so
+    which rows survived depended on which scraper happened to be written first.
+
+    The order-independence assertion is the real invariant: on a live CSV the
+    old path parsed 3 of 18, and reversing the row order flipped which 3."""
+    import pandas as pd
+    from signals.sentiment import _parse_feed_timestamps
+    gmt = "Sat, 29 Aug 2026 11:14:17 GMT"
+    off = "Sat, 29 Aug 2026 12:39:59 +0000"
+    for order in ([gmt, off, off], [off, gmt, gmt], [off, gmt, off]):
+        out = _parse_feed_timestamps(pd.Series(order))
+        assert out.notna().all(), f"order-dependent parse: {order} → {list(out)}"
+        assert all(v.tzinfo is not None for v in out), "timestamps must be aware"
+        assert all(v.utcoffset().total_seconds() == 0 for v in out), "must land in UTC"
+
+def test_feed_timestamp_parser_survives_junk():
+    """A malformed row must become NaT and be filtered, never raise — one bad
+    feed entry cannot be allowed to take out the whole sentiment layer."""
+    import pandas as pd
+    from signals.sentiment import _parse_feed_timestamps
+    out = _parse_feed_timestamps(pd.Series(["not a date", "", None,
+                                            "Sat, 29 Aug 2026 12:39:59 +0000"]))
+    assert out.isna().sum() == 3
+    assert out.notna().sum() == 1
+
+def test_macro_parser_does_not_use_a_named_timezone():
+    """A regression here is silent — the gate keeps firing, just at the wrong
+    hours — so guard the mechanism rather than only the output."""
+    import ast
+    with open("signals/sentiment.py") as f:
+        tree = ast.parse(f.read())
+    names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    names |= {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+    assert "ZoneInfo" not in names and "zoneinfo" not in names, \
+        "the calendar is UTC; converting through a named zone reintroduces the offset"
+
+
+# ── 17. Silent-failure handlers actually run ─────────────────────────────────
+
+def _assert_degrades_with_a_warning(module, attr, check):
+    """Inject a failure into `module.attr` and confirm the handler both survives
+    and says something. A NameError inside an except block is invisible until
+    the day something else has already gone wrong."""
+    import logging
+    saved = getattr(module, attr)
+    records = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    handler = _Capture()
+    logging.getLogger(module.__name__).addHandler(handler)
+    try:
+        setattr(module, attr, lambda *a, **k: (_ for _ in ()).throw(RuntimeError("injected")))
+        check()
+    finally:
+        setattr(module, attr, saved)
+        logging.getLogger(module.__name__).removeHandler(handler)
+    assert records, f"{module.__name__}.{attr} failed silently — no warning logged"
+    return records
+
+def test_regime_failure_degrades_loudly():
+    """UNKNOWN regime is not a neutral default: it zeroes the threshold bump and
+    makes run_bot._is_counter_trend_regime() return False, so the counter-trend
+    gate stops blocking. That must not happen quietly."""
+    import signals.engine as eng
+    out = {}
+    def run():
+        out["sig"] = eng.generate_signals(_synthetic_df(), mode="futures",
+                                          threshold_override=5.2)
+    msgs = _assert_degrades_with_a_warning(eng, "classify_regime", run)
+    assert out["sig"]["regime"] == "UNKNOWN"
+    assert any("counter-trend gate inert" in m for m in msgs), msgs
+
+def test_adx_failure_degrades_loudly():
+    """A zero ADX halves the MACD crossover weight for the whole cycle."""
+    import signals.engine as eng
+    def run():
+        eng.generate_signals(_synthetic_df(), mode="futures", threshold_override=5.2)
+    msgs = _assert_degrades_with_a_warning(eng, "calculate_adx", run)
+    assert any("MACD scored at reduced weight" in m for m in msgs), msgs
+
+def test_news_failure_degrades_loudly():
+    """If the news CSV cannot be read the signal still scores — without the news
+    layer, and previously without a word about it."""
+    import signals.sentiment as sent
+    def run():
+        sent.get_combined_sentiment(fng={"value": 50, "label": "Neutral"})
+    msgs = _assert_degrades_with_a_warning(sent, "pd", run)
+    assert any("News sentiment unavailable" in m for m in msgs), msgs
+
+
 if __name__ == "__main__":
     print("\n══ Pipeline Dummy-Data Tests ══\n")
 
@@ -1348,6 +1519,21 @@ if __name__ == "__main__":
     run("default active set comes from config",   test_default_active_set_comes_from_config)
     run("thresholds track the active set",        test_thresholds_track_the_active_condition_set)
     run("CONDITION_MAX covers every condition",   test_condition_max_covers_every_scored_condition)
+
+    print("\n── 15. analyze.py --db ──")
+    run("--db targets another database",          test_analyze_db_flag_targets_another_database)
+    run("--db defaults to the local database",    test_analyze_defaults_to_the_local_database)
+
+    print("\n── 16. ForexFactory calendar timezone ──")
+    run("calendar is read as UTC",                test_macro_calendar_is_read_as_utc)
+    run("mixed RFC-2822 spellings all parse",     test_feed_timestamps_survive_mixed_rfc2822_spellings)
+    run("junk timestamps degrade to NaT",         test_feed_timestamp_parser_survives_junk)
+    run("no named timezone in the parser",        test_macro_parser_does_not_use_a_named_timezone)
+
+    print("\n── 17. Silent-failure handlers ──")
+    run("regime failure degrades loudly",         test_regime_failure_degrades_loudly)
+    run("ADX failure degrades loudly",            test_adx_failure_degrades_loudly)
+    run("news failure degrades loudly",           test_news_failure_degrades_loudly)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

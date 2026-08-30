@@ -4,6 +4,107 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-08-30 — fix: the news layer ran on 17% of its own data
+
+Found while checking for more of what the macro-timezone bug turned out to be:
+an assumption about external data that nothing ever tested.
+
+### Fixed
+- **RSS timestamps were parsed order-dependently.** `pd.to_datetime(errors=
+  'coerce')` infers one format from the first non-null element and coerces
+  everything that does not match to `NaT`. The feeds mix RFC 2822 spellings —
+  FinancialJuice ends in `GMT`, CoinTelegraph, CoinDesk, BeInCrypto and Decrypt
+  in `+0000` — so whichever scraper happened to be written first decided which
+  rows survived. On the live CSV: **3 of 18 rows parsed, and reversing the row
+  order flipped which 3.** After the fix, 18 of 18 parse and the rows passing
+  the 24-hour freshness filter go from 2 to 15.
+
+  `crypto_score` was therefore computed from a fraction of the headlines that
+  had been collected, selected by ordering rather than content — and since
+  FinancialJuice carries macro and geopolitical wires rather than crypto ones,
+  the surviving subset was systematically the wrong one. `news_scraper.py`
+  already used `email.utils.parsedate_to_datetime` for its own staleness
+  filter; `sentiment.py` now uses the same parser.
+
+- **Four handlers that changed trading behaviour said nothing.** Each returned a
+  default that reads as neutral and is not:
+  - regime classification failure → `UNKNOWN`, which zeroes the threshold bump
+    **and** makes `_is_counter_trend_regime()` return False, so the
+    counter-trend gate stops blocking anything;
+  - ADX pre-compute failure → `0.0`, halving the MACD crossover weight
+    (1.5 → 0.75) for the whole cycle;
+  - news CSV failure → the entire sentiment layer absent;
+  - unparseable `opened_at` → the time exit disabled for that position, which
+    can then never age out.
+
+  All four now log. `signals/engine.py` had no `logger` at all, so the two
+  warnings added there would have raised `NameError` inside an except block —
+  visible only once something else had already gone wrong.
+
+### Tests
+Failures are injected into `classify_regime`, `calculate_adx` and the news
+reader; each must both survive and log. Order-independence of the timestamp
+parser is asserted across three orderings, since that is the actual invariant
+the old code broke. Suite: 76/76.
+
+---
+
+## 2026-08-30 — fix: the macro calendar is UTC, not Eastern Time
+
+### Fixed
+`check_upcoming_macro_events()` parsed ForexFactory timestamps as
+`America/New_York`. The feed publishes in **UTC**. Verified against five events
+whose release times never move:
+
+```
+Non-Farm Payrolls      08:30 ET   feed says 12:30pm  = 12:30 UTC
+Unemployment Claims    08:30 ET   feed says 12:30pm  = 12:30 UTC
+ADP Non-Farm           08:15 ET   feed says 12:15pm  = 12:15 UTC
+ISM Manufacturing PMI  10:00 ET   feed says  2:00pm  = 14:00 UTC
+JP Industrial Prod.    08:50 JST  feed says 11:50pm  = 23:50 UTC (prev day)
+```
+
+Under an Eastern reading NFP would print as 8:30am. It does not.
+
+Every event was therefore placed **four hours late** in summer and five in
+winter, and both halves of that were harmful. For the 12 September NFP:
+
+```
+real gate window   10:30 – 12:30 UTC
+window used        14:30 – 16:30 UTC
+```
+
+The gate stayed **open through the actual release**, so the bot traded straight
+into it unprotected — and then fired two hours after the event had passed,
+forcing HOLD and MACRO_CLOSE on every open position for nothing. A protection
+that was simultaneously absent when needed and destructive when not.
+
+This was flagged as unverified on 2026-08-29 and carried into the v2.9.0 paper
+run before anyone fetched the feed to check.
+
+### Tests
+Four fixed-time events pin the mapping without needing the network, plus an AST
+guard that the parser uses no named timezone — a regression here is silent, the
+gate keeps firing, just at the wrong hours. Suite: 71/71.
+
+---
+
+## 2026-08-30 — feat: `analyze.py --db`
+
+The paper run lives on a server; analysis runs on a workstation. `DB_PATH` was
+hard-coded, so the only way to read the run's data locally was to `scp` over the
+local database — destroying the only copy of whatever it held, and making two
+hosts' reports indistinguishable afterwards.
+
+`--db PATH` points the report anywhere. Every non-JSON run now opens with its
+source file, size, and the span of cycles it covers, so a report can be
+attributed after the fact.
+
+Tests: `--db` redirects the connection and the report names the file; the flag
+still defaults to the local database. Suite: 69/69.
+
+---
+
 ## v2.9.0 — 2026-08-30
 
 24 commits since v2.8.0. The theme is measurement: most of this release is

@@ -2,6 +2,8 @@
 integrate_news_with_signal() for macro/sentiment overlay.
 """
 
+import logging
+
 import pandas as pd
 
 from config import DISABLED_CONDITIONS, RISK_CONFIG
@@ -13,6 +15,8 @@ from signals.indicators import (calculate_adx, classify_regime,
                                 detect_candlestick_pattern, detect_rsi_divergence)
 from signals.market_data import get_signal_confidence
 from signals.sentiment import check_upcoming_macro_events
+
+logger = logging.getLogger(__name__)
 
 
 def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures',
@@ -71,7 +75,10 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     try:
         _adx_df_pre = calculate_adx(df)
         _adx_pre = float(_adx_df_pre['ADX'].iloc[-1])
-    except Exception:
+    except Exception as exc:
+        # 0.0 is not a neutral default — it halves the MACD crossover weight
+        # (1.5 → 0.75) for the rest of this cycle.
+        logger.warning("ADX pre-compute failed (%s) — MACD scored at reduced weight", exc)
         _adx_pre = 0.0
 
     # 1 — EMA 200 trend + slope (rising EMA = strengthening trend)
@@ -500,7 +507,11 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         signal['regime'] = regime['regime']
         signal['adx'] = regime['adx']
         signal['_regime'] = regime
-    except Exception:
+    except Exception as exc:
+        # UNKNOWN is not neutral: it zeroes the threshold bump AND makes
+        # run_bot._is_counter_trend_regime() return False, so the counter-trend
+        # gate stops blocking anything. Silently.
+        logger.warning("Regime classification failed (%s) — counter-trend gate inert this cycle", exc)
         regime = {"regime": "UNKNOWN", "threshold_bump": 0, "size_adj": 1.0, "trend_dir": "NEUTRAL"}
         signal['regime'] = "UNKNOWN"
 

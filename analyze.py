@@ -6,6 +6,14 @@ Usage:
     python3 analyze.py --mode spot   # spot only
     python3 analyze.py --mode futures
     python3 analyze.py --json        # machine-readable output
+    python3 analyze.py --db PATH     # analyse a database from elsewhere
+
+The paper run lives on a server; analysis runs on a workstation. Pull the file
+and point --db at it rather than overwriting the local database, which is the
+only copy of whatever it holds:
+
+    scp <host>:~/playground/CrySignal-BTC/data/signal_history.db data/server.db
+    python3 analyze.py --db data/server.db
 """
 
 import argparse
@@ -46,6 +54,26 @@ def _conn():
     c = sqlite3.connect(DB_PATH)
     c.row_factory = sqlite3.Row
     return c
+
+
+def _describe_source(conn):
+    """Say which database this report came from, and what span it covers.
+
+    With --db in play a report is no longer self-evidently about the local file;
+    two runs on two hosts produce reports that are indistinguishable without it.
+    """
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) n, MIN(timestamp) lo, MAX(timestamp) hi FROM cycle_log"
+        ).fetchone()
+    except sqlite3.Error:
+        return
+    size = Path(DB_PATH).stat().st_size / 1024
+    print(f"{DIM}  source : {DB_PATH}  ({size:,.0f} KB){RST}")
+    if row and row["n"]:
+        print(f"{DIM}  cycles : {row['n']}  spanning {row['lo']} → {row['hi']}{RST}")
+    else:
+        print(f"{DIM}  cycles : 0 — nothing logged yet{RST}")
 
 
 def _rows(conn, sql, params=()):
@@ -546,13 +574,20 @@ def export_json(conn, mode_filter):
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
+    global DB_PATH
     parser = argparse.ArgumentParser(description="SpotSignal analysis + improvement report")
     parser.add_argument("--mode",  choices=["spot", "futures"], help="Filter by mode")
     parser.add_argument("--json",  action="store_true", help="Output JSON instead of text")
     parser.add_argument("--section", help="Run single section: overview|quality|perf|conditions|gates|context|threshold|improvements")
+    parser.add_argument("--db", default=DB_PATH, metavar="PATH",
+                        help=f"SQLite file to analyse (default: {DB_PATH}). Point this at a "
+                             "copy pulled from the server instead of overwriting the local one.")
     args = parser.parse_args()
+    DB_PATH = args.db
 
     conn = _conn()
+    if not args.json:
+        _describe_source(conn)
 
     if args.json:
         export_json(conn, args.mode)

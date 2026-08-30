@@ -11,6 +11,39 @@ from signals.market_data import fetch_fear_and_greed
 logger = logging.getLogger(__name__)
 
 
+def _parse_feed_timestamps(series):
+    """Parse RSS pubDate values, which arrive in several RFC 2822 spellings.
+
+    `pd.to_datetime(errors='coerce')` infers ONE format from the first non-null
+    element and coerces everything that does not match to NaT. The feeds mix
+    spellings — FinancialJuice ends in `GMT`, CoinTelegraph and the rest in
+    `+0000` — so whichever source happened to be written first decided which
+    rows survived. Measured on a real CSV: 3 of 18 rows parsed, and reversing
+    the row order flipped which 3.
+
+    Silent, and it starved the whole news layer: `crypto_score` was computed
+    from a fraction of the headlines that had been collected, chosen by
+    ordering rather than by content.
+
+    `email.utils.parsedate_to_datetime` is the format-correct parser and is
+    already what news_scraper.py uses for its own staleness filter; pandas is
+    the fallback for anything it rejects.
+    """
+    from email.utils import parsedate_to_datetime
+
+    def one(raw):
+        if not isinstance(raw, str) or not raw.strip():
+            return pd.NaT
+        try:
+            dt = parsedate_to_datetime(raw)
+        except (TypeError, ValueError):
+            return pd.to_datetime(raw, errors="coerce", utc=True)
+        # RFC 2822 permits a missing zone; treat those as UTC rather than dropping.
+        return pd.Timestamp(dt).tz_localize("UTC") if dt.tzinfo is None else pd.Timestamp(dt).tz_convert("UTC")
+
+    return series.map(one)
+
+
 def get_combined_sentiment(fng=None):
     if fng is None:
         fng = fetch_fear_and_greed()
@@ -34,7 +67,7 @@ def get_combined_sentiment(fng=None):
             df['category'] = 'crypto'
 
         if not df.empty and 'timestamp' in df.columns:
-            df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce', utc=True)
+            df['timestamp'] = _parse_feed_timestamps(df['timestamp'])
             cutoff = datetime.now(UTC) - timedelta(hours=24)
             fresh = df[df['timestamp'] >= cutoff]
             df = fresh.sort_values('timestamp', ascending=False) if not fresh.empty else df.head(0)
@@ -60,8 +93,11 @@ def get_combined_sentiment(fng=None):
             news_data['sources_checked'] = df['source'].unique().tolist()
             news_data['geo_bullish'] = geo_bullish
             news_data['geo_bearish'] = geo_bearish
-    except Exception:
-        pass
+    except Exception as exc:
+        # Everything above stays at its default: NEUTRAL sentiment, zero
+        # confidence, no headlines. The signal still scores, just without the
+        # news layer — worth a line in the log rather than nothing at all.
+        logger.warning("News sentiment unavailable (%s) — scoring without it", exc)
 
     fng_score = (fng['value'] - 50) / 50
     crypto_score = (crypto_bullish - crypto_bearish) / max(crypto_bullish + crypto_bearish, 1)
@@ -76,6 +112,28 @@ def get_combined_sentiment(fng=None):
         news_data['confidence'] = min(abs(combined) * 100, 100)
 
     return news_data
+
+
+def _parse_macro_timestamp(raw):
+    """Parse a ForexFactory calendar timestamp into an aware UTC datetime.
+
+    The feed is in **UTC**, not Eastern Time. Verified against five events whose
+    release times never move:
+
+        Non-Farm Payrolls      08:30 ET   → feed says 12:30pm  = 12:30 UTC
+        Unemployment Claims    08:30 ET   → feed says 12:30pm  = 12:30 UTC
+        ADP Non-Farm           08:15 ET   → feed says 12:15pm  = 12:15 UTC
+        ISM Manufacturing PMI  10:00 ET   → feed says  2:00pm  = 14:00 UTC
+        JP Industrial Prod.    08:50 JST  → feed says 11:50pm  = 23:50 UTC (prev day)
+
+    Under an Eastern reading NFP would print as 8:30am. It does not.
+
+    This was previously parsed as America/New_York, putting every event four
+    hours late in summer and five in winter — so the macro gate stayed open
+    through the actual release and then force-closed every position two hours
+    after the event had passed.
+    """
+    return datetime.strptime(raw.strip(), "%m-%d-%Y %I:%M%p").replace(tzinfo=UTC)
 
 
 def check_upcoming_macro_events():
@@ -96,9 +154,7 @@ def check_upcoming_macro_events():
         pending = pending[pending['impact'] == 'High']
         for _, row in pending.iterrows():
             try:
-                import zoneinfo
-                _ET = zoneinfo.ZoneInfo("America/New_York")
-                event_dt = datetime.strptime(row['timestamp'].strip(), "%m-%d-%Y %I:%M%p").replace(tzinfo=_ET).astimezone(UTC)
+                event_dt = _parse_macro_timestamp(row['timestamp'])
                 diff = event_dt - datetime.now(UTC)
                 if timedelta(0) <= diff <= timedelta(hours=2):
                     return True, row['event']
