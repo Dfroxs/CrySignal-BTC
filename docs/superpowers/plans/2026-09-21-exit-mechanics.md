@@ -518,11 +518,13 @@ def synth_entries(df, stride, warmup=200, tail=0):
     return list(range(warmup, max(warmup, len(df) - tail), stride))
 
 
-def _signal_at(df, i, mode):
+def _signal_at(df, i):
     """Build the signal dict the live path would build at candle `i`.
 
     Uses the same formulas as the real entry path: SL at atr_multiplier x ATR,
-    TP1 at take_profit_rr x risk, TP2 at twice the TP1 distance.
+    TP1 at take_profit_rr x risk, TP2 at twice the TP1 distance. No `mode`
+    argument: none of these formulas differ by mode — `mode` is read by
+    _simulate_forward, which run_rule passes it to directly.
     """
     row = df.iloc[i]
     atr = float(row["ATR_14"])
@@ -538,7 +540,7 @@ def run_rule(df, entries, mode, timeframe, exit_params):
     max_hold = MAX_HOLD_CANDLES[timeframe]
     out = []
     for i in entries:
-        sig = _signal_at(df, i, mode)
+        sig = _signal_at(df, i)
         if not (sig["atr"] > 0):
             out.append(0.0)
             continue
@@ -569,8 +571,10 @@ def run_cell(symbol, year, mode, rules, stride=6):
     against.
     """
     tf = TF_FOR[mode]
+    # until is the NEXT year's Jan 1: "{year}-12-31" is midnight, which silently
+    # drops the final day of every cell.
     since = int(pd.Timestamp(f"{year}-01-01", tz="UTC").timestamp() * 1000)
-    until = int(pd.Timestamp(f"{year}-12-31", tz="UTC").timestamp() * 1000)
+    until = int(pd.Timestamp(f"{year + 1}-01-01", tz="UTC").timestamp() * 1000)
     df = fetch_ohlcv_df(symbol, tf, since=since, until=until)
     entries = synth_entries(df, stride, tail=MAX_HOLD_CANDLES[tf] + 2)
     base = run_rule(df, entries, mode, tf, rules["baseline"])
@@ -598,6 +602,11 @@ def main():
     # `partial_enabled` and registers H3 here, or drops H3. It is deliberately
     # absent rather than aliased to H2 — a rule table where two names share one
     # params dict silently reports the same number twice.
+    # A typo in --only must fail loudly. Silently yielding an empty rule table
+    # would print nothing and read as "no cells qualified".
+    KNOWN = {"H1", "H2"}
+    if args.only is not None and args.only not in KNOWN:
+        raise ValueError(f"--only must be one of {sorted(KNOWN)}, got {args.only!r}")
     rules = {"baseline": None}
     if args.only in (None, "H1"):
         rules["H1"] = {"max_position_hours": 288}
