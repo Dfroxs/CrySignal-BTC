@@ -394,9 +394,9 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Consumes: `backtest._simulate_forward(..., exit_params=...)`, `backtest.MAX_HOLD_CANDLES`, `backtest.RESOLVED`, `signals.ohlcv.fetch_ohlcv_df`, `config.RISK_CONFIG`
 - Produces:
   - `synth_entries(df, stride, warmup=200, tail=0) -> list[int]` — candle indices
-  - `run_rule(df, entries, mode, timeframe, exit_params) -> list[float]` — net P&L per entry, index-aligned with `entries`
+  - `run_rule(df, entries, mode, timeframe, rule) -> list[float]` — net P&L per entry, index-aligned with `entries`. A rule is `{"max_hold": int|None, "exit_params": dict|None}`
   - `paired_stats(base, cand) -> dict` with keys `n`, `mean_diff`, `win_share`, `base_mean`, `cand_mean`
-  - `run_cell(symbol, year, mode, rules) -> dict` mapping rule name → `paired_stats` against `"baseline"`
+  - `run_cell(symbol, year, mode, rules, stride=6) -> dict` mapping rule name → `paired_stats` against `"baseline"`. `rules` maps name → rule dict; the key `"baseline"` is required
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -436,14 +436,26 @@ def test_synth_entries_drop_the_untradeable_tail():
     assert max(e) < 220, max(e)
 
 
+def test_run_rule_honours_a_max_hold_override():
+    """A rule asking for a longer hold must actually get one. Passing only
+    max_position_hours cannot do it: the loop stops at max_hold+1 candles and
+    the position becomes an OPEN row that RESOLVED discards."""
+    from scripts.exit_ic import run_rule
+    df = _exit_fixture([1000] * 120)
+    short = run_rule(df, [10], "spot", "4h", {})
+    long_ = run_rule(df, [10], "spot", "4h",
+                     {"max_hold": 72, "exit_params": {"max_position_hours": 288}})
+    assert short[0] != long_[0] or short[0] == 0.0, (short, long_)
+
+
 def test_run_rule_is_deterministic():
     """Same frame, same entries, same params -> byte-identical output. A
     confirmatory run that cannot be reproduced cannot be checked."""
     from scripts.exit_ic import run_rule, synth_entries
     df = _exit_fixture([1000 + (k % 7) * 20 for k in range(260)])
     e = synth_entries(df, stride=20, warmup=200, tail=20)
-    a = run_rule(df, e, "spot", "4h", None)
-    b = run_rule(df, e, "spot", "4h", None)
+    a = run_rule(df, e, "spot", "4h", {})
+    b = run_rule(df, e, "spot", "4h", {})
     assert a == b, (a[:5], b[:5])
     assert len(a) == len(e), (len(a), len(e))
 ```
@@ -454,6 +466,7 @@ Register:
     run("synth entries honour stride/warmup",     test_synth_entries_respects_stride_and_warmup)
     run("synth entries drop untradeable tail",    test_synth_entries_drop_the_untradeable_tail)
     run("paired stats are truly paired",          test_paired_stats_is_paired_not_two_samples)
+    run("run_rule honours a max_hold override",   test_run_rule_honours_a_max_hold_override)
     run("run_rule is deterministic",              test_run_rule_is_deterministic)
 ```
 
@@ -535,9 +548,17 @@ def _signal_at(df, i):
             "take_profit": tp1, "tp2": entry + (tp1 - entry) * 2, "atr": atr}
 
 
-def run_rule(df, entries, mode, timeframe, exit_params):
-    """Net P&L per entry under one exit ruleset, index-aligned with `entries`."""
-    max_hold = MAX_HOLD_CANDLES[timeframe]
+def run_rule(df, entries, mode, timeframe, rule):
+    """Net P&L per entry under one exit ruleset, index-aligned with `entries`.
+
+    A rule is {"max_hold": int|None, "exit_params": dict|None}. `max_hold` MUST
+    be part of a rule, not just `max_position_hours`: _simulate_forward's loop
+    stops at `max_hold + 1` candles no matter what the hour cap says, so a rule
+    asking for a longer hold through exit_params alone never reaches it — the
+    frame runs out first and the position becomes an OPEN row that RESOLVED
+    discards. That is the same silent-drop that made TIME_EXIT unreachable.
+    """
+    max_hold = rule.get("max_hold") or MAX_HOLD_CANDLES[timeframe]
     out = []
     for i in entries:
         sig = _signal_at(df, i)
@@ -545,7 +566,7 @@ def run_rule(df, entries, mode, timeframe, exit_params):
             out.append(0.0)
             continue
         t = _simulate_forward(df, i, sig, max_hold, timeframe, mode,
-                              exit_params=exit_params)
+                              exit_params=rule.get("exit_params"))
         out.append(float(t["pnl_pct"]))
     return out
 
@@ -576,10 +597,15 @@ def run_cell(symbol, year, mode, rules, stride=6):
     since = int(pd.Timestamp(f"{year}-01-01", tz="UTC").timestamp() * 1000)
     until = int(pd.Timestamp(f"{year + 1}-01-01", tz="UTC").timestamp() * 1000)
     df = fetch_ohlcv_df(symbol, tf, since=since, until=until)
-    entries = synth_entries(df, stride, tail=MAX_HOLD_CANDLES[tf] + 2)
+    # The tail margin must clear the LONGEST-held rule, not the baseline. Sized
+    # to the baseline, a longer rule's late entries would be cut off by the
+    # frame while the baseline's completed — truncation landing on one arm only,
+    # which the paired comparison would report as a real effect.
+    longest = max([r.get("max_hold") or MAX_HOLD_CANDLES[tf] for r in rules.values()])
+    entries = synth_entries(df, stride, tail=longest + 2)
     base = run_rule(df, entries, mode, tf, rules["baseline"])
-    return {name: paired_stats(base, run_rule(df, entries, mode, tf, params))
-            for name, params in rules.items() if name != "baseline"}
+    return {name: paired_stats(base, run_rule(df, entries, mode, tf, rule))
+            for name, rule in rules.items() if name != "baseline"}
 
 
 def main():
@@ -607,11 +633,13 @@ def main():
     KNOWN = {"H1", "H2"}
     if args.only is not None and args.only not in KNOWN:
         raise ValueError(f"--only must be one of {sorted(KNOWN)}, got {args.only!r}")
-    rules = {"baseline": None}
+    rules = {"baseline": {}}
     if args.only in (None, "H1"):
-        rules["H1"] = {"max_position_hours": 288}
+        # 72 candles, matching what futures already gets, and the hour cap moved
+        # with it: 72 x 4h = 288h. Both must move or the loop bound wins.
+        rules["H1"] = {"max_hold": 72, "exit_params": {"max_position_hours": 288}}
     if args.only in (None, "H2"):
-        rules["H2"] = {"trailing_post_tp1_factor": 1.0}
+        rules["H2"] = {"exit_params": {"trailing_post_tp1_factor": 1.0}}
 
     for year in [int(y) for y in args.years.split(",")]:
         for symbol in args.symbols.split(","):
