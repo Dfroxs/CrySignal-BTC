@@ -228,3 +228,7 @@ data/backups/
 data/*_cache.json
 data/threshold_state.json
 data/spot_threshold_state.json
+
+# Harness-managed worktrees. Never tracked — a subagent running `git add -A`
+# would otherwise commit an entire second checkout into the repository.
+.claude/worktrees/
