@@ -48,10 +48,30 @@ matter; it must clear a high bar to be more than noise.
 **`max_hold` carries a unit mismatch.** `RISK_CONFIG["max_position_hours_spot"]`
 and `["max_position_hours"]` are both 72. On spot 4H that is **18 candles**; on
 futures 1H it is **72 candles** — a 4× asymmetry that is an artifact of
-expressing a candle-count limit in wall-clock hours. Measured consequence: one
-to two of every three or four spot trades is still open at the cap, recorded at
-0.00%, and excluded from every statistic. The comment at `config.py:43` claims
-"enough room for swing to develop"; the measurement contradicts it.
+expressing a candle-count limit in wall-clock hours. The comment at
+`config.py:43` claims "enough room for swing to develop"; the measurement
+contradicts it.
+
+**The `TIME_EXIT` branch is unreachable in both modes.** Discovered while
+planning, and it is the more serious of the two. `_simulate_forward` iterates
+`range(entry_idx + 1, entry_idx + 1 + max_hold)`, so `age` runs `1..max_hold`.
+The time-exit test is `age * mult > max_hours`:
+
+| mode | tf | loop gives age | `max_hold × mult` | cap | fires at |
+|---|---|---|---|---|---|
+| spot | 4h | 1..18 | 72h | 72h | **never** |
+| futures | 1h | 1..72 | 72h | 72h | **never** |
+
+The loop bound and the time cap express the same duration, and the loop is
+checked first with an exclusive bound. Every position still alive at the cap
+falls through to the `OPEN` row at `pnl = 0`, and `RESOLVED` excludes `OPEN`
+from every statistic. **The backtest does not measure slow trades — it discards
+them.** Measured consequence: one to two of every three or four spot trades
+vanishes from the sample.
+
+This is a defect in the measuring instrument, not a parameter choice. It must be
+fixed before any hypothesis is judged, because it moves the baseline every
+hypothesis is measured against.
 
 **The whole test population is 14 closed trades** across two years and two
 modes. No exit hypothesis can be judged on that.
@@ -215,12 +235,17 @@ binding constraint.
 
 ### H1 — `max_hold` unit asymmetry
 
-*Statement:* expressing the spot hold cap in candles rather than wall-clock
-hours — matching futures' 72-candle allowance — lowers the stranded-trade rate
-without reducing per-trade P&L.
+*Precondition:* the unreachable-`TIME_EXIT` defect (section 2) is fixed first, so
+that positions surviving the cap are recorded with a real P&L instead of being
+discarded. H1 is judged against that corrected baseline, never against the
+current one.
 
-*Additional criterion:* the `TIME_EXIT` share must fall by **≥ 10 percentage
-points** while mean per-trade net P&L does not fall.
+*Statement:* expressing the spot hold cap in candles rather than wall-clock
+hours — matching futures' 72-candle allowance — improves mean per-trade net P&L
+on the same entry population.
+
+*Additional criterion:* the share of entries exiting via `TIME_EXIT` must fall
+by **≥ 10 percentage points**, and mean per-trade net P&L must not fall.
 
 ### H2 — post-TP1 trailing tightening
 
@@ -244,6 +269,10 @@ whole position at **TP2**, with no partial and the trail left unchanged
 1. **Golden regression test.** `exit_params=None` reproduces today's trades
    exactly over a fixed window — same outcomes, same exit indices, same P&L.
    This is what keeps the injection from silently altering `backtest.py`.
+   It is recorded *before* the injection lands and must pass on both sides of
+   it. The `TIME_EXIT` fix is a **deliberate** behaviour change and is made in a
+   separate commit afterwards, with its own before/after record, so the two
+   never mix.
 2. **Per-knob unit tests.** Each injected parameter changes behaviour in the
    expected direction, and an unknown key is rejected rather than ignored.
 3. **Harness determinism test.** The same window and seed produce the same entry
