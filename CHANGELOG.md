@@ -34,10 +34,27 @@ Measured on spot 2025 (`--start 2025-01-01 --end 2025-12-31`):
 |---|---|---|
 | Closed Trades | 2 | 4 |
 | Open (max hold) | 2 | 0 |
-| Total P&L | (excluded — both OPEN rows scored 0) | +2.56% |
+| Total P&L | +1.37% | +2.56% |
+| Win Rate | 100.0% (of 2 closed) | 75.0% (of 4 closed) |
+| Profit Factor | inf (0 losses) | 10.83 |
 
-Both formerly-open positions closed `TIME_EXIT` at 19 candles with real P&L
-(+0.95%, +0.24%) — real number of candles, real number of trades.
+The "before" total is the two closed rows only (`-0.26%` LOSS, `+1.64%` WIN);
+the two OPEN rows were excluded from it, but the total itself existed. Both
+formerly-open positions now close `TIME_EXIT` at 19 candles with real P&L
+(+0.95%, +0.24%) — exactly the +1.19% delta between the two totals, and the
+reason Win Rate moves from 2-of-2 to 3-of-4 rather than climbing.
+
+A pre-existing `_compute_stats` bug surfaced by this same run is fixed in the
+same commit: it bucketed `losses` by `outcome != "WIN"` rather than by P&L
+sign, which was equivalent while `TIME_EXIT` was dead code (every non-WIN row
+had `pnl_pct <= 0`) but silently misfiled a profitable `TIME_EXIT` as a loss
+the moment this fix made the branch reachable — an unpatched first run of this
+backtest read Win Rate 25.0% and Avg Loss +0.31% for a run where 3 of 4 trades
+made money. It also closed a live `ZeroDivisionError`: `profit_factor`'s guard
+tested `sum(abs(...)) > 0` while the denominator divided by `abs(sum(...))` —
+a bucket where positive and negative P&L cancel passes the former and zeros
+the latter. `wins`/`losses` now split on `pnl_pct` sign and the guard tests
+the same expression the denominator uses.
 
 This moves the baseline that every exit hypothesis is judged against, which is
 why it lands before the exit-mechanics test harness rather than after.

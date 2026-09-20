@@ -582,8 +582,13 @@ def _htf_at(frames, ts):
 def _compute_stats(trades, start_price):
     """Return summary statistics dict."""
     closed = [t for t in trades if t["outcome"] in RESOLVED]
-    wins = [t for t in closed if t["outcome"] == "WIN"]
-    losses = [t for t in closed if t["outcome"] != "WIN"]
+    # Bucket by P&L SIGN, not outcome label. Before TIME_EXIT was reachable,
+    # every non-WIN row had pnl_pct <= 0 (LOSS only assigns when exit_pnl <= 0,
+    # VOL_EXIT only fires when gross <= 0), so `outcome != "WIN"` and
+    # `pnl_pct <= 0` were the same set. TIME_EXIT can now close with a
+    # positive P&L, which outcome-based bucketing would misfile as a loss.
+    wins = [t for t in closed if t["pnl_pct"] > 0]
+    losses = [t for t in closed if t["pnl_pct"] <= 0]
 
     total_pnl = sum(t["pnl_pct"] for t in closed)
     win_rate = len(wins) / len(closed) if closed else 0
@@ -591,9 +596,15 @@ def _compute_stats(trades, start_price):
     avg_loss = sum(t["pnl_pct"] for t in losses) / len(losses) if losses else 0
     avg_candles = sum(t["candles_held"] for t in closed) / len(closed) if closed else 0
 
+    # Guard must test the SAME expression the denominator divides by. A
+    # positive TIME_EXIT bucketed as a loss could cancel a real loss inside
+    # the sum while sum(abs(...)) stayed positive, passing the guard and then
+    # dividing by the now-zero sum() below — that path is closed by testing
+    # abs(sum(...)) instead of sum(abs(...)).
+    losses_sum = sum(t["pnl_pct"] for t in losses)
     profit_factor = (
-        sum(t["pnl_pct"] for t in wins) / abs(sum(t["pnl_pct"] for t in losses))
-        if losses and sum(abs(t["pnl_pct"]) for t in losses) > 0 else float('inf') if wins else 0
+        sum(t["pnl_pct"] for t in wins) / abs(losses_sum)
+        if losses and abs(losses_sum) > 0 else float('inf') if wins else 0
     )
 
     cum = 0; peak = 0; max_dd = 0

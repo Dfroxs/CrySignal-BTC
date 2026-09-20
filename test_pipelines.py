@@ -1636,6 +1636,11 @@ def test_exit_time_cap_fires_at_the_cap():
     t = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot")
     assert t["outcome"] == "TIME_EXIT", t["outcome"]
     assert t["pnl_pct"] != 0, t["pnl_pct"]
+    # Pins WHICH candle fires: max_hold(18) + 1, the exact one candle the fix
+    # adds. `>` -> `>=` at the time-exit check, or widening the loop bound
+    # past +2, would still pass outcome/pnl_pct alone — this line is what
+    # would catch either off-by-one.
+    assert t["candles_held"] == 19, t["candles_held"]
 
 
 def test_exit_open_row_still_used_when_candles_run_out():
