@@ -308,8 +308,23 @@ def _failing_gates(signal, mode, window, last_resolved=None):
 # Forward simulation — trailing stop + partial TP
 # ---------------------------------------------------------------------------
 
-def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode):
-    """Walk forward from entry_idx, managing trailing stop and partial TP."""
+def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, exit_params=None):
+    """Walk forward from entry_idx, managing trailing stop and partial TP.
+
+    `exit_params` overrides individual exit knobs for one call. None reads
+    config exactly as before. This mirrors generate_signals()'s
+    `threshold_override` / `disabled`: alternative rules run through the REAL
+    simulator, so a candidate can never drift from what the bot actually does —
+    which a second, copied simulator would do within months, silently.
+    """
+    _ALLOWED = {"trailing_atr_factor", "trailing_post_tp1_factor",
+                "trailing_advance_min_ratio", "max_position_hours",
+                "vol_expansion_exit_mult"}
+    ep = exit_params or {}
+    unknown = set(ep) - _ALLOWED
+    if unknown:
+        raise ValueError(f"unknown exit_params key(s): {sorted(unknown)}")
+
     entry_raw = signal["entry_price"]
     sl_raw = signal["stop_loss"]
     tp1_raw = signal["take_profit"]
@@ -328,9 +343,13 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode):
     tp2 = tp2_raw if tp2_raw else None
 
     trail = sl
-    base_trail_factor = FUTURES_CONFIG.get("trailing_atr_factor", 0.9) if mode == "futures" else RISK_CONFIG.get("trailing_atr_factor", 1.0)
-    post_tp1_factor   = RISK_CONFIG.get("trailing_post_tp1_factor", 0.8)
-    min_adv_ratio     = RISK_CONFIG.get("trailing_advance_min_ratio", 0.5)
+    _default_trail = (FUTURES_CONFIG.get("trailing_atr_factor", 0.9) if mode == "futures"
+                      else RISK_CONFIG.get("trailing_atr_factor", 1.0))
+    base_trail_factor = ep.get("trailing_atr_factor", _default_trail)
+    post_tp1_factor   = ep.get("trailing_post_tp1_factor",
+                               RISK_CONFIG.get("trailing_post_tp1_factor", 0.8))
+    min_adv_ratio     = ep.get("trailing_advance_min_ratio",
+                               RISK_CONFIG.get("trailing_advance_min_ratio", 0.5))
     partial_closed = False
     partial_pnl = 0
     # No FUNDING_EXIT in backtest — funding rate isn't available historically.
@@ -347,9 +366,10 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode):
         # Time exit
         age = j - entry_idx
         if mode == "spot":
-            max_hours = RISK_CONFIG.get("max_position_hours_spot", 48)
+            _default_hours = RISK_CONFIG.get("max_position_hours_spot", 48)
         else:
-            max_hours = RISK_CONFIG.get("max_position_hours", 72)
+            _default_hours = RISK_CONFIG.get("max_position_hours", 72)
+        max_hours = ep.get("max_position_hours", _default_hours)
         if age * (4 if timeframe == "4h" else 1) > max_hours:
             exit_px = c["close"]
             exit_pnl = _net_pnl(stype, entry, exit_px, partial_closed, partial_pnl, mode)
@@ -358,7 +378,9 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode):
         # Vol exit — matches live: only force-close when underwater, otherwise
         # let the trail tighten the stop. Without this gate, backtest closed
         # winners on vol expansion that live now lets run.
-        if atr_entry > 0 and atr_now > atr_entry * RISK_CONFIG.get("vol_expansion_exit_mult", 2.0):
+        _vol_mult = ep.get("vol_expansion_exit_mult",
+                           RISK_CONFIG.get("vol_expansion_exit_mult", 2.0))
+        if atr_entry > 0 and atr_now > atr_entry * _vol_mult:
             if stype == "BUY":
                 gross = (c["close"] - entry) / entry * 100
             else:

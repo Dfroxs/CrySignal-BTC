@@ -1638,6 +1638,43 @@ def test_exit_time_cap_is_unreachable_today():
     assert t["pnl_pct"] == 0, t["pnl_pct"]
 
 
+def test_exit_params_none_matches_config():
+    """exit_params=None must behave exactly as reading config directly."""
+    from backtest import _simulate_forward
+    closes = [1000] + [1000 + 40 * k for k in range(1, 20)]
+    df = _exit_fixture(closes, highs=[c + 30 for c in closes])
+    a = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot")
+    b = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot", exit_params=None)
+    assert a["outcome"] == b["outcome"] and a["pnl_pct"] == b["pnl_pct"], (a, b)
+
+
+def test_exit_params_trailing_factor_changes_the_exit():
+    """A much wider trail must not stop the trade out at the same candle."""
+    from backtest import _simulate_forward
+    closes = [1000, 1120, 1040] + [1050] * 17
+    df = _exit_fixture(closes, highs=[c + 10 for c in closes],
+                       lows=[c - 10 for c in closes])
+    tight = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot",
+                              exit_params={"trailing_atr_factor": 0.2})
+    wide = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot",
+                             exit_params={"trailing_atr_factor": 10.0})
+    assert tight["candles_held"] != wide["candles_held"] \
+        or tight["outcome"] != wide["outcome"], (tight, wide)
+
+
+def test_exit_params_rejects_an_unknown_key():
+    """A typo must fail loudly. Silently ignoring it would make a whole
+    confirmatory run measure the baseline against itself."""
+    from backtest import _simulate_forward
+    df = _exit_fixture([1000] * 20)
+    try:
+        _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot",
+                          exit_params={"trailing_atr_factorr": 1.0})
+    except ValueError:
+        return
+    raise AssertionError("unknown exit_params key was accepted")
+
+
 if __name__ == "__main__":
     print("\n══ Pipeline Dummy-Data Tests ══\n")
 
@@ -1765,6 +1802,9 @@ if __name__ == "__main__":
     run("TP1 then TP2 closes WIN",                test_exit_tp2_path_returns_win)
     run("stop hit closes LOSS",                   test_exit_stop_path_returns_loss)
     run("time cap unreachable — records OPEN",    test_exit_time_cap_is_unreachable_today)
+    run("exit_params=None matches config",        test_exit_params_none_matches_config)
+    run("trailing factor override takes effect",  test_exit_params_trailing_factor_changes_the_exit)
+    run("unknown exit_params key is rejected",    test_exit_params_rejects_an_unknown_key)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
