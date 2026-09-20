@@ -1622,20 +1622,29 @@ def test_exit_stop_path_returns_loss():
     assert t["outcome"] == "LOSS", t["outcome"]
 
 
-def test_exit_time_cap_is_unreachable_today():
-    """A position that survives the cap is recorded OPEN at 0.00%, never
-    TIME_EXIT — the loop ends one candle before `age * 4 > 72` can be true.
+def test_exit_time_cap_fires_at_the_cap():
+    """A position alive at the cap must close as TIME_EXIT with a real P&L.
 
-    This test pins the DEFECT so Task 3's fix is visible as a deliberate
-    change rather than an accident. When that task lands, this test is
-    replaced by test_exit_time_cap_fires_at_the_cap.
+    It used to fall through to an OPEN row at 0.00%, which RESOLVED excludes
+    from every statistic — so the backtest discarded slow trades instead of
+    measuring them. The loop ran `age` 1..max_hold while the test needed
+    `age * mult > max_hours`, and `max_hold * mult` equals `max_hours` exactly.
     """
     from backtest import _simulate_forward
-    closes = [1000] * 25
+    closes = [1000] * 30
     df = _exit_fixture(closes)
     t = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot")
+    assert t["outcome"] == "TIME_EXIT", t["outcome"]
+    assert t["pnl_pct"] != 0, t["pnl_pct"]
+
+
+def test_exit_open_row_still_used_when_candles_run_out():
+    """OPEN is still correct when the FRAME ends early — that is a data
+    limit, not a hold limit, and must not be mislabelled TIME_EXIT."""
+    from backtest import _simulate_forward
+    df = _exit_fixture([1000] * 6)
+    t = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot")
     assert t["outcome"] == "OPEN", t["outcome"]
-    assert t["pnl_pct"] == 0, t["pnl_pct"]
 
 
 def test_exit_params_none_matches_config():
@@ -1801,7 +1810,8 @@ if __name__ == "__main__":
     print("\n── 20. Exit simulator ──")
     run("TP1 then TP2 closes WIN",                test_exit_tp2_path_returns_win)
     run("stop hit closes LOSS",                   test_exit_stop_path_returns_loss)
-    run("time cap unreachable — records OPEN",    test_exit_time_cap_is_unreachable_today)
+    run("time cap closes as TIME_EXIT",           test_exit_time_cap_fires_at_the_cap)
+    run("OPEN kept when the frame runs out",      test_exit_open_row_still_used_when_candles_run_out)
     run("exit_params=None matches config",        test_exit_params_none_matches_config)
     run("trailing factor override takes effect",  test_exit_params_trailing_factor_changes_the_exit)
     run("unknown exit_params key is rejected",    test_exit_params_rejects_an_unknown_key)

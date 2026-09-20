@@ -358,7 +358,12 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, exit_par
     # reflects the TA-only path; the disclaimer in the module docstring
     # already notes that market structure exits don't apply in backtest.
 
-    for j in range(entry_idx + 1, min(entry_idx + 1 + max_hold, len(df))):
+    # +2 rather than +1: the time-exit test needs `age * mult > max_hours`, and
+    # `max_hold * mult` equals `max_hours` exactly, so a loop ending at
+    # `max_hold` could never satisfy it. The branch was dead in both modes and
+    # every position alive at the cap fell through to an OPEN row at 0.00% —
+    # which RESOLVED excludes, so slow trades were discarded, not measured.
+    for j in range(entry_idx + 1, min(entry_idx + 2 + max_hold, len(df))):
         c = df.iloc[j]
         high, low = c["high"], c["low"]
         atr_now = c.get("ATR_14", atr_entry)

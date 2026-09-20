@@ -4,6 +4,54 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-09-21 — fix: TIME_EXIT was unreachable — the backtest discarded slow trades
+
+Task 3 of the exit-mechanics plan. Deliberate behaviour change, isolated in
+its own commit so the before/after is reviewable — unlike Tasks 1 and 2,
+which only added test coverage around `_simulate_forward`.
+
+### Fixed
+`_simulate_forward` iterated `age` from 1 to `max_hold` candles, while its own
+time-exit check needs `age * mult > max_hours` to fire. Because
+`max_hold * mult` equals `max_hours` exactly (18 × 4h = 72h, matching
+`RISK_CONFIG["max_position_hours_spot"]`), the loop always ended one candle
+before the branch could ever be true. `TIME_EXIT` was dead code in **both**
+modes: every position still alive at the cap fell through to the `OPEN` row at
+`pnl_pct = 0.00`, and `RESOLVED` excludes `OPEN` rows from every statistic —
+so the backtest was discarding slow trades rather than measuring them.
+
+The loop bound now extends by one candle
+(`min(entry_idx + 2 + max_hold, len(df))`) so the age at which the time-exit
+check first evaluates true is reachable. Every earlier iteration (ages
+`1..max_hold`) is unchanged, so a trade that already exited on TP1/TP2/trailing
+stop/vol-expansion still exits at exactly the same candle it did before this
+fix — only a position that survived all of them gets the one extra candle
+needed to close as `TIME_EXIT` instead of falling off the end.
+
+Measured on spot 2025 (`--start 2025-01-01 --end 2025-12-31`):
+
+| | Before | After |
+|---|---|---|
+| Closed Trades | 2 | 4 |
+| Open (max hold) | 2 | 0 |
+| Total P&L | (excluded — both OPEN rows scored 0) | +2.56% |
+
+Both formerly-open positions closed `TIME_EXIT` at 19 candles with real P&L
+(+0.95%, +0.24%) — real number of candles, real number of trades.
+
+This moves the baseline that every exit hypothesis is judged against, which is
+why it lands before the exit-mechanics test harness rather than after.
+
+### Tests
+`test_exit_time_cap_is_unreachable_today`, which pinned the defect, is
+replaced by `test_exit_time_cap_fires_at_the_cap` (a position alive at the cap
+must close `TIME_EXIT` with nonzero P&L) and
+`test_exit_open_row_still_used_when_candles_run_out` (a frame that runs out of
+candles — a data limit, not a hold limit — must still produce `OPEN`, not be
+mislabelled `TIME_EXIT`). Suite: 89/89.
+
+---
+
 ## 2026-08-30 — feat: cycle_log records the taker ratio, gold and VIX
 
 Closes the gap noted when step 1 was closed. With development stopped, the
