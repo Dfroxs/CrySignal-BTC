@@ -1583,6 +1583,61 @@ def test_existing_database_gains_the_columns():
         os.unlink(path)
 
 
+# ── 20. Exit simulator ───────────────────────────────────────────────────────
+
+def _exit_fixture(closes, highs=None, lows=None, atr=100.0):
+    """Deterministic OHLCV frame for _simulate_forward. No network, no exchange."""
+    import pandas as pd
+    n = len(closes)
+    highs = highs if highs is not None else [c + 1 for c in closes]
+    lows = lows if lows is not None else [c - 1 for c in closes]
+    return pd.DataFrame(
+        {"open": closes, "high": highs, "low": lows, "close": closes,
+         "ATR_14": [atr] * n},
+        index=pd.date_range("2026-01-01", periods=n, freq="4h"),
+    )
+
+
+def _exit_signal(stype="BUY", entry=1000.0, sl=850.0, tp1=1150.0, tp2=1300.0, atr=100.0):
+    return {"type": stype, "entry_price": entry, "stop_loss": sl,
+            "take_profit": tp1, "tp2": tp2, "atr": atr}
+
+
+def test_exit_tp2_path_returns_win():
+    """Price walks up through TP1 then TP2 — the trade closes WIN at tp2."""
+    from backtest import _simulate_forward
+    closes = [1000] + [1000 + 40 * k for k in range(1, 20)]
+    df = _exit_fixture(closes, highs=[c + 30 for c in closes])
+    t = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot")
+    assert t["outcome"] == "WIN", t["outcome"]
+    assert t["exit_price"] == 1300.0, t["exit_price"]
+
+
+def test_exit_stop_path_returns_loss():
+    """Price gaps straight down through the stop — trailing stop hit, LOSS."""
+    from backtest import _simulate_forward
+    closes = [1000] + [800] * 19
+    df = _exit_fixture(closes, lows=[c - 60 for c in closes])
+    t = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot")
+    assert t["outcome"] == "LOSS", t["outcome"]
+
+
+def test_exit_time_cap_is_unreachable_today():
+    """A position that survives the cap is recorded OPEN at 0.00%, never
+    TIME_EXIT — the loop ends one candle before `age * 4 > 72` can be true.
+
+    This test pins the DEFECT so Task 3's fix is visible as a deliberate
+    change rather than an accident. When that task lands, this test is
+    replaced by test_exit_time_cap_fires_at_the_cap.
+    """
+    from backtest import _simulate_forward
+    closes = [1000] * 25
+    df = _exit_fixture(closes)
+    t = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot")
+    assert t["outcome"] == "OPEN", t["outcome"]
+    assert t["pnl_pct"] == 0, t["pnl_pct"]
+
+
 if __name__ == "__main__":
     print("\n══ Pipeline Dummy-Data Tests ══\n")
 
@@ -1705,6 +1760,11 @@ if __name__ == "__main__":
     run("taker/gold/VIX are stored",              test_cycle_log_stores_taker_gold_and_vix)
     run("spot leaves futures-only fields NULL",   test_spot_rows_leave_futures_only_fields_null)
     run("existing database gains the columns",    test_existing_database_gains_the_columns)
+
+    print("\n── 20. Exit simulator ──")
+    run("TP1 then TP2 closes WIN",                test_exit_tp2_path_returns_win)
+    run("stop hit closes LOSS",                   test_exit_stop_path_returns_loss)
+    run("time cap unreachable — records OPEN",    test_exit_time_cap_is_unreachable_today)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
