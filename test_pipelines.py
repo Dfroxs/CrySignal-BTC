@@ -1689,6 +1689,36 @@ def test_exit_params_rejects_an_unknown_key():
     raise AssertionError("unknown exit_params key was accepted")
 
 
+def test_compute_stats_buckets_by_pnl_sign_not_outcome_label():
+    """A profitable TIME_EXIT must count as a win, not a loss, and the
+    profit-factor guard must never diverge from what the denominator divides
+    by — on pain of ZeroDivisionError when a bucket's P&L cancels to zero.
+
+    Trade dicts built directly in the shape _make_trade emits. No signal, no
+    exchange, no DB. Figures mirror the real spot-2025 run that surfaced the
+    bug: TIME_EXIT +0.95%, LOSS -0.26%, WIN +1.64%.
+    """
+    from backtest import _compute_stats
+    trades = [
+        {"outcome": "TIME_EXIT", "pnl_pct": 0.95, "candles_held": 19, "confidence": "NORMAL"},
+        {"outcome": "LOSS",      "pnl_pct": -0.26, "candles_held": 15, "confidence": "NORMAL"},
+        {"outcome": "WIN",       "pnl_pct": 1.64, "candles_held": 6, "confidence": "NORMAL"},
+    ]
+    stats = _compute_stats(trades, 100.0)
+    assert stats["wins"] == 2, stats["wins"]      # TIME_EXIT (+0.95%) is a win
+    assert stats["losses"] == 1, stats["losses"]  # only the real LOSS
+
+    # Guard/denominator agreement: a loss bucket whose P&L sums to exactly
+    # zero must fall through to the "no real losses" branch, not divide by it.
+    zero_sum_trades = [
+        {"outcome": "LOSS",     "pnl_pct": 0.0, "candles_held": 10, "confidence": "NORMAL"},
+        {"outcome": "VOL_EXIT", "pnl_pct": 0.0, "candles_held": 8, "confidence": "NORMAL"},
+        {"outcome": "WIN",      "pnl_pct": 1.5, "candles_held": 6, "confidence": "NORMAL"},
+    ]
+    zero_stats = _compute_stats(zero_sum_trades, 100.0)  # must not raise ZeroDivisionError
+    assert zero_stats["profit_factor"] == "∞", zero_stats["profit_factor"]
+
+
 if __name__ == "__main__":
     print("\n══ Pipeline Dummy-Data Tests ══\n")
 
@@ -1820,6 +1850,7 @@ if __name__ == "__main__":
     run("exit_params=None matches config",        test_exit_params_none_matches_config)
     run("trailing factor override takes effect",  test_exit_params_trailing_factor_changes_the_exit)
     run("unknown exit_params key is rejected",    test_exit_params_rejects_an_unknown_key)
+    run("stats bucket by P&L sign, not label",  test_compute_stats_buckets_by_pnl_sign_not_outcome_label)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

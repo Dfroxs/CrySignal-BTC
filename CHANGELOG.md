@@ -35,14 +35,14 @@ Measured on spot 2025 (`--start 2025-01-01 --end 2025-12-31`):
 | Closed Trades | 2 | 4 |
 | Open (max hold) | 2 | 0 |
 | Total P&L | +1.37% | +2.56% |
-| Win Rate | 100.0% (of 2 closed) | 75.0% (of 4 closed) |
-| Profit Factor | inf (0 losses) | 10.83 |
+| Win Rate | 50.0% (of 2 closed) | 75.0% (of 4 closed) |
+| Profit Factor | 6.26 | 10.83 |
 
 The "before" total is the two closed rows only (`-0.26%` LOSS, `+1.64%` WIN);
 the two OPEN rows were excluded from it, but the total itself existed. Both
 formerly-open positions now close `TIME_EXIT` at 19 candles with real P&L
 (+0.95%, +0.24%) — exactly the +1.19% delta between the two totals, and the
-reason Win Rate moves from 2-of-2 to 3-of-4 rather than climbing.
+reason Win Rate moves from 1-of-2 to 3-of-4 rather than climbing.
 
 A pre-existing `_compute_stats` bug surfaced by this same run is fixed in the
 same commit: it bucketed `losses` by `outcome != "WIN"` rather than by P&L
@@ -62,10 +62,16 @@ why it lands before the exit-mechanics test harness rather than after.
 ### Tests
 `test_exit_time_cap_is_unreachable_today`, which pinned the defect, is
 replaced by `test_exit_time_cap_fires_at_the_cap` (a position alive at the cap
-must close `TIME_EXIT` with nonzero P&L) and
+must close `TIME_EXIT` at exactly `candles_held == 19`, with nonzero P&L) and
 `test_exit_open_row_still_used_when_candles_run_out` (a frame that runs out of
 candles — a data limit, not a hold limit — must still produce `OPEN`, not be
-mislabelled `TIME_EXIT`). Suite: 89/89.
+mislabelled `TIME_EXIT`).
+
+`test_compute_stats_buckets_by_pnl_sign_not_outcome_label` covers the
+`_compute_stats` bug directly, with fake trade dicts (no signal, no exchange,
+no DB): a profitable `TIME_EXIT` alongside a real `LOSS` and `WIN` must bucket
+as a win, and a loss bucket whose P&L sums to exactly zero must not raise
+`ZeroDivisionError`. Suite: 90/90.
 
 ---
 
