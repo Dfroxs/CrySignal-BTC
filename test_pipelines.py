@@ -1719,6 +1719,74 @@ def test_compute_stats_buckets_by_pnl_sign_not_outcome_label():
     assert zero_stats["profit_factor"] == "∞", zero_stats["profit_factor"]
 
 
+def test_synth_entries_respects_stride_and_warmup():
+    from scripts.exit_ic import synth_entries
+    df = _exit_fixture([1000] * 260)
+    e = synth_entries(df, stride=6, warmup=200)
+    assert e[0] == 200, e[:3]
+    assert e[1] - e[0] == 6, e[:3]
+    assert max(e) < len(df), max(e)
+
+
+def test_paired_stats_is_paired_not_two_samples():
+    """mean_diff must be the mean of per-entry differences, which is only
+    defined when both arms have the same length and order."""
+    from scripts.exit_ic import paired_stats
+    s = paired_stats([1.0, -2.0, 3.0], [1.5, -1.0, 3.0])
+    assert s["n"] == 3, s
+    assert abs(s["mean_diff"] - 0.5) < 1e-9, s
+    assert abs(s["win_share"] - (2 / 3)) < 1e-9, s
+    try:
+        paired_stats([1.0, 2.0], [1.0])
+    except ValueError:
+        return
+    raise AssertionError("unequal arms were accepted")
+
+
+def test_synth_entries_drop_the_untradeable_tail():
+    """Entries with no room to complete are truncated by the FRAME, not closed
+    by a rule — and rules hold for different lengths, so that truncation lands
+    unevenly across arms and reads as a real effect."""
+    from scripts.exit_ic import synth_entries
+    df = _exit_fixture([1000] * 260)
+    e = synth_entries(df, stride=6, warmup=200, tail=40)
+    assert max(e) < 220, max(e)
+
+
+def test_run_rule_honours_a_max_hold_override():
+    """A rule asking for a longer hold must actually get one. Passing only
+    max_position_hours cannot do it: the loop stops at max_hold+1 candles and
+    the position becomes an OPEN row that RESOLVED discards.
+
+    Price must actually move: config's max_position_hours_spot (72) equals
+    MAX_HOLD_CANDLES["4h"] * 4 exactly, so BOTH arms deterministically resolve
+    via TIME_EXIT at their own last candle regardless of max_hold. On a flat
+    fixture that gives both arms the same exit price and therefore the same
+    P&L even when max_hold is wired correctly — the assertion below would then
+    fail on correct code and pass on the bug it exists to catch. A mild drift
+    makes the two exit candles land at different prices, so P&L actually
+    reflects which hold length was used.
+    """
+    from scripts.exit_ic import run_rule
+    df = _exit_fixture([1000 + k for k in range(120)])
+    short = run_rule(df, [10], "spot", "4h", {})
+    long_ = run_rule(df, [10], "spot", "4h",
+                     {"max_hold": 72, "exit_params": {"max_position_hours": 288}})
+    assert short[0] != long_[0] or short[0] == 0.0, (short, long_)
+
+
+def test_run_rule_is_deterministic():
+    """Same frame, same entries, same params -> byte-identical output. A
+    confirmatory run that cannot be reproduced cannot be checked."""
+    from scripts.exit_ic import run_rule, synth_entries
+    df = _exit_fixture([1000 + (k % 7) * 20 for k in range(260)])
+    e = synth_entries(df, stride=20, warmup=200, tail=20)
+    a = run_rule(df, e, "spot", "4h", {})
+    b = run_rule(df, e, "spot", "4h", {})
+    assert a == b, (a[:5], b[:5])
+    assert len(a) == len(e), (len(a), len(e))
+
+
 if __name__ == "__main__":
     print("\n══ Pipeline Dummy-Data Tests ══\n")
 
@@ -1851,6 +1919,13 @@ if __name__ == "__main__":
     run("trailing factor override takes effect",  test_exit_params_trailing_factor_changes_the_exit)
     run("unknown exit_params key is rejected",    test_exit_params_rejects_an_unknown_key)
     run("stats bucket by P&L sign, not label",  test_compute_stats_buckets_by_pnl_sign_not_outcome_label)
+
+    print("\n── 21. exit_ic.py — synthetic exit comparison ──")
+    run("synth entries honour stride/warmup",     test_synth_entries_respects_stride_and_warmup)
+    run("synth entries drop untradeable tail",    test_synth_entries_drop_the_untradeable_tail)
+    run("paired stats are truly paired",          test_paired_stats_is_paired_not_two_samples)
+    run("run_rule honours a max_hold override",   test_run_rule_honours_a_max_hold_override)
+    run("run_rule is deterministic",              test_run_rule_is_deterministic)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
