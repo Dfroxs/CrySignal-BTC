@@ -280,9 +280,11 @@ the shipped 0.8 stands.**
 ## 7. H3 — partial split at TP1
 
 *Statement, direction fixed before any cell is run:* disabling the 50/50
-partial — taking the **whole position at TP2**, with the trail left unchanged
-because `trailing_post_tp1_factor` is inert when TP1 never fires — improves
-per-entry net P&L. **The candidate arm is `partial_enabled: False`**
+partial — taking the **whole position at TP2** instead, with the trail
+running at its normal pre-TP1 width for the entire trade because the TP1
+block never fires at all (so neither `trailing_post_tp1_factor`'s tighten nor
+the TP1 breakeven snap ever applies — see the three-part bundle below) —
+improves per-entry net P&L. **The candidate arm is `partial_enabled: False`**
 (`rules["H3"]` above); the baseline arm takes the 50/50 partial exactly as the
 bot ships today.
 

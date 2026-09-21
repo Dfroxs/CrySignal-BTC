@@ -39,6 +39,35 @@ design doc (sign consistency, effect size measured over all entries not
 `n_eff`, no mode reversal), and the closing rule that criteria are not
 revised after results are seen.
 
+### Harness (review round 2, same day)
+`scripts/exit_ic.py`'s `Pnls` gains a `.time_exit` counter alongside
+`.unresolved`, incremented by `run_rule` whenever a trade resolves
+`TIME_EXIT`. `run_cell` turns each arm's count into `time_exit_pct_base` /
+`time_exit_pct_cand` — the share of ALL entries in the cell, the same
+denominator already used for effect size — and `main()` prints both on every
+row as `time_exit%=base/cand`. This is the field H1's registered "TIME_EXIT
+share falls by ≥10pp" criterion is read from; it didn't exist when that
+criterion was first written down, so it had to be added before any cell runs
+rather than after. Covered by a new test
+(`test_run_rule_counts_time_exit_share`) asserting the counter is per-entry,
+not "TIME_EXIT appeared anywhere in the dataframe."
+
+### Docs (review round 2, same day)
+The pre-registration also picked up, all before any confirmatory cell: H2's
+sign direction corrected (the rule dict already had the right candidate; the
+prose didn't); H3 disclosed as a three-part bundle — the 50/50 split, the
+post-TP1 tighten going inert, and, first missed, the TP1 breakeven snap also
+disappearing — rather than a single clean variable; the execution-cost
+asymmetry between H3's arms registered (the partial-taking baseline pays an
+effective 1.5 sides of cost via its 50/50 blend, the candidate always pays
+2.0 — 0.075pp spot / 0.045pp futures, biasing against the candidate, and
+`_net_pnl` is deliberately left unchanged); `--stride` pinned alongside
+`--symbols`/`--years`; every `RISK_CONFIG`/`FUTURES_CONFIG`/
+`EXECUTION_CONFIG` value each hypothesis moves against pinned numerically to
+a commit; the per-cell `mean_diff` criterion separated from the per-entry
+`diff`/`win_share` it was easy to conflate with; and the unresolved-entries
+rule (stay in the sample at 0.0, unconditionally, no threshold) registered.
+
 ### No behaviour change
 `partial_enabled` is opt-in and off by default in the sense that omitting it
 (or passing `True`) reproduces today's trades exactly — nothing the running
