@@ -224,6 +224,16 @@ For a candidate rule to be adopted, **all** must hold:
 2. **Effect size** — pooled paired mean improvement **≥ +0.05 percentage points
    per entry**. Below the per-side slippage assumption (0.05%), an improvement
    is not actionable.
+
+   **The denominator is ALL entries, not `n_eff`** (pinned before any cell was
+   run). The harness reports `n_eff`, the count of pairs that actually differ,
+   because ties dominate by construction — a rule diverges from baseline only
+   for entries whose baseline trade was still alive at the cap, measured at 22%
+   on the smoke run. `n_eff` is for interpretation and is **not** part of any
+   criterion. An exit rule's practical value is (its effect on the trades it
+   touches) × (how often it touches one), and that product *is* the all-entries
+   mean. Switching denominators after observing that ties dominate would be
+   choosing the goalposts from the results.
 3. **No mode reversal** — for H2 and H3, the spot subtotal and the futures
    subtotal must *both* favour the candidate. A candidate that wins overall by
    winning hugely in one mode and losing in the other is rejected. (Not
@@ -256,9 +266,20 @@ beats leaving the trail unchanged, on the same entry population.
 
 ### H3 — partial split at TP1
 
-*Statement:* the 50/50 partial at TP1 beats a single-target exit that takes the
-whole position at **TP2**, with no partial and the trail left unchanged
-(`trailing_post_tp1_factor` inert because TP1 never fires).
+*Statement (restated for sign uniformity, before any cell was run):* disabling
+the 50/50 partial — taking the whole position at **TP2**, with the trail left
+unchanged because `trailing_post_tp1_factor` is inert when TP1 never fires —
+improves per-entry net P&L.
+
+The spec originally stated this the other way round ("the partial beats a
+single-target exit"), which puts the change in the *baseline* arm and inverts
+the sign relative to H1 and H2. `paired_stats` computes `cand - base`, and the
+shared criterion reads "favours the candidate", so all three hypotheses must
+put the change in the candidate arm or Task 6 scores one of three rows with a
+flipped sign. The measured quantity is unchanged; only the framing is unified.
+
+**A pass means the partial does not earn its place. A failure means the partial
+stands.**
 
 *Judged on the shared criteria.*
 
