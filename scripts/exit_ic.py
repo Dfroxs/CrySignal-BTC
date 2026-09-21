@@ -28,7 +28,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from backtest import MAX_HOLD_CANDLES, _simulate_forward  # noqa: E402
+from backtest import MAX_HOLD_CANDLES, RESOLVED, _simulate_forward  # noqa: E402
 from config import RISK_CONFIG  # noqa: E402
 from signals.ohlcv import fetch_ohlcv_df  # noqa: E402
 
@@ -68,6 +68,21 @@ def _signal_at(df, i):
             "take_profit": tp1, "tp2": entry + (tp1 - entry) * 2, "atr": atr}
 
 
+class Pnls(list):
+    """list[float], index-aligned with `entries` — behaves exactly like the
+    plain list the interface promises (equality, indexing, len all work
+    against other lists) but also carries `.unresolved`: how many of those
+    entries were OPEN rows or the zero-ATR guard rather than a real exit.
+
+    Those entries enter the sample as 0.0, indistinguishable from a genuine
+    flat trade unless counted separately — see `run_rule`.
+    """
+
+    def __init__(self, iterable, unresolved=0):
+        super().__init__(iterable)
+        self.unresolved = unresolved
+
+
 def run_rule(df, entries, mode, timeframe, rule):
     """Net P&L per entry under one exit ruleset, index-aligned with `entries`.
 
@@ -77,27 +92,50 @@ def run_rule(df, entries, mode, timeframe, rule):
     asking for a longer hold through exit_params alone never reaches it — the
     frame runs out first and the position becomes an OPEN row that RESOLVED
     discards. That is the same silent-drop that made TIME_EXIT unreachable.
+
+    OPEN rows and the zero-ATR guard both enter the returned sample as 0.0,
+    which is indistinguishable from a genuinely flat trade — a rule that never
+    resolves would otherwise look tied with baseline instead of untested.
+    Those are counted in the returned list's `.unresolved` attribute rather
+    than passed through silently.
     """
     max_hold = rule.get("max_hold") or MAX_HOLD_CANDLES[timeframe]
     out = []
+    unresolved = 0
     for i in entries:
         sig = _signal_at(df, i)
         if not (sig["atr"] > 0):
             out.append(0.0)
+            unresolved += 1
             continue
         t = _simulate_forward(df, i, sig, max_hold, timeframe, mode,
                               exit_params=rule.get("exit_params"))
+        if t["outcome"] not in RESOLVED:
+            unresolved += 1
         out.append(float(t["pnl_pct"]))
-    return out
+    if unresolved:
+        logger.warning("%d/%d entries did not resolve (OPEN row or zero-ATR "
+                       "guard) and entered the sample as 0.0",
+                       unresolved, len(entries))
+    return Pnls(out, unresolved=unresolved)
 
 
 def paired_stats(base, cand):
-    """Per-entry differences. Unequal arms are a bug, not a warning."""
+    """Per-entry differences. Unequal arms are a bug, not a warning.
+
+    `win_share` counts `d > 0` over ALL pairs including exact ties, and ties
+    dominate by construction — a rule differs from baseline only for entries
+    whose baseline trade was still alive at the cap, and most resolve earlier
+    on the trail. `n_eff` — pairs where the arms actually differ — is what
+    tells "no effect" (small n_eff) apart from "worse" (large n_eff, low
+    win_share), which `n` alone cannot.
+    """
     if len(base) != len(cand):
         raise ValueError(f"unpaired arms: {len(base)} vs {len(cand)}")
     diffs = [c - b for b, c in zip(base, cand)]
     return {
         "n": len(diffs),
+        "n_eff": sum(1 for d in diffs if d != 0),
         "mean_diff": statistics.fmean(diffs) if diffs else 0.0,
         "win_share": (sum(1 for d in diffs if d > 0) / len(diffs)) if diffs else 0.0,
         "base_mean": statistics.fmean(base) if base else 0.0,
@@ -105,8 +143,21 @@ def paired_stats(base, cand):
     }
 
 
+def _tail_margin(rules, tf):
+    """Candles of tail margin needed to clear the LONGEST-held rule across ALL
+    rules, baseline included — not just the baseline.
+
+    Sized to the baseline alone, a longer candidate rule's late entries would
+    be cut off by the end of the frame while the baseline's completed —
+    truncation landing on one arm only, which the paired comparison would
+    report as a real effect instead of an artefact of framing.
+    """
+    longest = max(r.get("max_hold") or MAX_HOLD_CANDLES[tf] for r in rules.values())
+    return longest + 2
+
+
 def run_cell(symbol, year, mode, rules, stride=6):
-    """One (asset, year, mode) cell. `rules` maps name -> exit_params dict.
+    """One (asset, year, mode) cell. `rules` maps name -> rule dict.
 
     The key "baseline" must be present and is the arm every other is paired
     against.
@@ -117,15 +168,19 @@ def run_cell(symbol, year, mode, rules, stride=6):
     since = int(pd.Timestamp(f"{year}-01-01", tz="UTC").timestamp() * 1000)
     until = int(pd.Timestamp(f"{year + 1}-01-01", tz="UTC").timestamp() * 1000)
     df = fetch_ohlcv_df(symbol, tf, since=since, until=until)
-    # The tail margin must clear the LONGEST-held rule, not the baseline. Sized
-    # to the baseline, a longer rule's late entries would be cut off by the
-    # frame while the baseline's completed — truncation landing on one arm only,
-    # which the paired comparison would report as a real effect.
-    longest = max([r.get("max_hold") or MAX_HOLD_CANDLES[tf] for r in rules.values()])
-    entries = synth_entries(df, stride, tail=longest + 2)
+    entries = synth_entries(df, stride, tail=_tail_margin(rules, tf))
     base = run_rule(df, entries, mode, tf, rules["baseline"])
-    return {name: paired_stats(base, run_rule(df, entries, mode, tf, rule))
-            for name, rule in rules.items() if name != "baseline"}
+    results = {}
+    for name, rule in rules.items():
+        if name == "baseline":
+            continue
+        cand = run_rule(df, entries, mode, tf, rule)
+        s = paired_stats(base, cand)
+        # Surfaced rather than left to pass silently as ties — see run_rule.
+        s["unresolved_base"] = base.unresolved
+        s["unresolved_cand"] = cand.unresolved
+        results[name] = s
+    return results
 
 
 def main():
@@ -161,6 +216,7 @@ def main():
     if args.only in (None, "H2"):
         rules["H2"] = {"exit_params": {"trailing_post_tp1_factor": 1.0}}
 
+    rows_printed = 0
     for year in [int(y) for y in args.years.split(",")]:
         for symbol in args.symbols.split(","):
             try:
@@ -171,8 +227,20 @@ def main():
                 continue
             for name, s in res.items():
                 print(f"{args.mode:8} {symbol:10} {year}  {name:4} "
-                      f"n={s['n']:5}  mean_diff={s['mean_diff']:+.4f}pp  "
-                      f"win_share={s['win_share']:.3f}")
+                      f"n={s['n']:5} n_eff={s['n_eff']:5}  "
+                      f"base={s['base_mean']:+.4f}pp cand={s['cand_mean']:+.4f}pp  "
+                      f"mean_diff={s['mean_diff']:+.4f}pp  "
+                      f"win_share={s['win_share']:.3f}  "
+                      f"unresolved={s['unresolved_base']}/{s['unresolved_cand']}")
+                rows_printed += 1
+
+    if rows_printed == 0:
+        # Every cell failed (unlisted symbol, rate limit, a typo that slipped
+        # past --only). Printing nothing and exiting 0 reads exactly like "no
+        # cells qualified" to an unattended multi-hour run — it must not.
+        logger.error("no cells produced a row — every cell failed or the "
+                     "symbol/year set was empty")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

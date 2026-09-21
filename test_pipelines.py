@@ -1736,6 +1736,9 @@ def test_paired_stats_is_paired_not_two_samples():
     assert s["n"] == 3, s
     assert abs(s["mean_diff"] - 0.5) < 1e-9, s
     assert abs(s["win_share"] - (2 / 3)) < 1e-9, s
+    # n_eff excludes the exact tie (3.0 vs 3.0, diff=0) that win_share cannot
+    # tell apart from "a rule that never touched this entry".
+    assert s["n_eff"] == 2, s
     try:
         paired_stats([1.0, 2.0], [1.0])
     except ValueError:
@@ -1762,17 +1765,29 @@ def test_run_rule_honours_a_max_hold_override():
     MAX_HOLD_CANDLES["4h"] * 4 exactly, so BOTH arms deterministically resolve
     via TIME_EXIT at their own last candle regardless of max_hold. On a flat
     fixture that gives both arms the same exit price and therefore the same
-    P&L even when max_hold is wired correctly — the assertion below would then
-    fail on correct code and pass on the bug it exists to catch. A mild drift
-    makes the two exit candles land at different prices, so P&L actually
-    reflects which hold length was used.
+    P&L even when max_hold is wired correctly. A mild upward drift makes the
+    two exit candles land at different prices, so P&L reflects which hold
+    length was used — and lets the assertion check DIRECTION, which only
+    correct wiring can produce: the long arm holds through more of the drift
+    and must come out ahead, not merely "different".
+
+    `short[0] != long_[0] or short[0] == 0.0` (the brief's original form) does
+    not do this. Under the bug (run_rule ignoring rule["max_hold"], so both
+    arms use the default 18-candle hold) the long arm's exit_params
+    (max_position_hours=288) never gets reached before the frame's own
+    max_hold+1 loop bound, so it falls through to an OPEN row at pnl=0.0 while
+    short still resolves TIME_EXIT at a nonzero P&L. Those two values are
+    unequal, so the old assertion PASSES under the bug it exists to catch.
+    `long_[0] > short[0]` does not: under the bug long_[0] == 0.0 while
+    short[0] > 0 (price only drifts up), so long_ > short is False and the
+    test fails as it must.
     """
     from scripts.exit_ic import run_rule
     df = _exit_fixture([1000 + k for k in range(120)])
     short = run_rule(df, [10], "spot", "4h", {})
     long_ = run_rule(df, [10], "spot", "4h",
                      {"max_hold": 72, "exit_params": {"max_position_hours": 288}})
-    assert short[0] != long_[0] or short[0] == 0.0, (short, long_)
+    assert long_[0] > short[0], (short, long_)
 
 
 def test_run_rule_is_deterministic():
@@ -1785,6 +1800,36 @@ def test_run_rule_is_deterministic():
     b = run_rule(df, e, "spot", "4h", {})
     assert a == b, (a[:5], b[:5])
     assert len(a) == len(e), (len(a), len(e))
+
+
+def test_tail_margin_sizes_to_the_longest_rule_not_baseline():
+    """The tail margin must clear the LONGEST-held rule across ALL rules,
+    baseline included -- not just the baseline. Get this wrong and a longer
+    rule's late entries get cut off by the end of the frame while the
+    baseline's complete: truncation landing on one arm only, which a paired
+    comparison reports as a real effect instead of an artefact of framing.
+
+    Built offline against the arithmetic `run_cell` uses (no network/fetch):
+    `_tail_margin` is the extracted sizing expression.
+    """
+    from scripts.exit_ic import _tail_margin
+    from backtest import MAX_HOLD_CANDLES
+
+    # A candidate rule held far longer than the default must win the max.
+    rules = {"baseline": {}, "H1": {"max_hold": 72}}
+    assert _tail_margin(rules, "4h") == 72 + 2, _tail_margin(rules, "4h")
+
+    # With no rule overriding max_hold, the margin falls back to the
+    # timeframe's own default hold (baseline's implicit length), not 0/None.
+    rules_default = {"baseline": {}, "H2": {"exit_params": {}}}
+    assert _tail_margin(rules_default, "4h") == MAX_HOLD_CANDLES["4h"] + 2, \
+        _tail_margin(rules_default, "4h")
+
+    # A rule shorter than the default must not shrink the margin below it --
+    # the max is over every rule, so the longest still wins.
+    rules_mixed = {"baseline": {}, "short": {"max_hold": 3},
+                   "long": {"max_hold": 100}}
+    assert _tail_margin(rules_mixed, "4h") == 100 + 2, _tail_margin(rules_mixed, "4h")
 
 
 if __name__ == "__main__":
@@ -1926,6 +1971,7 @@ if __name__ == "__main__":
     run("paired stats are truly paired",          test_paired_stats_is_paired_not_two_samples)
     run("run_rule honours a max_hold override",   test_run_rule_honours_a_max_hold_override)
     run("run_rule is deterministic",              test_run_rule_is_deterministic)
+    run("tail margin sizes to longest rule",       test_tail_margin_sizes_to_the_longest_rule_not_baseline)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
