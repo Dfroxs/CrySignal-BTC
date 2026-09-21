@@ -54,28 +54,31 @@ invocations that constitute the confirmatory run:
 # H1 — spot only, 20 cells
 ./venv/bin/python scripts/exit_ic.py --mode spot \
     --symbols BTC/USDT,ETH/USDT,BNB/USDT,XRP/USDT,LINK/USDT \
-    --years 2020,2021,2022,2023 --only H1
+    --years 2020,2021,2022,2023 --stride 6 --only H1
 
 # H2 — 40 cells (run both modes)
 ./venv/bin/python scripts/exit_ic.py --mode spot \
     --symbols BTC/USDT,ETH/USDT,BNB/USDT,XRP/USDT,LINK/USDT \
-    --years 2020,2021,2022,2023 --only H2
+    --years 2020,2021,2022,2023 --stride 6 --only H2
 ./venv/bin/python scripts/exit_ic.py --mode futures \
     --symbols BTC/USDT,ETH/USDT,BNB/USDT,XRP/USDT,LINK/USDT \
-    --years 2020,2021,2022,2023 --only H2
+    --years 2020,2021,2022,2023 --stride 6 --only H2
 
 # H3 — 40 cells (run both modes)
 ./venv/bin/python scripts/exit_ic.py --mode spot \
     --symbols BTC/USDT,ETH/USDT,BNB/USDT,XRP/USDT,LINK/USDT \
-    --years 2020,2021,2022,2023 --only H3
+    --years 2020,2021,2022,2023 --stride 6 --only H3
 ./venv/bin/python scripts/exit_ic.py --mode futures \
     --symbols BTC/USDT,ETH/USDT,BNB/USDT,XRP/USDT,LINK/USDT \
-    --years 2020,2021,2022,2023 --only H3
+    --years 2020,2021,2022,2023 --stride 6 --only H3
 ```
 
-`--symbols` and `--years` are spelled out explicitly above even though they
-match the script's current defaults — a later default change must not be able
-to silently change what this registration certified.
+`--symbols`, `--years`, and `--stride` are spelled out explicitly above even
+though they all match the script's current defaults — a later default change
+must not be able to silently change what this registration certified.
+`--stride` is pinned deliberately: it is the single largest lever on entry
+count, and therefore on `n`, on the entry-weighted pooled mean §4.1 pins, and
+on `n_eff`.
 
 **Denominator is fixed, not "however many cells completed."** If a cell fails
 to fetch (network error, exchange rate limit, an unlisted symbol-year), it
@@ -106,9 +109,40 @@ paired against that same baseline, on the same synthetic entry set, within
 each cell.
 
 `paired_stats` in `scripts/exit_ic.py` computes `diff = candidate − baseline`
-per entry, and `win_share`/`mean_diff` are read off that sign. "Favours the
-candidate" below always means `diff > 0` for that pairing — exact ties
-(`diff == 0`) do not count toward the candidate.
+**per entry**; `mean_diff` is the average of those per-entry `diff` values
+**over one cell**, and is the field `main()` prints per row. Criterion 1
+("favours the candidate") ranges over *cells*, not entries, and is evaluated
+on `mean_diff`: a cell counts toward the ≥ 32/40 (or ≥ 16/20) tally when that
+cell's own `mean_diff > 0`. `win_share` (the share of *entries* with
+`diff > 0`) is printed for interpretation next to `mean_diff` and is easy to
+mistake for the criterion — it is not one. Exact ties (`diff == 0` at the
+entry level, `mean_diff == 0` at the cell level) do not count toward the
+candidate at either level.
+
+### 3.1 The baseline, pinned numerically
+
+"Exactly as shipped" is pinned to the values in `config.py` at commit
+`9f79dc8` (the tip of `develop` when this fix round was written; this round
+does not touch `config.py` or `backtest.py`'s exit logic, so these are also
+the values at the commit that introduces this section). A reader can run
+`git show 9f79dc8:config.py` and confirm every number below directly, rather
+than trusting the prose.
+
+The values every hypothesis moves against:
+
+| Key | Value | Read by |
+|---|---|---|
+| `RISK_CONFIG["atr_multiplier"]` | `1.5` | `_signal_at` — sets every synthetic SL |
+| `RISK_CONFIG["take_profit_rr"]` | `2.5` | `_signal_at` — sets every synthetic TP1 (TP2 = 2× the TP1 distance) |
+| `RISK_CONFIG["trailing_atr_factor"]` | `2.0` (spot) | `_simulate_forward`'s base trail width |
+| `FUTURES_CONFIG["trailing_atr_factor"]` | `1.5` | same, futures |
+| `RISK_CONFIG["trailing_advance_min_ratio"]` | `0.5` | minimum trail advance before it moves |
+| `RISK_CONFIG["trailing_post_tp1_factor"]` | `0.8` | H2's baseline value — tighten 20% after TP1 |
+| `RISK_CONFIG["max_position_hours_spot"]` | `72` (→ **18 candles** at 4h) | **the exact quantity H1 tests** — `MAX_HOLD_CANDLES["4h"] = 18`, `18 × 4h = 72h` |
+| `RISK_CONFIG["max_position_hours"]` | `72` (→ **72 candles** at 1h, futures) | the asymmetry H1's statement is about |
+| `RISK_CONFIG["vol_expansion_exit_mult"]` | `2.0` | vol-exit gate |
+| `EXECUTION_CONFIG["spot_fee_pct"]` / `["slippage_pct"]` | `0.10` / `0.05` | `_costs`, spot |
+| `EXECUTION_CONFIG["futures_fee_pct"]` / `["slippage_pct"]` | `0.04` / `0.05` | `_costs`, futures |
 
 ---
 
@@ -161,6 +195,23 @@ entry in that mode's 20 cells, combined once, one mean.
 the fixed denominator in section 2** — never against a shrinking count of
 "cells that happened to run."
 
+### 4.2 Unresolved entries — the rule, fixed now
+
+`run_rule` (`scripts/exit_ic.py`) enters an OPEN row or the zero-ATR guard
+into the sample as `0.0` and separately counts it in `unresolved_base` /
+`unresolved_cand`, printed per row. **That count is never grounds to drop a
+cell, exclude an entry, or reweight a hypothesis's verdict — at any
+observed unresolved share, in any cell.** There is no threshold.
+
+This is the same rule already pinned for `n_eff` (§4, criterion 2): an arm
+that fails to resolve often is an arm whose recorded improvement is diluted
+by exactly that many ties at `0.0`, and the all-entries effect-size
+denominator already prices that dilution in. A large unresolved share is
+information for reading a result, exactly like `n_eff` — never a reason to
+discard the result. Deciding otherwise after seeing which cells have large
+unresolved shares would be choosing the goalposts from the results, which is
+the one thing this document exists to prevent.
+
 ---
 
 ## 5. H1 — `max_hold` unit asymmetry
@@ -177,8 +228,23 @@ mean per-trade net P&L on the same entry population.
 *Judged on the shared criteria (§4), restricted to the 20 spot cells, plus one
 additional criterion specific to H1:* the share of entries exiting via
 `TIME_EXIT` must fall by **≥ 10 percentage points**, and mean per-trade net
-P&L must not fall. This is in addition to, not instead of, the three shared
-criteria — all four must hold for H1 to be adopted.
+P&L must not fall. This is in addition to, not instead of, the shared
+criteria — **all applicable criteria (1, 2, and the additional one) must
+hold** for H1 to be adopted. Criterion 3 (no mode reversal) does not apply:
+H1 is spot-only, so there is no futures subtotal to reverse against (§4,
+criterion 3).
+
+**Which printed fields the additional criterion is read from.** `run_rule`
+(`scripts/exit_ic.py`) now counts `TIME_EXIT` outcomes per arm on the `Pnls`
+object it returns (`.time_exit`, alongside the existing `.unresolved`).
+`run_cell` divides each arm's count by that cell's entry count
+(`len(entries)`, the same all-entries denominator §4.1 pins for effect size)
+and `main()` prints both as `time_exit_pct_base` / `time_exit_pct_cand` on
+every row (`time_exit%=base/cand` in the printed output). The "≥ 10
+percentage point fall" is `time_exit_pct_base − time_exit_pct_cand`, pooled
+the same entry-weighted way §4.1 requires for criterion 2, over the 20 spot
+cells. "Mean per-trade net P&L must not fall" is read from the same rows'
+`cand_mean ≥ base_mean`, pooled identically.
 
 ---
 
@@ -220,6 +286,29 @@ per-entry net P&L. **The candidate arm is `partial_enabled: False`**
 (`rules["H3"]` above); the baseline arm takes the 50/50 partial exactly as the
 bot ships today.
 
+**H3 is a three-part bundle, not a single change — registered honestly here
+before any cell runs.** Disabling `partial_enabled` changes three things at
+once, not one:
+
+1. The 50/50 split itself — the whole position exits at TP2 instead of half
+   at TP1 and half at TP2.
+2. `trailing_post_tp1_factor` goes inert (TP1 never fires, so the post-TP1
+   tighten never applies) — already stated above.
+3. **The TP1 breakeven snap never happens.** In the baseline arm, the TP1
+   block also pulls the trail to `entry − 0.5×ATR` (spot) or `entry`
+   (futures) the instant TP1 prints — locking in a floor on the remaining
+   50% that the candidate arm never gets, because it never takes TP1 at all.
+   On a fixture where price prints TP1's high and then reverses without
+   reaching TP2, this changes the outcome by itself: `partial ON` closes WIN
+   at the breakeven-snapped trail (`exit 950.0, pnl +4.775`), `partial OFF`
+   has no snap to fall back on and runs into `TIME_EXIT` deep underwater
+   (`exit 928.0, pnl −7.500`) — found during review, on `_exit_fixture`.
+
+**A pass or a failure on H3 cannot be attributed to the partial split alone.**
+It is evidence about the three-part bundle — split, post-TP1 tighten, and
+breakeven snap — together. Isolating which of the three drives any observed
+effect is out of scope for this registration and is not claimed here.
+
 This is the opposite framing from how H3 was first stated in the design
 conversation ("the partial beats a single-target exit"), which would have put
 the change in the *baseline* arm and inverted the sign relative to H1 and H2.
@@ -238,6 +327,48 @@ stands — the 50/50 split at TP1 is kept exactly as it ships today.**
 
 *Judged on the shared criteria (§4), all 40 cells. No additional criterion
 beyond §4.*
+
+### 7.1 Execution-cost asymmetry between H3's arms — registered, not corrected
+
+`_net_pnl` (`backtest.py`) charges cost as `_costs(mode, sides)`, `sides` = 1
+when a partial was taken, 2 when it wasn't. The baseline arm blends a
+2-sided-cost partial leg with a 1-sided-cost remainder 50/50, so it pays an
+**effective 1.5 sides** of cost overall; the candidate arm (`partial_enabled:
+False`) always takes the `partial_closed=False` branch and pays the full
+**2.0 sides**. This is exactly how `trading/paper.py` and the live bot price
+a partial fill, and mirroring it is deliberate (§4.1 of the design doc, and
+Task 5's own report).
+
+**`_net_pnl` is not being changed.** It is the real cost model the running
+bot uses; altering it mid-experiment would move the baseline every hypothesis
+in this document is judged against, for the second time on this branch (the
+first was the `TIME_EXIT` fix, already isolated in its own commit).
+
+**Magnitude, computed from the pinned values in §3.1:** the baseline is
+under-charged relative to the candidate by 0.5 side-equivalents of
+`fee + slippage`:
+
+- Spot: `0.5 × (0.10 + 0.05) = 0.075` percentage points.
+- Futures: `0.5 × (0.04 + 0.05) = 0.045` percentage points.
+
+**Direction: this biases against H3's candidate.** The candidate is charged
+more in modeled cost than the baseline, on every entry where the baseline
+resolves via the partial path. Criterion 2's bar is `+0.05` percentage
+points, so this asymmetry alone is large enough to account for a marginal
+failure on spot cells.
+
+**How H3's verdict is read in light of this, decided now:**
+
+- A **failure** is not made more suspicious by this asymmetry — it may
+  simply be real cost, not evidence the candidate is worse in a way that
+  would reverse if execution were modeled differently.
+- A **pass**, arrived at despite a bias running against the candidate, is
+  **stronger** evidence than an equivalent pass would be without the
+  asymmetry.
+- This is not a threshold, an adjustment, or a reason to re-run with
+  different costs. It is context for reading whichever result appears, fixed
+  before that result exists. "Add back half a side and see if a near-miss
+  clears" is explicitly not an action available after Task 6 runs.
 
 ---
 

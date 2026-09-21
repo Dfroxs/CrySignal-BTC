@@ -72,15 +72,20 @@ class Pnls(list):
     """list[float], index-aligned with `entries` — behaves exactly like the
     plain list the interface promises (equality, indexing, len all work
     against other lists) but also carries `.unresolved`: how many of those
-    entries were OPEN rows or the zero-ATR guard rather than a real exit.
+    entries were OPEN rows or the zero-ATR guard rather than a real exit, and
+    `.time_exit`: how many resolved via the TIME_EXIT outcome specifically.
 
     Those entries enter the sample as 0.0, indistinguishable from a genuine
-    flat trade unless counted separately — see `run_rule`.
+    flat trade unless counted separately — see `run_rule`. `time_exit` exists
+    because H1's registered additional criterion (prereg §5) is stated in
+    terms of the TIME_EXIT share per arm, and nothing else in this module
+    keeps the outcome label past the point `run_rule` reads it.
     """
 
-    def __init__(self, iterable, unresolved=0):
+    def __init__(self, iterable, unresolved=0, time_exit=0):
         super().__init__(iterable)
         self.unresolved = unresolved
+        self.time_exit = time_exit
 
 
 def run_rule(df, entries, mode, timeframe, rule):
@@ -97,11 +102,13 @@ def run_rule(df, entries, mode, timeframe, rule):
     which is indistinguishable from a genuinely flat trade — a rule that never
     resolves would otherwise look tied with baseline instead of untested.
     Those are counted in the returned list's `.unresolved` attribute rather
-    than passed through silently.
+    than passed through silently. `.time_exit` counts TIME_EXIT outcomes the
+    same way, for H1's registered criterion.
     """
     max_hold = rule.get("max_hold") or MAX_HOLD_CANDLES[timeframe]
     out = []
     unresolved = 0
+    time_exit = 0
     for i in entries:
         sig = _signal_at(df, i)
         if not (sig["atr"] > 0):
@@ -112,12 +119,14 @@ def run_rule(df, entries, mode, timeframe, rule):
                               exit_params=rule.get("exit_params"))
         if t["outcome"] not in RESOLVED:
             unresolved += 1
+        if t["outcome"] == "TIME_EXIT":
+            time_exit += 1
         out.append(float(t["pnl_pct"]))
     if unresolved:
         logger.warning("%d/%d entries did not resolve (OPEN row or zero-ATR "
                        "guard) and entered the sample as 0.0",
                        unresolved, len(entries))
-    return Pnls(out, unresolved=unresolved)
+    return Pnls(out, unresolved=unresolved, time_exit=time_exit)
 
 
 def paired_stats(base, cand):
@@ -179,6 +188,12 @@ def run_cell(symbol, year, mode, rules, stride=6):
         # Surfaced rather than left to pass silently as ties — see run_rule.
         s["unresolved_base"] = base.unresolved
         s["unresolved_cand"] = cand.unresolved
+        # TIME_EXIT share per arm, over ALL entries in the cell (not just the
+        # resolved ones) — this is the field prereg §5's additional H1
+        # criterion is read from.
+        n_entries = len(entries)
+        s["time_exit_pct_base"] = (base.time_exit / n_entries * 100) if n_entries else 0.0
+        s["time_exit_pct_cand"] = (cand.time_exit / n_entries * 100) if n_entries else 0.0
         results[name] = s
     return results
 
@@ -234,7 +249,8 @@ def main():
                       f"base={s['base_mean']:+.4f}pp cand={s['cand_mean']:+.4f}pp  "
                       f"mean_diff={s['mean_diff']:+.4f}pp  "
                       f"win_share={s['win_share']:.3f}  "
-                      f"unresolved={s['unresolved_base']}/{s['unresolved_cand']}")
+                      f"unresolved={s['unresolved_base']}/{s['unresolved_cand']}  "
+                      f"time_exit%={s['time_exit_pct_base']:.1f}/{s['time_exit_pct_cand']:.1f}")
                 rows_printed += 1
 
     if rows_printed == 0:

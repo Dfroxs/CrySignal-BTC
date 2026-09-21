@@ -1852,6 +1852,26 @@ def test_run_rule_honours_a_max_hold_override():
     assert long_[0] > short[0], (short, long_)
 
 
+def test_run_rule_counts_time_exit_share():
+    """H1's registered additional criterion (prereg doc section 5) reads the
+    TIME_EXIT share per arm, so Pnls must actually carry that count, not just
+    `.unresolved`. One entry parked in a long flat run must resolve
+    TIME_EXIT; a second entry placed where price ramps hard must resolve WIN
+    — proving `.time_exit` counts per-entry outcomes, not "TIME_EXIT ever
+    appeared anywhere in this df".
+    """
+    from scripts.exit_ic import run_rule
+    flat = [1000] * 26                            # indices 0..25 (entry 0 sits here)
+    ramp = [1000 + 100 * k for k in range(1, 19)]  # indices 26..43 (entry 25 sits at 25)
+    closes = flat + ramp
+    highs = [c + 1 for c in flat] + [c + 50 for c in ramp]
+    df = _exit_fixture(closes, highs=highs)
+    out = run_rule(df, [0, 25], "spot", "4h", {})
+    assert len(out) == 2, len(out)
+    assert out.unresolved == 0, out.unresolved
+    assert out.time_exit == 1, out.time_exit
+
+
 def test_run_rule_is_deterministic():
     """Same frame, same entries, same params -> byte-identical output. A
     confirmatory run that cannot be reproduced cannot be checked."""
@@ -2035,6 +2055,7 @@ if __name__ == "__main__":
     run("synth entries drop untradeable tail",    test_synth_entries_drop_the_untradeable_tail)
     run("paired stats are truly paired",          test_paired_stats_is_paired_not_two_samples)
     run("run_rule honours a max_hold override",   test_run_rule_honours_a_max_hold_override)
+    run("run_rule counts TIME_EXIT share",         test_run_rule_counts_time_exit_share)
     run("run_rule is deterministic",              test_run_rule_is_deterministic)
     run("tail margin sizes to longest rule",       test_tail_margin_sizes_to_the_longest_rule_not_baseline)
 
