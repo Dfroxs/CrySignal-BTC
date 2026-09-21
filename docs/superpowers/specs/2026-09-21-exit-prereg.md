@@ -184,9 +184,28 @@ criteria — all four must hold for H1 to be adopted.
 
 ## 6. H2 — post-TP1 trailing tightening
 
-*Statement:* `trailing_post_tp1_factor = 0.8` (the shipped default — tighten
-the trail 20% after TP1) beats leaving the trail unchanged after TP1
-(`rules["H2"]` above sets the candidate arm to `1.0`).
+*Statement, direction fixed before any cell is run:* leaving the trail
+unchanged after TP1 (`trailing_post_tp1_factor = 1.0`) improves per-entry net
+P&L over the shipped 0.8 tightening. **The candidate arm is `1.0`**
+(`rules["H2"]` above); the baseline arm tightens by 0.8 exactly as the bot
+ships today.
+
+This document was first committed (`2a39777`) stating H2 the other way round —
+"0.8 beats leaving the trail unchanged" — which named the *baseline* as the
+thing under test. Criterion 1 reads "favours the candidate", so a pass would
+have refuted the stated hypothesis instead of confirming it. The rule dict and
+the run commands are **unchanged**; the same numbers are computed either way.
+Only the prose direction is corrected, and it is corrected here **before any
+confirmatory cell has been run** — the amendment is recorded rather than
+silently applied, because a pre-registration that can be edited without a trace
+is worth nothing.
+
+This is the identical defect already fixed for H3, and it was caught the same
+way: by a reader who was not the author checking the rule dict against the
+prose.
+
+**A pass means the post-TP1 tightening does not earn its place. A failure means
+the shipped 0.8 stands.**
 
 *Judged on the shared criteria (§4), all 40 cells.*
 

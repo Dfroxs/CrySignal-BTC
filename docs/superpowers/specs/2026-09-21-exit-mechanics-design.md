@@ -259,8 +259,19 @@ by **≥ 10 percentage points**, and mean per-trade net P&L must not fall.
 
 ### H2 — post-TP1 trailing tightening
 
-*Statement:* `trailing_post_tp1_factor = 0.8` (tighten the trail 20% after TP1)
-beats leaving the trail unchanged, on the same entry population.
+*Statement (restated for sign uniformity, before any cell was run):* leaving
+the trail unchanged after TP1 (`trailing_post_tp1_factor = 1.0`) improves
+per-entry net P&L over the shipped 0.8 tightening. **The candidate arm is
+`1.0`**; the baseline tightens exactly as the bot ships.
+
+The original wording ("0.8 beats leaving the trail unchanged") named the
+*baseline* as the thing being tested, so a pass under criterion 1 — which reads
+"favours the candidate" — would have refuted the stated hypothesis rather than
+confirming it. Same defect as H3's, and caught the same way: by someone other
+than the author reading the rule dict against the prose.
+
+**A pass means the post-TP1 tightening does not earn its place. A failure means
+the shipped 0.8 stands.**
 
 *Judged on the shared criteria.*
 
