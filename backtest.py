@@ -319,7 +319,7 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, exit_par
     """
     _ALLOWED = {"trailing_atr_factor", "trailing_post_tp1_factor",
                 "trailing_advance_min_ratio", "max_position_hours",
-                "vol_expansion_exit_mult"}
+                "vol_expansion_exit_mult", "partial_enabled"}
     ep = exit_params or {}
     unknown = set(ep) - _ALLOWED
     if unknown:
@@ -350,6 +350,12 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, exit_par
                                RISK_CONFIG.get("trailing_post_tp1_factor", 0.8))
     min_adv_ratio     = ep.get("trailing_advance_min_ratio",
                                RISK_CONFIG.get("trailing_advance_min_ratio", 0.5))
+    # H3: does the 50/50 partial at TP1 earn its place over taking the whole
+    # position at TP2? Default True reproduces today's behaviour exactly.
+    # When False, TP1 never fires, so `post_tp1_factor` is never applied
+    # (the trail factor is keyed off `partial_closed`, which then never
+    # becomes True) — it goes inert on its own, no separate guard needed.
+    partial_enabled = ep.get("partial_enabled", True)
     partial_closed = False
     partial_pnl = 0
     # No FUNDING_EXIT in backtest — funding rate isn't available historically.
@@ -404,8 +410,8 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, exit_par
                 if new_trail > trail + min_adv:
                     trail = new_trail
 
-            # Partial TP1 (50%)
-            if not partial_closed and high >= tp1:
+            # Partial TP1 (50%) — skipped entirely when partial_enabled=False
+            if partial_enabled and not partial_closed and high >= tp1:
                 signal["_partial_taken"] = True
                 partial_pnl = (tp1 - entry) / entry * 100 - _costs(mode, 2)
                 # Mirror trading/paper.py exactly: SPOT pulls the trail to
@@ -419,9 +425,10 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, exit_par
                     trail = max(trail, entry)
                 partial_closed = True
 
-            # TP2 after partial
-            if partial_closed and tp2 and high >= tp2:
-                exit_pnl = _net_pnl(stype, entry, tp2, True, partial_pnl, mode)
+            # TP2 — after the partial when partial_enabled; as the WHOLE
+            # position (no partial ever taken) when partial_enabled=False.
+            if tp2 and high >= tp2 and (partial_closed or not partial_enabled):
+                exit_pnl = _net_pnl(stype, entry, tp2, partial_closed, partial_pnl, mode)
                 return _make_trade(df, entry_idx, j, signal, "WIN", entry, tp2, exit_pnl)
 
             # Trailing stop hit
@@ -438,7 +445,7 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, exit_par
                 if new_trail < trail - min_adv:
                     trail = new_trail
 
-            if not partial_closed and low <= tp1:
+            if partial_enabled and not partial_closed and low <= tp1:
                 signal["_partial_taken"] = True
                 partial_pnl = (entry - tp1) / entry * 100 - _costs(mode, 2)
                 # Mirror of the BUY path, and of trading/paper.py's SELL branch.
@@ -448,8 +455,8 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, exit_par
                     trail = min(trail, entry)
                 partial_closed = True
 
-            if partial_closed and tp2 and low <= tp2:
-                exit_pnl = _net_pnl(stype, entry, tp2, True, partial_pnl, mode)
+            if tp2 and low <= tp2 and (partial_closed or not partial_enabled):
+                exit_pnl = _net_pnl(stype, entry, tp2, partial_closed, partial_pnl, mode)
                 return _make_trade(df, entry_idx, j, signal, "WIN", entry, tp2, exit_pnl)
 
             if high >= trail:

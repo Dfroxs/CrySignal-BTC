@@ -199,13 +199,14 @@ def main():
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s [%(levelname)s] %(message)s")
 
-    # H3 needs the partial disabled, which no knob does yet. Task 5 either adds
-    # `partial_enabled` and registers H3 here, or drops H3. It is deliberately
-    # absent rather than aliased to H2 — a rule table where two names share one
-    # params dict silently reports the same number twice.
+    # H3 kept (Task 5): `partial_enabled` now exists in _simulate_forward's
+    # _ALLOWED set. The CANDIDATE arm is the one with the partial DISABLED —
+    # taking the whole position at TP2 instead of 50% at TP1 + 50% at TP2 —
+    # per docs/superpowers/specs/2026-09-21-exit-prereg.md. A pass means the
+    # partial does not earn its place; a failure means the partial stands.
     # A typo in --only must fail loudly. Silently yielding an empty rule table
     # would print nothing and read as "no cells qualified".
-    KNOWN = {"H1", "H2"}
+    KNOWN = {"H1", "H2", "H3"}
     if args.only is not None and args.only not in KNOWN:
         raise ValueError(f"--only must be one of {sorted(KNOWN)}, got {args.only!r}")
     rules = {"baseline": {}}
@@ -215,6 +216,8 @@ def main():
         rules["H1"] = {"max_hold": 72, "exit_params": {"max_position_hours": 288}}
     if args.only in (None, "H2"):
         rules["H2"] = {"exit_params": {"trailing_post_tp1_factor": 1.0}}
+    if args.only in (None, "H3"):
+        rules["H3"] = {"exit_params": {"partial_enabled": False}}
 
     rows_printed = 0
     for year in [int(y) for y in args.years.split(",")]:

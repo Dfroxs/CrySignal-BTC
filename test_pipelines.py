@@ -1689,6 +1689,68 @@ def test_exit_params_rejects_an_unknown_key():
     raise AssertionError("unknown exit_params key was accepted")
 
 
+def test_exit_partial_disabled_never_takes_partial_buy():
+    """H3's knob: partial_enabled=False must skip TP1 entirely and take the
+    WHOLE position at TP2 instead — proven against a fixture where the
+    partial-enabled arm demonstrably DOES take a partial, so a fixture that
+    never reaches TP1 could not accidentally pass this.
+    """
+    from backtest import _simulate_forward
+    closes = [1000] + [1000 + 40 * k for k in range(1, 20)]
+    df = _exit_fixture(closes, highs=[c + 30 for c in closes])
+
+    enabled = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot")
+    assert enabled["partial"] is True, enabled  # sanity: fixture reaches TP1
+
+    disabled = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot",
+                                 exit_params={"partial_enabled": False})
+    assert disabled["partial"] is False, disabled
+    # Whole position closes WIN at TP2 — TP2 is not gated behind a partial
+    # that never happened.
+    assert disabled["outcome"] == "WIN", disabled["outcome"]
+    assert disabled["exit_price"] == 1300.0, disabled["exit_price"]
+    # Skipping the partial changes the cost/blend math, so the two arms must
+    # not silently produce the same P&L (that would mean the guard did
+    # nothing).
+    assert disabled["pnl_pct"] != enabled["pnl_pct"], (disabled, enabled)
+
+
+def test_exit_partial_disabled_never_takes_partial_sell():
+    """Mirrors the BUY test for the SELL branch — the branch most likely to
+    be left unguarded, which would silently make H3 measure only half its
+    population (spot cannot short, but futures entries can be SELL).
+    """
+    from backtest import _simulate_forward
+    closes = [1000] + [1000 - 40 * k for k in range(1, 20)]
+    df = _exit_fixture(closes, lows=[c - 30 for c in closes])
+    sig = lambda: _exit_signal(stype="SELL", entry=1000.0, sl=1150.0,
+                               tp1=850.0, tp2=700.0, atr=100.0)
+
+    enabled = _simulate_forward(df, 0, sig(), 18, "4h", "spot")
+    assert enabled["partial"] is True, enabled  # sanity: fixture reaches TP1
+
+    disabled = _simulate_forward(df, 0, sig(), 18, "4h", "spot",
+                                 exit_params={"partial_enabled": False})
+    assert disabled["partial"] is False, disabled
+    assert disabled["outcome"] == "WIN", disabled["outcome"]
+    assert disabled["exit_price"] == 700.0, disabled["exit_price"]
+    assert disabled["pnl_pct"] != enabled["pnl_pct"], (disabled, enabled)
+
+
+def test_exit_partial_enabled_true_matches_default_behaviour():
+    """exit_params={'partial_enabled': True} (explicit) must reproduce
+    exit_params=None exactly — the new knob must not perturb the default
+    path even when passed explicitly."""
+    from backtest import _simulate_forward
+    closes = [1000] + [1000 + 40 * k for k in range(1, 20)]
+    df = _exit_fixture(closes, highs=[c + 30 for c in closes])
+    a = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot")
+    b = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot",
+                          exit_params={"partial_enabled": True})
+    assert a["outcome"] == b["outcome"] and a["pnl_pct"] == b["pnl_pct"] \
+        and a["partial"] == b["partial"], (a, b)
+
+
 def test_compute_stats_buckets_by_pnl_sign_not_outcome_label():
     """A profitable TIME_EXIT must count as a win, not a loss, and the
     profit-factor guard must never diverge from what the denominator divides
@@ -1963,6 +2025,9 @@ if __name__ == "__main__":
     run("exit_params=None matches config",        test_exit_params_none_matches_config)
     run("trailing factor override takes effect",  test_exit_params_trailing_factor_changes_the_exit)
     run("unknown exit_params key is rejected",    test_exit_params_rejects_an_unknown_key)
+    run("partial_enabled=False skips TP1 (BUY)",   test_exit_partial_disabled_never_takes_partial_buy)
+    run("partial_enabled=False skips TP1 (SELL)",  test_exit_partial_disabled_never_takes_partial_sell)
+    run("partial_enabled=True matches default",    test_exit_partial_enabled_true_matches_default_behaviour)
     run("stats bucket by P&L sign, not label",  test_compute_stats_buckets_by_pnl_sign_not_outcome_label)
 
     print("\n── 21. exit_ic.py — synthetic exit comparison ──")

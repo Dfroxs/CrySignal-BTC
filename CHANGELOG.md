@@ -4,6 +4,48 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-09-22 — feat: `partial_enabled` exit knob; pre-register exit-mechanics hypotheses
+
+Task 5 of the exit-mechanics plan. Kept H3 ("the 50/50 partial beats a single
+exit at TP2") rather than dropping it: the partial is a core exit mechanic
+that had never been tested, the cost of testing it is a few lines plus one
+test, and the repo's own answer to the multiple-comparison problem — `--only`,
+reading a single committed row — already covers the concern that dropping a
+hypothesis would address.
+
+### Added
+`_simulate_forward` (`backtest.py`) takes `partial_enabled` in `exit_params`,
+defaulting to `True`. Guards the TP1/partial block on **both** the BUY
+(`high >= tp1`) and SELL (`low <= tp1`) sides. When `False`, TP1 never fires —
+`trailing_post_tp1_factor` goes inert on its own, since the trail factor is
+already keyed off `partial_closed`, which then never becomes `True` — and the
+TP2 check no longer waits on a partial that will never happen, so the position
+still closes WIN at TP2 (100% of size, not 50%), or via the trailing stop, a
+vol exit, or the time cap. `exit_params=None` and
+`exit_params={"partial_enabled": True}` are both byte-identical to today's
+behaviour; three new tests in `test_pipelines.py` (BUY, SELL, explicit-True)
+cover it, on top of the existing suite staying green untouched.
+
+`scripts/exit_ic.py` registers `H3` in `KNOWN` and the rule table as
+`{"exit_params": {"partial_enabled": False}}` — the **candidate** arm is the
+one with the partial disabled, so a pass means the partial does not earn its
+place and a failure means it stands.
+
+### Docs
+`docs/superpowers/specs/2026-09-21-exit-prereg.md` — the pre-registration for
+H1/H2/H3, committed before any confirmatory cell is run: exact rule dicts,
+the 40-cell grid (20 for H1), the shared adoption criteria verbatim from the
+design doc (sign consistency, effect size measured over all entries not
+`n_eff`, no mode reversal), and the closing rule that criteria are not
+revised after results are seen.
+
+### No behaviour change
+`partial_enabled` is opt-in and off by default in the sense that omitting it
+(or passing `True`) reproduces today's trades exactly — nothing the running
+bot does changes.
+
+---
+
 ## 2026-09-21 — fix: TIME_EXIT was unreachable — the backtest discarded slow trades
 
 Task 3 of the exit-mechanics plan. Deliberate behaviour change, isolated in
