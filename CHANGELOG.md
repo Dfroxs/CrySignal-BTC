@@ -4,6 +4,64 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-09-22 — EXIT MECHANICS CLOSED: all three hypotheses rejected. Nothing ships.
+
+Task 6 of the exit-mechanics plan. The confirmatory grid pre-registered in
+`docs/superpowers/specs/2026-09-21-exit-prereg.md` was run and scored. Three
+hypotheses, all registered before any cell of their grid was seen, **all three
+rejected by their own criteria**. Full working:
+`docs/superpowers/specs/2026-09-21-exit-results.md`.
+
+### Result
+
+| hypothesis | criterion | required | got |
+|---|---|---|---|
+| `H1` spot cap in candles | positive sign across cells | ≥ 16 of 20 | **6 of 20** |
+| `H1` | pooled effect, all 6,405 entries | ≥ +0.05 pp | **−0.0957 pp** |
+| `H1` | `TIME_EXIT` share must fall | ≥ 10 pp | 25.42 pp — PASS |
+| `H1` | mean per-trade P&L must not fall | `cand ≥ base` | **−0.6310 vs −0.5354 pp** |
+| `H2` no post-TP1 tighten | positive sign across cells | ≥ 32 of 40 | **22 of 40** |
+| `H2` | pooled effect, all 34,880 entries | ≥ +0.05 pp | **+0.0036 pp** |
+| `H2` | both mode subtotals favour candidate | spot & futures > 0 | +0.0179 / +0.0003 pp — PASS by a hair |
+| `H3` drop the 50/50 partial | positive sign across cells | ≥ 32 of 40 | **3 of 40** |
+| `H3` | pooled effect, all 34,880 entries | ≥ +0.05 pp | **−0.0619 pp** |
+| `H3` | both mode subtotals favour candidate | spot & futures > 0 | **−0.0812 / −0.0574 pp** |
+
+100 cells across 5 assets × 4 years × 2 modes (BTC, ETH, BNB, XRP, LINK;
+2020–2023), every cell producing a row, `unresolved=0/0` on all of them. BTC
+2024–2025 was excluded as burned exploratory data; the non-BTC 2024–2025 reserve
+holdout **was not read** and stays available.
+
+### Nothing ships
+No hypothesis met every applicable criterion, so **no value changes**.
+`MAX_HOLD_CANDLES["4h"]` stays `18`, `max_position_hours_spot` stays `72`,
+`trailing_post_tp1_factor` stays `0.8`, and the 50/50 partial at TP1 stays
+enabled. `config.py` and `backtest.py` are untouched by this task;
+`test_pipelines.py` stands at 100/100.
+
+### The finding worth keeping
+H1 split cleanly, and that is the useful part. Giving spot the same 72-candle
+allowance futures already has does exactly what it was designed to do — the
+`TIME_EXIT` share collapses from 25.5% of entries to 0.05%, clearing its
+10-point bar by 15.4 — and per-trade P&L gets **worse** by 0.096 pp. Over the
+1,631 pairs that differ, the candidate loses 0.376 pp each. The positions the
+cap was cutting short were, on average, positions worth cutting short. The
+spot/futures unit asymmetry is real; removing it costs money on 20 untouched
+cells.
+
+That is not a licence to try 36 candles. Every criterion was fixed before any
+cell ran, and picking a new cap after seeing 72 fail is the move the
+pre-registration exists to prevent.
+
+H3's failure is evidence about a **three-part bundle** — the split, the inert
+post-TP1 tighten, and the lost TP1 breakeven snap — not about the split alone
+(prereg §7). Its registered execution-cost asymmetry (§7.1) biases *against* the
+candidate by 0.075 pp on spot and 0.045 pp on futures, and was not corrected for:
+the observed per-differing-pair deficit is ~0.58–0.62 pp, an order of magnitude
+larger than the bias could explain.
+
+---
+
 ## 2026-09-22 — feat: `partial_enabled` exit knob; pre-register exit-mechanics hypotheses
 
 Task 5 of the exit-mechanics plan. Kept H3 ("the 50/50 partial beats a single
