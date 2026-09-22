@@ -75,18 +75,27 @@ Judged on the 20 spot cells.
 | 1 | Sign consistency — cells with `mean_diff > 0` | ≥ 16 of 20 | **6 of 20** | **FAIL** |
 | 2 | Effect size — pooled paired mean, all 6,405 entries | ≥ +0.05 pp | **−0.0957 pp** | **FAIL** |
 | 3 | No mode reversal | *not applicable — spot only* | — | n/a |
-| H1a | `TIME_EXIT` share must fall | ≥ 10.0 pp | **25.42 pp** (25.47% → 0.05%) | PASS |
-| H1b | Mean per-trade net P&L must not fall | pooled `cand_mean ≥ base_mean` | **−0.6310 vs −0.5354 pp** — falls by 0.0957 pp | **FAIL** |
+| 4 | **§5 additional criterion — a single conjunction, both halves required** | H1a **and** H1b | see below | **FAIL** |
+| — | *H1a (first half)* — `TIME_EXIT` share must fall | ≥ 10.0 pp | **25.42 pp** (25.47% → 0.05%) | half met |
+| — | *H1b (second half)* — mean per-trade net P&L must not fall | pooled `cand_mean ≥ base_mean` | **−0.6310 vs −0.5354 pp** — falls by 0.0957 pp | **half missed** |
 
-**Verdict: H1 FAILED** (criteria 1, 2 and H1b). The spot hold cap stays at
+**H1a and H1b are not two criteria.** §5 registers them as one conjunction —
+the `TIME_EXIT` share must fall by ≥ 10 pp **and** P&L must not fall — so
+criterion 4 is satisfied only if both halves hold. The first half is met and the
+second is not, which makes **criterion 4 a FAIL**. The 25.42 pp fall is a real
+and substantial finding, reported in full below; it is not a criterion that
+passed, and nothing in this document should be quoted as though it were.
+
+**Verdict: H1 FAILED** (criteria 1, 2 and 4). The spot hold cap stays at
 `MAX_HOLD_CANDLES["4h"] = 18` and `max_position_hours_spot = 72`.
 
 ### What the failure says
 
 The mechanic did exactly what it was designed to do and the money got worse.
-Criterion H1a is not a near thing — the `TIME_EXIT` share collapses from 25.47%
-of entries to 0.05%, clearing a 10-point bar by 15.4 points. Giving spot 72
-candles genuinely removes the forced time exit almost entirely.
+The first half of criterion 4 is not a near thing — the `TIME_EXIT` share
+collapses from 25.47% of entries to 0.05%, clearing a 10-point bar by 15.4
+points. Giving spot 72 candles genuinely removes the forced time exit almost
+entirely.
 
 Those trades then go on to lose more than the cap was costing. Over the 1,631
 pairs that differ at all (25.5% of entries), the mean effect is **−0.3756 pp**:
@@ -284,17 +293,45 @@ more suspicious by this asymmetry," and "add back half a side and see if a
 near-miss clears" is explicitly not available. `_net_pnl` is not changed, and no
 adjusted figure is scored anywhere in this document.
 
-For context only — not as an adjustment, and not as a criterion — the asymmetry
-is far too small to be the story:
+**On computing an add-back at all, directly below a clause that forbids one.**
+§7.1's prohibition was read and is honoured. What it forbids is using an
+add-back to *rescue* a near-miss — to take a candidate that just missed and
+declare it a pass once the bias is removed. The arithmetic below runs in the
+candidate's favour and the candidate still fails every criterion by an order of
+magnitude, so it can only strengthen the FAIL, never convert it. **No figure
+below is scored against any criterion**; the verdict in the table above is
+computed entirely from the unadjusted logs. It is reported because a caveat
+registered as running against the candidate is worth nothing to a reader unless
+its magnitude is shown.
 
-- Over the pairs that actually differ, the candidate is worse by **−0.5762 pp**
-  (spot) and **−0.6231 pp** (futures) per pair. The asymmetry is 0.075 / 0.045 pp:
-  roughly **8× and 14× smaller** than the effect it would have to explain.
-- Zeroing it out entirely on *every* differing pair — the largest correction
-  arithmetically possible, and one §7.1 forbids — would move the spot subtotal
-  to −0.0706 pp and futures to −0.0532 pp, leaving both negative, and the
-  combined pooled figure to −0.0565 pp, still 0.107 pp short of the +0.05 bar.
-  Criterion 1 would reach at most 13 of 40 against a bar of 32.
+For context only — not as an adjustment, and not as a criterion — the asymmetry
+is far too small to be the story.
+
+Over the pairs that actually differ, the candidate is worse by **−0.5762 pp**
+(spot) and **−0.6231 pp** (futures) per pair. The asymmetry is 0.075 / 0.045 pp:
+roughly **8× and 14× smaller** than the effect it would have to explain.
+
+Zeroing the asymmetry out entirely gives the figures below. Two bases are
+available and they differ, so both are given in full rather than one number
+taken from each — the pooled figures and the cell counts on a single row are
+always computed the same way:
+
+| Basis | Correction applied | spot pooled | futures pooled | combined pooled | cells `> 0` |
+|---|---|---:|---:|---:|---:|
+| **A** — bias on differing pairs | `bias × n_effᵢ/nᵢ` per cell | −0.0706 pp | −0.0533 pp | −0.0565 pp | **5 of 40** |
+| **B** — bias on every entry | full `bias` per cell | −0.0062 pp | −0.0124 pp | −0.0112 pp | **13 of 40** |
+
+Basis **A** is the defensible one: the asymmetry can only bite on entries where
+the baseline actually resolved via the partial path, and `n_eff` — pairs whose
+arms differ at all — is the largest that count can be. Basis **B** charges the
+correction to every entry including the ~86–91% whose arms are identical, so it
+over-corrects; it is reported because it is the true arithmetic ceiling, the
+most generous number available to the candidate under any reading.
+
+**Neither basis rescues anything.** Criterion 2 needs +0.05 pp and the most
+generous basis reaches −0.0112 pp, still 0.061 pp short. Criterion 3 needs both
+subtotals positive and both stay negative on both bases. Criterion 1 needs 32 of
+40 and the most generous basis reaches 13.
 
 The failure survives its own registered caveat by an order of magnitude.
 

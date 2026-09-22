@@ -18,8 +18,7 @@ rejected by their own criteria**. Full working:
 |---|---|---|---|
 | `H1` spot cap in candles | positive sign across cells | ≥ 16 of 20 | **6 of 20** |
 | `H1` | pooled effect, all 6,405 entries | ≥ +0.05 pp | **−0.0957 pp** |
-| `H1` | `TIME_EXIT` share must fall | ≥ 10 pp | 25.42 pp — PASS |
-| `H1` | mean per-trade P&L must not fall | `cand ≥ base` | **−0.6310 vs −0.5354 pp** |
+| `H1` | §5 additional criterion — **one conjunction**: `TIME_EXIT` share falls **and** per-trade P&L does not fall | ≥ 10 pp fall **and** `cand ≥ base` | **FAILED** — share fell 25.42 pp (that half met); P&L fell, **−0.6310 vs −0.5354 pp** (that half missed) |
 | `H2` no post-TP1 tighten | positive sign across cells | ≥ 32 of 40 | **22 of 40** |
 | `H2` | pooled effect, all 34,880 entries | ≥ +0.05 pp | **+0.0036 pp** |
 | `H2` | both mode subtotals favour candidate | spot & futures > 0 | +0.0179 / +0.0003 pp — PASS by a hair |
