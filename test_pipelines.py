@@ -1643,6 +1643,37 @@ def test_exit_time_cap_fires_at_the_cap():
     assert t["candles_held"] == 19, t["candles_held"]
 
 
+def test_max_hold_candles_matches_max_position_hours():
+    """The `TIME_EXIT` branch's reachability is not a law of `_simulate_forward`
+    — it is a configuration dependency this test is the only thing enforcing.
+
+    `_simulate_forward`'s loop bound (`backtest.py`, the `+2 rather than +1`
+    comment above the forward loop) makes `TIME_EXIT` reachable only because
+    `(max_hold + 1) * mult > max_hours`, which holds only because
+    `MAX_HOLD_CANDLES[tf] * mult == max_position_hours*` EXACTLY — coincidence
+    dressed as arithmetic (18 x 4 == 72, 72 x 1 == 72).
+
+    If either side of either pair drifts on its own, one of two things happens
+    silently: lower `max_position_hours*` (or raise `MAX_HOLD_CANDLES`) and
+    the equality breaks the OTHER way, and `TIME_EXIT` goes unreachable again
+    exactly as it was before `6d085cd` fixed it. Raise `max_position_hours*`
+    instead (e.g. spot 72 -> 80) and `TIME_EXIT` stays dead too, but for a
+    different reason: the loop's extra `+2` candle stops being consumed by the
+    time check and becomes a real extra candle of TP2/trail/vol-exit
+    opportunity in every trade that reaches it — changing every exit path in
+    that mode, not just the slow ones, not just TIME_EXIT.
+
+    This does not fix either failure mode — it only makes the dependency loud
+    the moment someone edits `config.py` without reading this comment.
+    """
+    from backtest import MAX_HOLD_CANDLES
+    from config import RISK_CONFIG
+    assert MAX_HOLD_CANDLES["4h"] * 4 == RISK_CONFIG["max_position_hours_spot"], \
+        (MAX_HOLD_CANDLES["4h"], RISK_CONFIG["max_position_hours_spot"])
+    assert MAX_HOLD_CANDLES["1h"] * 1 == RISK_CONFIG["max_position_hours"], \
+        (MAX_HOLD_CANDLES["1h"], RISK_CONFIG["max_position_hours"])
+
+
 def test_exit_open_row_still_used_when_candles_run_out():
     """OPEN is still correct when the FRAME ends early — that is a data
     limit, not a hold limit, and must not be mislabelled TIME_EXIT."""
@@ -1852,6 +1883,124 @@ def test_run_rule_honours_a_max_hold_override():
     assert long_[0] > short[0], (short, long_)
 
 
+def test_run_rule_honours_an_explicit_zero_max_hold():
+    """`rule.get('max_hold') or MAX_HOLD_CANDLES[tf]` used to silently swap in
+    the timeframe default whenever `max_hold: 0` was passed — `0` is falsy but
+    a legitimate (if degenerate) request, and only `is None` correctly means
+    "not specified". A `max_hold` of 0 lets the forward loop see exactly one
+    candle (`range(entry_idx+1, entry_idx+2)`), which on this ramp is nowhere
+    near TP/SL and must fall through to an unresolved OPEN row at 0.0 —
+    sharply different from the nonzero, resolved P&L the 18-candle default
+    produces on the very same entry (see test_run_rule_honours_a_max_hold_
+    override, identical fixture). Under the old `or` bug, `max_hold: 0` was
+    indistinguishable from `{}` and this would assert the same nonzero value.
+    """
+    from scripts.exit_ic import run_rule
+    df = _exit_fixture([1000 + k for k in range(120)])
+    zero = run_rule(df, [10], "spot", "4h", {"max_hold": 0})
+    assert zero[0] == 0.0, zero
+    assert zero.unresolved == 1, zero.unresolved
+
+
+def test_run_cell_raises_on_an_empty_entry_set():
+    """`synth_entries` returns `[]` when the frame is too short for a rule
+    table's warmup + tail margin. Letting that reach `run_rule` used to print
+    a row with n=0 mean_diff=+0.0000 — contributing zero weight to the pooled
+    mean while still counting as a non-positive cell against criterion 1, a
+    silent bias toward failure. `run_cell` must raise instead.
+
+    `fetch_ohlcv_df` is monkeypatched to a short local fixture — no network,
+    no exchange.
+    """
+    import scripts.exit_ic as ei
+    saved = ei.fetch_ohlcv_df
+    try:
+        ei.fetch_ohlcv_df = lambda *a, **k: _exit_fixture([1000] * 50)
+        try:
+            ei.run_cell("BTC/USDT", 2020, "spot", {"baseline": {}}, stride=6)
+        except ValueError as e:
+            assert "no synthetic entries" in str(e), e
+            return
+        raise AssertionError("an empty entry set was silently accepted")
+    finally:
+        ei.fetch_ohlcv_df = saved
+
+
+def test_only_h1_without_spot_mode_is_rejected():
+    """`--only H1` with no explicit `--mode` used to default to futures and run
+    a grid the pre-registration never defines (H1 has no futures cells, prereg
+    §2/§5). Must fail before any fetch happens — proven by never installing a
+    fetch fake, so a network call here would be a test failure by hanging or
+    erroring, not a false pass.
+    """
+    import sys
+    from scripts.exit_ic import main
+    saved_argv = sys.argv
+    try:
+        sys.argv = ["exit_ic.py", "--only", "H1"]  # --mode defaults to futures
+        try:
+            main()
+        except ValueError as e:
+            assert "spot" in str(e), e
+            return
+        raise AssertionError("--only H1 without --mode spot was accepted")
+    finally:
+        sys.argv = saved_argv
+
+
+def test_main_reraises_internal_errors_instead_of_treating_them_as_fetch_failures():
+    """An internal bug (e.g. a lost `Pnls.time_exit` attribute) must crash the
+    run, not be swallowed by the same `except Exception` that catches a fetch
+    failure — that was the exact silent-failure mode this finding closes: a
+    bug indistinguishable from "cell failed — skipped" at the log line.
+    """
+    import sys
+    import scripts.exit_ic as ei
+    saved_argv, saved_fetch = sys.argv, ei.fetch_ohlcv_df
+    try:
+        def _boom(*a, **k):
+            raise AttributeError("simulated internal bug, not a fetch failure")
+        ei.fetch_ohlcv_df = _boom
+        sys.argv = ["exit_ic.py", "--mode", "spot", "--symbols", "BTC/USDT",
+                   "--years", "2020", "--only", "H2"]
+        try:
+            ei.main()
+        except AttributeError:
+            return
+        raise AssertionError("AttributeError was swallowed as a fetch failure")
+    finally:
+        sys.argv = saved_argv
+        ei.fetch_ohlcv_df = saved_fetch
+
+
+def test_main_exits_nonzero_on_an_incomplete_grid():
+    """37 of 40 cells producing a row and 3 failing must not exit 0 — that is
+    what let a short grid look complete to an unattended multi-hour run.
+    One symbol's fetch is monkeypatched to fail, the other to succeed, so the
+    grid is deliberately incomplete without ever touching a network.
+    """
+    import sys
+    import scripts.exit_ic as ei
+    saved_argv, saved_fetch = sys.argv, ei.fetch_ohlcv_df
+    try:
+        def _fake(symbol, timeframe, since=None, until=None):
+            if symbol == "A/USDT":
+                raise ConnectionError("simulated fetch failure")
+            return _exit_fixture([1000 + k for k in range(260)])
+        ei.fetch_ohlcv_df = _fake
+        sys.argv = ["exit_ic.py", "--mode", "spot", "--symbols", "A/USDT,B/USDT",
+                   "--years", "2020", "--only", "H2"]
+        try:
+            ei.main()
+        except SystemExit as e:
+            assert e.code == 1, e.code
+            return
+        raise AssertionError("an incomplete grid exited 0")
+    finally:
+        sys.argv = saved_argv
+        ei.fetch_ohlcv_df = saved_fetch
+
+
 def test_run_rule_counts_time_exit_share():
     """H1's registered additional criterion (prereg doc section 5) reads the
     TIME_EXIT share per arm, so Pnls must actually carry that count, not just
@@ -2041,6 +2190,7 @@ if __name__ == "__main__":
     run("TP1 then TP2 closes WIN",                test_exit_tp2_path_returns_win)
     run("stop hit closes LOSS",                   test_exit_stop_path_returns_loss)
     run("time cap closes as TIME_EXIT",           test_exit_time_cap_fires_at_the_cap)
+    run("hold/hour coupling is pinned",           test_max_hold_candles_matches_max_position_hours)
     run("OPEN kept when the frame runs out",      test_exit_open_row_still_used_when_candles_run_out)
     run("exit_params=None matches config",        test_exit_params_none_matches_config)
     run("trailing factor override takes effect",  test_exit_params_trailing_factor_changes_the_exit)
@@ -2055,6 +2205,11 @@ if __name__ == "__main__":
     run("synth entries drop untradeable tail",    test_synth_entries_drop_the_untradeable_tail)
     run("paired stats are truly paired",          test_paired_stats_is_paired_not_two_samples)
     run("run_rule honours a max_hold override",   test_run_rule_honours_a_max_hold_override)
+    run("run_rule honours an explicit 0 max_hold", test_run_rule_honours_an_explicit_zero_max_hold)
+    run("run_cell raises on empty entries",       test_run_cell_raises_on_an_empty_entry_set)
+    run("--only H1 requires --mode spot",          test_only_h1_without_spot_mode_is_rejected)
+    run("internal errors are not swallowed",       test_main_reraises_internal_errors_instead_of_treating_them_as_fetch_failures)
+    run("incomplete grid exits nonzero",           test_main_exits_nonzero_on_an_incomplete_grid)
     run("run_rule counts TIME_EXIT share",         test_run_rule_counts_time_exit_share)
     run("run_rule is deterministic",              test_run_rule_is_deterministic)
     run("tail margin sizes to longest rule",       test_tail_margin_sizes_to_the_longest_rule_not_baseline)

@@ -14,9 +14,17 @@ unchanged by this result.**
 ## 1. Provenance of the numbers
 
 The five pre-registered invocations (§2 of the pre-registration) were run by
-`.superpowers/sdd/2026-09-21-exit-mechanics/run/confirmatory.sh`, which spells
-them out verbatim — same `--symbols`, same `--years`, same `--stride 6`, one
-`--only` per hypothesis. All five completed 2026-09-22T02:52:02Z, exit 0.
+`confirmatory.sh`, which spells them out verbatim — same `--symbols`, same
+`--years`, same `--stride 6`, one `--only` per hypothesis. All five completed
+2026-09-22T02:52:02Z, exit 0.
+
+The script and its five raw logs are committed at
+`docs/superpowers/specs/2026-09-21-exit-run/` (~16 KB total) — the run
+directory under `.superpowers/sdd/2026-09-21-exit-mechanics/run/` is local
+only (`.superpowers/sdd/.gitignore` is `*`) and does not ship. The per-cell
+tables in §2–§4 below are the committed record independent of either copy:
+every pooled figure in this document was reproduced from those tables, not
+recomputed from the logs.
 
 | Log | Hypothesis | Cells | Rows produced |
 |---|---|---|---|
@@ -458,3 +466,27 @@ grid exists to find.
 It is not a licence to test "what about 36 candles?" Every criterion above was
 fixed before any cell ran, and picking a new cap after seeing that 72 fails is
 the exact move the pre-registration exists to prevent.
+
+---
+
+## 7. Limitations
+
+All three are disclosed in the design spec
+(`docs/superpowers/specs/2026-09-21-exit-mechanics-design.md` §4.2) but are
+restated here because this document, not that one, is what gets quoted.
+
+- **Entries are BUY-only** (`exit_ic.py:67`). Spot cannot short, so the
+  population is BUY-only across the board — including all 20 futures cells in
+  H2 and H3, even though the live futures bot takes SELL entries too. Nothing
+  in this grid exercises a SELL-side exit; these results say nothing about
+  whether the same verdicts hold on the short side.
+- **Synthetic entries have no edge.** Every 6th candle becomes a hypothetical
+  entry regardless of price context, so `base_mean` and `cand_mean` in every
+  table above are not meaningful in isolation — only the RELATIVE, paired
+  comparison between arms on the identical entry population is, which is what
+  every criterion actually reads.
+- **Stride 6 leaves overlapping forward windows.** Entries are not independent
+  draws; adjacent entries' forward simulations share candles. This is
+  tolerable for the paired, cell-level criteria used here — both arms inherit
+  the identical overlap — but would not license a t-test, which is one more
+  reason none is used (§4 above).

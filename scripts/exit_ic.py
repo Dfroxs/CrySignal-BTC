@@ -105,7 +105,8 @@ def run_rule(df, entries, mode, timeframe, rule):
     than passed through silently. `.time_exit` counts TIME_EXIT outcomes the
     same way, for H1's registered criterion.
     """
-    max_hold = rule.get("max_hold") or MAX_HOLD_CANDLES[timeframe]
+    _rule_max_hold = rule.get("max_hold")
+    max_hold = _rule_max_hold if _rule_max_hold is not None else MAX_HOLD_CANDLES[timeframe]
     out = []
     unresolved = 0
     time_exit = 0
@@ -178,6 +179,17 @@ def run_cell(symbol, year, mode, rules, stride=6):
     until = int(pd.Timestamp(f"{year + 1}-01-01", tz="UTC").timestamp() * 1000)
     df = fetch_ohlcv_df(symbol, tf, since=since, until=until)
     entries = synth_entries(df, stride, tail=_tail_margin(rules, tf))
+    if not entries:
+        # A rule table's longest hold plus warmup can exceed a short fetch
+        # (`synth_entries` returns [] when `len(df) - tail < warmup`). Letting
+        # this fall through to `run_rule` on an empty entries list used to
+        # print a row with n=0 mean_diff=+0.0000 — indistinguishable from a
+        # genuine null result, contributing zero weight to the pooled mean
+        # yet still counting as a non-positive cell against criterion 1. Must
+        # be loud, not a silent bias toward failure.
+        raise ValueError(f"no synthetic entries for {symbol} {year} {mode}: "
+                         f"frame too short (len(df)={len(df)}) for the "
+                         f"warmup + tail margin this rule table needs")
     base = run_rule(df, entries, mode, tf, rules["baseline"])
     results = {}
     for name, rule in rules.items():
@@ -224,6 +236,17 @@ def main():
     KNOWN = {"H1", "H2", "H3"}
     if args.only is not None and args.only not in KNOWN:
         raise ValueError(f"--only must be one of {sorted(KNOWN)}, got {args.only!r}")
+    # H1 is registered spot-only (prereg §2, §5 — it has no futures cells and
+    # no mode-reversal criterion). `--mode` defaults to futures, so
+    # `--only H1` with no explicit `--mode` used to run a full futures grid
+    # where H1's `max_hold: 72` already equals MAX_HOLD_CANDLES["1h"], so the
+    # only live change was `max_position_hours: 288` disabling the time exit
+    # outright — every baseline TIME_EXIT becomes an unresolved 0.0 candidate,
+    # and the script printed plausible-looking rows for a comparison the
+    # pre-registration never defines.
+    if args.only == "H1" and args.mode != "spot":
+        raise ValueError("--only H1 is spot-only (prereg §2/§5 has no H1 "
+                         "futures cells) — pass --mode spot")
     rules = {"baseline": {}}
     if args.only in (None, "H1"):
         # 72 candles, matching what futures already gets, and the hour cap moved
@@ -234,11 +257,28 @@ def main():
     if args.only in (None, "H3"):
         rules["H3"] = {"exit_params": {"partial_enabled": False}}
 
+    years = [int(y) for y in args.years.split(",")]
+    symbols = args.symbols.split(",")
+    # The pre-registration's denominator is fixed (§2): a hypothesis is scored
+    # only once every cell in its grid has produced a row, and a failed cell
+    # "must be retried until it produces a row, not dropped." `rows_printed ==
+    # 0` only ever caught TOTAL failure — 37 of 40 cells silently missing
+    # still exits 0 and prints nothing unusual. Checking against the full
+    # expected count is what makes a short grid loud instead of merely quiet.
+    expected_rows = len(years) * len(symbols) * (len(rules) - 1)  # minus baseline
+
     rows_printed = 0
-    for year in [int(y) for y in args.years.split(",")]:
-        for symbol in args.symbols.split(","):
+    for year in years:
+        for symbol in symbols:
             try:
                 res = run_cell(symbol, year, args.mode, rules, args.stride)
+            except (AttributeError, KeyError):
+                # These mean the harness itself is broken (e.g. a lost
+                # Pnls.time_exit attribute) — not a fetch failure. Catching
+                # them the same as a network error would print "cell failed —
+                # skipped" for an internal bug and let a short grid pass for
+                # a complete one. Let it crash.
+                raise
             except Exception as exc:
                 logger.warning("cell %s %s %s failed: %s — skipped",
                                symbol, year, args.mode, exc)
@@ -253,12 +293,16 @@ def main():
                       f"time_exit%={s['time_exit_pct_base']:.1f}/{s['time_exit_pct_cand']:.1f}")
                 rows_printed += 1
 
-    if rows_printed == 0:
-        # Every cell failed (unlisted symbol, rate limit, a typo that slipped
-        # past --only). Printing nothing and exiting 0 reads exactly like "no
-        # cells qualified" to an unattended multi-hour run — it must not.
-        logger.error("no cells produced a row — every cell failed or the "
-                     "symbol/year set was empty")
+    if rows_printed != expected_rows:
+        # A short grid (unlisted symbol, rate limit, an empty-entries cell, a
+        # typo that slipped past --only) must not read like a complete one to
+        # an unattended multi-hour run, and must not be scored against a
+        # quietly shrunk denominator — see prereg §2.
+        logger.error("incomplete grid: %d/%d rows produced (%d years x %d "
+                     "symbols x %d rule(s)) — a cell failed or was skipped; "
+                     "retry it, don't score a shrunk grid",
+                     rows_printed, expected_rows, len(years), len(symbols),
+                     len(rules) - 1)
         sys.exit(1)
 
 

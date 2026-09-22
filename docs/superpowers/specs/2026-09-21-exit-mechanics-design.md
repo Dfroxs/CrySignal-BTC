@@ -148,8 +148,13 @@ drift from `_simulate_forward` within months and nothing would report it.
 
 ### 4.2 `scripts/exit_ic.py`
 
-Mirrors `condition_ic.py` in shape and CLI (`--start/--end`, `--matrix`,
-`--only`, `--symbol(s)`, `--years`).
+Mirrors `condition_ic.py` in shape — a paired synthetic-entry harness — and
+shares its `--only`, `--symbols`, `--years` flags. It does **not** carry
+`condition_ic.py`'s `--start/--end` or `--matrix`: the pre-registration pins
+calendar years (§2), so a sweep over arbitrary date ranges or a matrix of
+unregistered combinations is not a mode this tool needs — YAGNI.
+`scripts/exit_ic.py`'s actual CLI is `--mode`, `--symbols`, `--years`,
+`--stride`, `--only`.
 
 | Stage | Behaviour |
 |---|---|

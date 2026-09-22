@@ -4,6 +4,72 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-09-22 — fix: final whole-branch review — exit_ic.py denominator integrity, hold/hour coupling pinned, doc corrections
+
+Robustness and documentation fixes from the review that approved this branch
+to merge. `config.py` is untouched, `backtest.py`'s exit logic is unchanged,
+and no scored result above moves — the exit-mechanics experiment stays closed
+and rejected.
+
+### Fixed
+- **`scripts/exit_ic.py` could not tell a complete grid from an incomplete
+  one.** `main()`'s `except Exception` around `run_cell` caught a fetch
+  failure and an internal bug (e.g. a lost `Pnls.time_exit` attribute)
+  identically, logging both as "cell failed — skipped"; `AttributeError` and
+  `KeyError` now re-raise instead of being swallowed. `rows_printed == 0` only
+  ever caught *total* failure — 37 of 40 cells missing still exited 0 and
+  printed nothing unusual; `main()` now computes `expected_rows` from years ×
+  symbols × rules and `sys.exit(1)`s on any shortfall, per the
+  pre-registration's fixed-denominator rule (§2: a failed cell "must be
+  retried until it produces a row, not dropped"). `run_cell` now raises when
+  `synth_entries` returns `[]` (frame too short for the rule table's warmup +
+  tail) instead of letting an `n=0 mean_diff=+0.0000` row silently count
+  against criterion 1 while contributing zero weight to the pooled mean.
+- **`--only H1` was not restricted to `--mode spot`.** H1 has no futures cells
+  (prereg §2/§5); running it against `--mode`'s default (futures) produced
+  plausible-looking rows for a comparison the pre-registration never defines.
+  Now rejected explicitly.
+- **`rule.get("max_hold") or MAX_HOLD_CANDLES[timeframe]`** (`exit_ic.py`)
+  silently substituted the timeframe default for an explicit `max_hold: 0`.
+  Changed to an `is None` check.
+- **`backtest.py`'s `TIME_EXIT` reachability rests on an unasserted
+  invariant** — the `+2` loop-bound trick (see `6d085cd` above) is reachable
+  only because `MAX_HOLD_CANDLES[tf] * hours_per_candle ==
+  max_position_hours*` EXACTLY, for both modes. Added
+  `test_max_hold_candles_matches_max_position_hours`, and softened the
+  in-code comment at the loop bound from stating the coupling as though it
+  were a guarantee to naming it as a dependency the test now enforces.
+
+### Docs
+- This file: the `_compute_stats` fix is a separate commit (`a63c3ca`) from
+  the `TIME_EXIT` fix (`6d085cd`) in the entry below, not "the same commit";
+  noted that the `TIME_EXIT` fix moves `open_until` for a position that now
+  resolves one candle later than before — exact per-trade, not guaranteed
+  per-sequence.
+- `docs/superpowers/specs/2026-09-21-exit-results.md`: added a Limitations
+  section (BUY-only entries, synthetic entries have no edge, stride-6
+  overlapping windows — all already disclosed in the design spec §4.2, now
+  stated in the document that actually gets quoted); committed the five
+  confirmatory run logs and `confirmatory.sh` to
+  `docs/superpowers/specs/2026-09-21-exit-run/` (~16 KB) since
+  `.superpowers/sdd/.gitignore` is `*` and the local copies do not ship.
+- `docs/superpowers/specs/2026-09-21-exit-mechanics-design.md`: corrected
+  §4.2's claim that `exit_ic.py` mirrors `condition_ic.py`'s CLI including
+  `--start/--end` and `--matrix` — it has neither, and per YAGNI should not
+  gain them; the pre-registration pins calendar years.
+
+### Tests
+Six new tests cover the `exit_ic.py` fixes directly, each proving the failure
+mode it closes rather than just the line changed — fetch is monkeypatched to
+local fixtures, so none touches network/DB/exchange: an internal
+`AttributeError` propagates instead of being logged as a fetch failure; an
+intentionally incomplete grid (1 of 2 cells) exits 1; an empty entry set
+raises instead of printing a row; `--only H1` without `--mode spot` is
+rejected; `max_hold: 0` is honoured instead of silently defaulting. Suite:
+**106/106**.
+
+---
+
 ## 2026-09-22 — EXIT MECHANICS CLOSED: all three hypotheses rejected. Nothing ships.
 
 Task 6 of the exit-mechanics plan. The confirmatory grid pre-registered in
@@ -156,6 +222,13 @@ stop/vol-expansion still exits at exactly the same candle it did before this
 fix — only a position that survived all of them gets the one extra candle
 needed to close as `TIME_EXIT` instead of falling off the end.
 
+That is exact **per trade**, not per sequence: a position that used to fall
+through to `OPEN` at `candles_held == max_hold` now closes `TIME_EXIT` one
+candle later, at `max_hold + 1`. In `run_backtest`'s walk that moves
+`open_until` for that direction by one candle, which can admit or block a
+different later signal — so a full backtest run is not guaranteed to reproduce
+its pre-fix trade sequence beyond the position this fix directly resolves.
+
 Measured on spot 2025 (`--start 2025-01-01 --end 2025-12-31`):
 
 | | Before | After |
@@ -173,7 +246,8 @@ formerly-open positions now close `TIME_EXIT` at 19 candles with real P&L
 reason Win Rate moves from 1-of-2 to 3-of-4 rather than climbing.
 
 A pre-existing `_compute_stats` bug surfaced by this same run is fixed in the
-same commit: it bucketed `losses` by `outcome != "WIN"` rather than by P&L
+same task, in a separate commit (`a63c3ca`, distinct from this fix's
+`6d085cd`): it bucketed `losses` by `outcome != "WIN"` rather than by P&L
 sign, which was equivalent while `TIME_EXIT` was dead code (every non-WIN row
 had `pnl_pct <= 0`) but silently misfiled a profitable `TIME_EXIT` as a loss
 the moment this fix made the branch reachable — an unpatched first run of this
