@@ -1,0 +1,21 @@
+2026-09-22 09:46:57,434 [WARNING] binance fetch_ohlcv failed (binance GET https://api.binance.com/api/v3/exchangeInfo) — falling back to data-api.binance.vision for 1800s
+futures  BTC/USDT   2020  H2   n= 1416 n_eff=   34  base=-0.3596pp cand=-0.3604pp  mean_diff=-0.0008pp  win_share=0.005  unresolved=0/0  time_exit%=0.0/0.0
+futures  ETH/USDT   2020  H2   n= 1416 n_eff=   47  base=-0.4152pp cand=-0.4207pp  mean_diff=-0.0055pp  win_share=0.005  unresolved=0/0  time_exit%=0.0/0.0
+futures  BNB/USDT   2020  H2   n= 1416 n_eff=   47  base=-0.3816pp cand=-0.3786pp  mean_diff=+0.0030pp  win_share=0.013  unresolved=0/0  time_exit%=0.0/0.0
+futures  XRP/USDT   2020  H2   n= 1416 n_eff=   32  base=-0.5791pp cand=-0.5792pp  mean_diff=-0.0001pp  win_share=0.004  unresolved=0/0  time_exit%=0.0/0.0
+futures  LINK/USDT  2020  H2   n= 1416 n_eff=   37  base=-0.6602pp cand=-0.6532pp  mean_diff=+0.0071pp  win_share=0.008  unresolved=0/0  time_exit%=0.0/0.0
+futures  BTC/USDT   2021  H2   n= 1413 n_eff=   34  base=-0.5773pp cand=-0.5826pp  mean_diff=-0.0052pp  win_share=0.005  unresolved=0/0  time_exit%=0.0/0.0
+futures  ETH/USDT   2021  H2   n= 1413 n_eff=   32  base=-0.6532pp cand=-0.6561pp  mean_diff=-0.0029pp  win_share=0.004  unresolved=0/0  time_exit%=0.0/0.0
+futures  BNB/USDT   2021  H2   n= 1413 n_eff=   65  base=-0.4953pp cand=-0.4703pp  mean_diff=+0.0251pp  win_share=0.018  unresolved=0/0  time_exit%=0.0/0.0
+futures  XRP/USDT   2021  H2   n= 1413 n_eff=   37  base=-0.6211pp cand=-0.6260pp  mean_diff=-0.0048pp  win_share=0.005  unresolved=0/0  time_exit%=0.1/0.1
+futures  LINK/USDT  2021  H2   n= 1413 n_eff=   53  base=-0.8858pp cand=-0.8860pp  mean_diff=-0.0002pp  win_share=0.012  unresolved=0/0  time_exit%=0.0/0.0
+futures  BTC/USDT   2022  H2   n= 1415 n_eff=   13  base=-0.5406pp cand=-0.5410pp  mean_diff=-0.0004pp  win_share=0.003  unresolved=0/0  time_exit%=0.0/0.0
+futures  ETH/USDT   2022  H2   n= 1415 n_eff=   29  base=-0.6078pp cand=-0.6103pp  mean_diff=-0.0025pp  win_share=0.004  unresolved=0/0  time_exit%=0.0/0.0
+futures  BNB/USDT   2022  H2   n= 1415 n_eff=   55  base=-0.4398pp cand=-0.4385pp  mean_diff=+0.0013pp  win_share=0.008  unresolved=0/0  time_exit%=0.0/0.0
+futures  XRP/USDT   2022  H2   n= 1415 n_eff=   32  base=-0.5225pp cand=-0.5273pp  mean_diff=-0.0048pp  win_share=0.004  unresolved=0/0  time_exit%=0.0/0.0
+futures  LINK/USDT  2022  H2   n= 1415 n_eff=   49  base=-0.7028pp cand=-0.6949pp  mean_diff=+0.0078pp  win_share=0.010  unresolved=0/0  time_exit%=0.0/0.0
+futures  BTC/USDT   2023  H2   n= 1415 n_eff=    9  base=-0.2974pp cand=-0.2980pp  mean_diff=-0.0006pp  win_share=0.001  unresolved=0/0  time_exit%=0.0/0.0
+futures  ETH/USDT   2023  H2   n= 1415 n_eff=   28  base=-0.3094pp cand=-0.3111pp  mean_diff=-0.0017pp  win_share=0.004  unresolved=0/0  time_exit%=0.0/0.0
+futures  BNB/USDT   2023  H2   n= 1415 n_eff=   27  base=-0.3574pp cand=-0.3589pp  mean_diff=-0.0015pp  win_share=0.004  unresolved=0/0  time_exit%=0.0/0.0
+futures  XRP/USDT   2023  H2   n= 1415 n_eff=   41  base=-0.3349pp cand=-0.3398pp  mean_diff=-0.0049pp  win_share=0.004  unresolved=0/0  time_exit%=0.0/0.0
+futures  LINK/USDT  2023  H2   n= 1415 n_eff=   37  base=-0.4796pp cand=-0.4814pp  mean_diff=-0.0018pp  win_share=0.004  unresolved=0/0  time_exit%=0.0/0.0

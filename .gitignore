@@ -232,3 +232,10 @@ data/spot_threshold_state.json
 # Harness-managed worktrees. Never tracked — a subagent running `git add -A`
 # would otherwise commit an entire second checkout into the repository.
 .claude/worktrees/
+
+# The confirmatory run's raw logs are the provenance of a pre-registered
+# experiment and are cited by name in docs/.../2026-09-21-exit-results.md.
+# The blanket *.log rule above is Django boilerplate and was silently
+# excluding them, leaving the document asserting a provenance that did not
+# ship. 16 KB, written once, never regenerated.
+!docs/superpowers/specs/2026-09-21-exit-run/*.log
