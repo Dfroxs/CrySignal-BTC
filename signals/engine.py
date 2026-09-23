@@ -37,7 +37,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         unknown = set(gates_disabled) - set(_VETO_GATES)
         if unknown:
             raise ValueError(f"unknown gate(s): {sorted(unknown)}; known: {_VETO_GATES}")
-    _off = frozenset(gates_disabled or ())
+    _gates_off = frozenset(gates_disabled or ())
 
     current = df.iloc[-1]
     previous = df.iloc[-2]
@@ -799,7 +799,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     # EMA200+VWAP on 1H even when 1D was unambiguously bullish. Force HOLD
     # when the daily HTF disagrees with the proposed direction — only when
     # 1D trend is non-NEUTRAL (i.e. we actually have HTF context).
-    if htf and signal['type'] in ('BUY', 'SELL') and 'counter_trend' not in _off:
+    if htf and signal['type'] in ('BUY', 'SELL') and 'counter_trend' not in _gates_off:
         d1 = htf.get('1d')
         if d1 == 'BULLISH' and signal['type'] == 'SELL':
             signal['reasons'].append("⛔ Counter-trend block: 1D BULLISH, SELL rejected")
@@ -825,7 +825,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     # 0.5× wins on PF and PnL; revisit if a wider, two-sided sample disagrees.
     vwap = current.get('VWAP_24', 0)
     atr_now = current.get('ATR_14', 0)
-    if signal['type'] in ('BUY', 'SELL') and vwap > 0 and atr_now > 0 and 'no_chase' not in _off:
+    if signal['type'] in ('BUY', 'SELL') and vwap > 0 and atr_now > 0 and 'no_chase' not in _gates_off:
         chase_dist = 0.5 * atr_now
         if signal['type'] == 'BUY' and current['close'] > vwap + chase_dist:
             signal['reasons'].append(
@@ -849,7 +849,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     # for a −1.21% loss. Reject entries that come on the heels of an impulsive
     # candle in the SAME direction (BUY after big green, SELL after big red).
     # 1.5×ATR catches truly impulsive moves; 1.0 was too tight (killed winners).
-    if signal['type'] in ('BUY', 'SELL') and atr_now > 0 and len(df) >= 2 and 'anti_fomo' not in _off:
+    if signal['type'] in ('BUY', 'SELL') and atr_now > 0 and len(df) >= 2 and 'anti_fomo' not in _gates_off:
         prev = df.iloc[-2]
         prev_body = prev['close'] - prev['open']
         body_atr = prev_body / atr_now
@@ -874,7 +874,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     # rejection is asking to get stopped. Mirror for SELL on lower wicks.
     # Separate from the 24-candle fakeout gate (which looks at range extremes);
     # this catches single-candle reversals at the entry point itself.
-    if signal['type'] in ('BUY', 'SELL') and 'entry_wick' not in _off:
+    if signal['type'] in ('BUY', 'SELL') and 'entry_wick' not in _gates_off:
         c_range = current['high'] - current['low']
         if c_range > 0:
             body_top = max(current['open'], current['close'])
@@ -903,7 +903,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     # Engine had no check that the immediate trend agreed with the signal.
     # −1.0×ATR threshold catches established downtrends without killing pullback
     # buys (which typically have slope between −0.3 and +0.3 ATR).
-    if signal['type'] in ('BUY', 'SELL') and len(df) >= 10 and 'short_term' not in _off:
+    if signal['type'] in ('BUY', 'SELL') and len(df) >= 10 and 'short_term' not in _gates_off:
         sma5 = df['close'].rolling(5).mean()
         sma5_now = sma5.iloc[-1]
         sma5_prev = sma5.iloc[-5]

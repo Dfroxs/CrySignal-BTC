@@ -78,3 +78,49 @@ used to justify a change, because these are its own tuning symbols.
 That 22 conditions, an adaptive controller and five gates select entries no better than
 chance — and the honest next step is subtraction, not addition. It would also make H-B
 moot: you cannot improve the gating of a signal that has no edge to gate.
+
+---
+
+# Correction, appended 2026-09-24 — the instrument was broken, and one stated limit was wrong
+
+Appended, not edited. **No criterion in this document changes.** Both items below are a
+defect in the instrument and an error in a stated limitation.
+
+## 1. The ablation knob was a no-op — the first run's H-B arm carried no information
+
+`generate_signals` binds `_off` at line 71 for the CONDITION ablation set. The gate knob
+introduced its own `_off` above it, so every gate guard read the conditions set, `no_chase`
+was never in it, and **no gate was ever disabled**. The `no_antichase` arm was therefore a
+second copy of `spotsignal` — identical n and identical mean on every symbol, which is what
+exposed it.
+
+The suite was green at 112/112 throughout, because the knob shipped with no test. That is
+the actual failure: a research switch was committed without a test that it switches
+anything.
+
+Fixed by renaming to `_gates_off`, plus four tests (suite 112 → 116), the first of which
+walks all five gates and asserts each one both fires and stops firing when ablated. The
+first run was killed, not scored.
+
+## 2. "The engine here is quieter than live" overstated the blind spot
+
+The limits section above says market-structure conditions cost the engine its
+funding/L-S/OI/basis scoring. That is the **futures** ceiling — 7.5 of 26.5. In spot mode
+those conditions are already `0.00` in `CONDITION_MAX` and are skipped by design, so the
+only spot condition blind to history is `gold_vix`, worth **0.50 of 22.50**.
+
+The spot engine in this experiment therefore scores 22.00 of 22.50 — not a quieter system,
+essentially the whole one. The remaining difference from live is the fixed threshold, which
+the limits section already states correctly.
+
+## Disclosure: what had been seen when the correction was made
+
+Per-symbol lines for BTC, ETH, SOL, OKB and ICP had printed before the bug was found, so
+the `spotsignal` and `random` means for those five were visible. Recorded because from here
+on the re-run is made by someone who has seen part of the old answer.
+
+Nothing was changed in response to them: H-A's, H-B's and H-C's criteria, the power guard,
+the discard conditions, the universe, the threshold and the exit rules are all exactly as
+committed at `7febaa1`. The knob fix cannot move `spotsignal`, `donchian` or `random` — it
+only makes `no_antichase` a real arm instead of a copy — and that is checkable, because the
+re-run's figures for those three arms must reproduce the five lines already printed.

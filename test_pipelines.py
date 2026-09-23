@@ -1658,6 +1658,127 @@ def test_engine_still_emits_the_hold_phrases_history_matches_on():
 
 
 
+# ── 21. Veto-gate ablation (research knob) ───────────────────────────────────
+
+_GATE_MARKER = {
+    "counter_trend": "Counter-trend block", "no_chase": "No-chase",
+    "anti_fomo": "Anti-FOMO", "entry_wick": "Entry wick", "short_term": "Short-term",
+}
+_HTF_BEARISH = {"1d": "BEARISH", "1w": "BEARISH", "aligned": False,
+                "1d_indicators": {}, "1w_indicators": {}}
+
+
+def _gate_frame(n=260, drift=0.004, spike=None, wick=0.0):
+    """A frame carrying every column the engine reads, shaped to trip one gate."""
+    import numpy as np
+    import pandas as pd
+    from signals.indicators import (
+        calculate_atr, calculate_bollinger_bands, calculate_ema, calculate_macd,
+        calculate_obv, calculate_rsi, calculate_stoch_rsi, calculate_vwap,
+        compute_cmf, compute_mfi,
+    )
+    close = 100 * np.cumprod(np.full(n, 1 + drift))
+    high, low, op = close * 1.002, close * 0.998, close / (1 + drift)
+    if spike:                       # impulsive green body on the penultimate candle
+        op[-2] = close[-2] / (1 + spike)
+    if wick:                        # long upper wick on the entry candle
+        high[-1] = close[-1] * (1 + wick)
+    df = pd.DataFrame({"open": op, "high": high, "low": low, "close": close,
+                       "volume": np.full(n, 1000.0)},
+                      index=pd.date_range("2024-01-01", periods=n, freq="4h"))
+    df["EMA_200"] = calculate_ema(df["close"], 200)
+    df["RSI_14"] = calculate_rsi(df["close"])
+    df["MACD"], df["MACD_Signal"], df["MACD_Histogram"] = calculate_macd(df["close"])
+    df["BB_Upper"], df["BB_Middle"], df["BB_Lower"] = calculate_bollinger_bands(df["close"])
+    df["ATR_14"] = calculate_atr(df)
+    df["OBV"] = calculate_obv(df)
+    df["StochRSI_K"], df["StochRSI_D"] = calculate_stoch_rsi(df["close"])
+    df["VWAP_24"] = calculate_vwap(df, period=6)
+    df["MFI_14"] = compute_mfi(df)
+    df["CMF_20"] = compute_cmf(df)
+    return df
+
+
+def _gate_fixture(gate):
+    if gate == "counter_trend":
+        return _gate_frame(), _HTF_BEARISH
+    if gate == "anti_fomo":
+        return _gate_frame(spike=0.05), None
+    if gate == "entry_wick":
+        return _gate_frame(wick=0.04), None
+    if gate == "short_term":
+        return _gate_frame(drift=-0.004), None
+    return _gate_frame(), None
+
+
+def _fires(gate, df, htf, gates_disabled):
+    from signals.engine import generate_signals
+    sig = generate_signals(df, htf, None, None, mode="spot",
+                           threshold_override=0.5, gates_disabled=gates_disabled)
+    return any(_GATE_MARKER[gate] in r for r in sig["reasons"])
+
+
+def test_every_veto_gate_can_actually_be_ablated():
+    """Each name in _VETO_GATES must switch its own gate off.
+
+    The gates run in sequence and the first to fire sets HOLD, so a later gate is only
+    reachable once the earlier ones are off â hence the prefix. Without this test the
+    knob shipped broken: `_gates_off` was originally named `_off`, which line 71 already
+    binds to the CONDITION ablation set, so every gate guard read the wrong variable and
+    no gate was ever disabled. The suite was green and the experiment's ablated arm came
+    out identical to the un-ablated one.
+    """
+    from signals.engine import _VETO_GATES
+    for k, gate in enumerate(_VETO_GATES):
+        df, htf = _gate_fixture(gate)
+        prior = _VETO_GATES[:k]
+        assert _fires(gate, df, htf, prior), f"{gate}: fixture does not trip the gate"
+        assert not _fires(gate, df, htf, prior + (gate,)), f"{gate}: ablation had no effect"
+
+
+def test_gates_disabled_is_not_clobbered_by_the_conditions_parameter():
+    """`disabled` and `gates_disabled` are different switches and must not share state.
+
+    This is the exact collision that made the knob a no-op: one name bound twice in the
+    same function, the second binding winning at every gate guard.
+    """
+    from signals.engine import generate_signals
+    df, _ = _gate_fixture("no_chase")
+    gates = ("counter_trend", "no_chase")
+    kw = dict(mode="spot", threshold_override=0.5, gates_disabled=gates)
+
+    both = generate_signals(df, None, None, None, disabled=["ema200"], **kw)
+    gate_only = generate_signals(df, None, None, None, disabled=[], **kw)
+
+    # the gate switch still bites with `disabled` also set
+    assert not any("No-chase" in r for r in both["reasons"]), both["reasons"]
+    # and the condition switch still bites with `gates_disabled` also set
+    assert both["buy_score"] < gate_only["buy_score"], (
+        f"ablating ema200 changed nothing: {both['buy_score']} vs {gate_only['buy_score']}")
+
+
+def test_an_unknown_gate_name_raises_instead_of_ablating_nothing():
+    """A typo must fail loudly. Silently ablating nothing is how a research arm ends up
+    identical to its control without anyone noticing."""
+    from signals.engine import generate_signals
+    df, _ = _gate_fixture("no_chase")
+    try:
+        generate_signals(df, None, None, None, mode="spot", threshold_override=0.5,
+                         gates_disabled=("no_chse",))
+    except ValueError as e:
+        assert "no_chse" in str(e), e
+    else:
+        raise AssertionError("a misspelled gate name was accepted")
+
+
+def test_no_gates_disabled_leaves_every_gate_running():
+    """None and () are both 'disable nothing' â the default must not ablate by accident."""
+    df, _ = _gate_fixture("no_chase")
+    for gd in (None, ()):
+        assert _fires("no_chase", df, None, gd), f"gates_disabled={gd!r} disabled a gate"
+
+
+
 # ── 20. Exit simulator ───────────────────────────────────────────────────────
 
 def _exit_fixture(closes, highs=None, lows=None, atr=100.0):
@@ -2266,6 +2387,12 @@ if __name__ == "__main__":
     run("descriptive reasons stay capped",        test_cycle_log_still_caps_the_descriptive_reasons)
     run("engine ordering is preserved",           test_cycle_log_preserves_the_order_the_engine_appended)
     run("engine still emits the HOLD phrases",    test_engine_still_emits_the_hold_phrases_history_matches_on)
+
+    print("\n── 21. Veto-gate ablation ──")
+    run("every veto gate can be ablated",         test_every_veto_gate_can_actually_be_ablated)
+    run("gates_disabled is not clobbered",        test_gates_disabled_is_not_clobbered_by_the_conditions_parameter)
+    run("unknown gate name raises",               test_an_unknown_gate_name_raises_instead_of_ablating_nothing)
+    run("default leaves gates running",           test_no_gates_disabled_leaves_every_gate_running)
 
     print("\n── 20. Exit simulator ──")
     run("TP1 then TP2 closes WIN",                test_exit_tp2_path_returns_win)
