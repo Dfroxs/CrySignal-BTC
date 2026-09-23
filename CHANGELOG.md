@@ -4,6 +4,61 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-09-24 — fix: cycle_log discarded every reason that explained a HOLD
+
+`log_cycle()` stored `reasons[:10]`. The engine appends its veto lines *after*
+the ~10 condition lines, so the slice dropped all of them — the one field that
+says why the bot stood down never reached the database.
+
+Measured on the live paper run (2026-08-30 → 2026-09-23, 586 futures + 151 spot
+cycles): **195 cycles cleared the score bar and were then vetoed by an engine
+gate. The stored veto reason survived for 3.** The string `No-chase` appears 0 times
+in the VPS's 3.4 MB `paper_run.log` as well — the veto reasons existed only in
+the terminal display, which nothing reads on an unattended host.
+
+This matters more than an ordinary logging gap. CLAUDE.md keeps this run alive
+for the database it produces ("worth more than the strategy that generated it"),
+and the discarded field is the one that explains the bot's dominant behaviour:
+across those 24 days the engine vetoed 127 of 139 scored futures cycles and 68
+of 90 spot cycles.
+
+### Fixed
+- **`trading/history.py` — `_select_reasons()` replaces the flat slice.** Every
+  decisive reason is kept unconditionally; the 10-line budget is now spent on
+  the descriptive ones, and the engine's original ordering is preserved so a
+  stored row reads the same as the terminal output. Decisive means a line
+  carrying the `⛔` veto marker, or one of the two gates that force HOLD through
+  a warning line instead (`forced HOLD` — macro; `downgraded to HOLD` —
+  post-news re-validation).
+
+### Notes
+- **No decision logic changed.** `config.py`, `signals/`, `trading/paper.py` and
+  `run_bot.py` are untouched. This changes what is written down, not what the
+  bot does — no threshold, weight or gate moved.
+- **`analyze.py` reports are unaffected.** Both of its `reasons` consumers
+  filter `type != 'HOLD'`, and every veto forces HOLD, so the rescued lines
+  cannot enter its condition-frequency histograms.
+- **Phase 3 blocks were never affected by this bug** — they are logged
+  separately to the `signal_blocks` table and are complete (`confidence_first`
+  10×, `stale_cache` 63×, and so on). The gap was only ever the engine-level
+  veto gates, which have no persistence of their own.
+- **Rows already written cannot be recovered.** The fix applies from the next
+  cycle after deployment; the first 24 days keep their truncated reasons.
+
+### Tests
+- 106 → **112**. Three of the six fail against the pre-fix code (veto past the
+  budget, several vetoes at once, a forced HOLD carrying no marker); the other
+  three pin invariants the fix must not break — the descriptive cap still holds
+  at 10, engine ordering is preserved, and `_HOLD_PHRASES` is checked against
+  `signals/engine.py` so a reword there fails loudly instead of silently
+  dropping the reason from the log again.
+- Verified end to end on real 4H data at the 2026-09-21 candle the live bot
+  vetoed: the engine emits 13 reasons, the stored row now carries 11 — the
+  10 descriptive lines plus `⛔ No-chase: price $85,928 > VWAP+0.5×ATR
+  ($84,248)`, which the old slice discarded.
+
+---
+
 ## 2026-09-22 — fix: final whole-branch review — exit_ic.py denominator integrity, hold/hour coupling pinned, doc corrections
 
 Robustness and documentation fixes from the review that approved this branch

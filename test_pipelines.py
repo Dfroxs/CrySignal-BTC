@@ -1471,7 +1471,7 @@ def test_colours_return_on_a_terminal():
 
 # ── 19. cycle_log records everything it fetches ──────────────────────────────
 
-def _log_one_cycle(db_path, market_structure):
+def _log_one_cycle(db_path, market_structure, reasons=()):
     import numpy as np
     import pandas as pd
     import trading.history as h
@@ -1486,7 +1486,7 @@ def _log_one_cycle(db_path, market_structure):
             "BB_Upper": [81000.0] * 10, "BB_Lower": [79000.0] * 10, "OBV": np.arange(10.0)})
         sig = {"type": "HOLD", "buy_score": 5.0, "sell_score": 2.0, "strength": 5.0,
                "_threshold": 4.05, "rsi_divergence": "NONE", "fear_greed_value": 69,
-               "news_sentiment": "BULLISH", "reasons": []}
+               "news_sentiment": "BULLISH", "reasons": list(reasons)}
         h.log_cycle(sig, df, market_structure, {"1d": "BULLISH"}, "futures")
     finally:
         try:
@@ -1581,6 +1581,81 @@ def test_existing_database_gains_the_columns():
             pass
         h.SIGNAL_HISTORY_DB, h.DB = saved
         os.unlink(path)
+
+
+_EMPTY_MARKET = {"funding": {}, "long_short": {}, "taker": {}, "gold": {}, "vix": {},
+                 "dxy": {}, "sp500": {}, "btc_dom": {}, "stablecoin": {}, "open_interest": {}}
+
+
+def _stored_reasons(reasons):
+    """Round-trip a reasons list through log_cycle and read back what landed."""
+    import os
+    import sqlite3
+    import tempfile
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        _log_one_cycle(path, _EMPTY_MARKET, reasons=reasons)
+        c = sqlite3.connect(path)
+        stored = c.execute("SELECT reasons FROM cycle_log").fetchone()[0]
+        c.close()
+        return stored.split(" | ")
+    finally:
+        os.unlink(path)
+
+
+def test_cycle_log_keeps_the_veto_reason_past_the_budget():
+    """The veto line IS the explanation for a HOLD, and the engine appends it
+    after every condition line. The old flat reasons[:10] slice therefore threw
+    away the one field that says why the bot stood down: over the first 24 days
+    of the paper run, 195 cycles cleared the score bar, were vetoed by an engine
+    gate, and recorded a reason saying so for 3."""
+    conditions = [f"✓ Condition {i}" for i in range(12)]
+    veto = "⛔ No-chase: price $84894 > VWAP+0.5×ATR ($83329)"
+    stored = _stored_reasons(conditions + [veto])
+    assert veto in stored, stored
+
+
+def test_cycle_log_keeps_every_veto_when_several_fire():
+    """Gates run in sequence and more than one can append before the verdict
+    settles. Keeping only the first would misattribute the rejection."""
+    vetoes = ["⛔ No-chase: price above VWAP", "⛔ Anti-FOMO: prev candle +1.40×ATR up"]
+    stored = _stored_reasons([f"✓ Condition {i}" for i in range(15)] + vetoes)
+    assert all(v in stored for v in vetoes), stored
+
+
+def test_cycle_log_keeps_a_forced_hold_that_carries_no_veto_marker():
+    """The macro gate forces HOLD through a warning line rather than a veto
+    marker. Matching on the marker alone would drop it."""
+    macro = "⚠️  MACRO CAUTION: HIGH impact event in <2h (CPI) — forced HOLD"
+    stored = _stored_reasons([f"✓ Condition {i}" for i in range(12)] + [macro])
+    assert any("forced HOLD" in r for r in stored), stored
+
+
+def test_cycle_log_still_caps_the_descriptive_reasons():
+    """The budget exists to bound row size. Rescuing the decisive lines must not
+    turn into storing every condition line ever appended."""
+    stored = _stored_reasons([f"✓ Condition {i}" for i in range(30)])
+    assert len(stored) == 10, len(stored)
+
+
+def test_cycle_log_preserves_the_order_the_engine_appended():
+    """Reasons read as a narrative ending in the verdict. Hoisting the veto to
+    the front would make the stored row disagree with the terminal output."""
+    stored = _stored_reasons(["✓ First", "✓ Second", "⛔ Short-term down: 5-SMA slope -0.80×ATR"])
+    assert stored == ["First", "Second", "⛔ Short-term down: 5-SMA slope -0.80×ATR"], stored
+
+
+def test_engine_still_emits_the_hold_phrases_history_matches_on():
+    """history._HOLD_PHRASES matches engine prose, which nothing else pins. If a
+    reword lands in the engine, this fails instead of silently dropping the
+    reason from the log again."""
+    import io as _io
+    import trading.history as h
+    src = _io.open("signals/engine.py", encoding="utf-8").read()
+    missing = [p for p in h._HOLD_PHRASES if p not in src]
+    assert not missing, f"engine.py no longer emits: {missing}"
+
 
 
 # ── 20. Exit simulator ───────────────────────────────────────────────────────
@@ -2185,6 +2260,12 @@ if __name__ == "__main__":
     run("taker/gold/VIX are stored",              test_cycle_log_stores_taker_gold_and_vix)
     run("spot leaves futures-only fields NULL",   test_spot_rows_leave_futures_only_fields_null)
     run("existing database gains the columns",    test_existing_database_gains_the_columns)
+    run("veto reason survives the budget",        test_cycle_log_keeps_the_veto_reason_past_the_budget)
+    run("every veto is kept",                     test_cycle_log_keeps_every_veto_when_several_fire)
+    run("forced HOLD without a marker is kept",   test_cycle_log_keeps_a_forced_hold_that_carries_no_veto_marker)
+    run("descriptive reasons stay capped",        test_cycle_log_still_caps_the_descriptive_reasons)
+    run("engine ordering is preserved",           test_cycle_log_preserves_the_order_the_engine_appended)
+    run("engine still emits the HOLD phrases",    test_engine_still_emits_the_hold_phrases_history_matches_on)
 
     print("\n── 20. Exit simulator ──")
     run("TP1 then TP2 closes WIN",                test_exit_tp2_path_returns_win)

@@ -331,6 +331,36 @@ def log_signal(signal, df, htf=None):
     return cur.lastrowid
 
 
+# Reasons stored per cycle. The engine appends its veto lines AFTER the ~10
+# condition lines, so the flat `reasons[:10]` slice this used to take dropped
+# every one of them: across the first 24 days of the paper run, 195 cycles
+# cleared the score bar, were vetoed by an engine gate, and stored a reason
+# explaining that for 3. Keep the decisive lines unconditionally and
+# spend the budget on the descriptive ones.
+_REASON_BUDGET = 10          # descriptive lines kept per cycle
+_VETO_MARKER = "⛔"
+# The macro and post-news gates force HOLD through a warning line, not a veto
+# marker, so they are matched on the phrase that states the verdict.
+_HOLD_PHRASES = ("forced HOLD", "downgraded to HOLD")
+
+
+def _is_decisive(reason):
+    """True when this reason changed the verdict rather than describing it."""
+    return reason.startswith(_VETO_MARKER) or any(p in reason for p in _HOLD_PHRASES)
+
+
+def _select_reasons(reasons_raw, budget=_REASON_BUDGET):
+    """Every decisive reason plus up to `budget` descriptive ones, in engine order."""
+    keep, spent = [], 0
+    for r in reasons_raw:
+        if _is_decisive(r):
+            keep.append(r)
+        elif spent < budget:
+            keep.append(r)
+            spent += 1
+    return [r[2:].strip() if r[:1] in "✓✗⚠" else r.strip() for r in keep]
+
+
 def log_cycle(signal, df, market_structure, htf, mode):
     """Log every cycle (including HOLD) to cycle_log for later analysis."""
     last     = df.iloc[-1]
@@ -363,10 +393,7 @@ def log_cycle(signal, df, market_structure, htf, mode):
     import json
     htf_json = json.dumps(htf_clean) if htf_clean else ""
 
-    # Reasons — top 10, cleaned
-    reasons_raw = signal.get("reasons", [])
-    reasons_clean = [r[2:].strip() if r[:1] in "✓✗⚠" else r.strip()
-                     for r in reasons_raw[:10]]
+    reasons_clean = _select_reasons(signal.get("reasons", []))
 
     # Open positions count for this mode
     open_count = len(get_open_positions(mode))
