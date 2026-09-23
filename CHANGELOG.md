@@ -4,6 +4,59 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-09-24 — research: the gate holdout reverses the tuning result
+
+Confirmatory test of H-B on data the tuning run never touched, with a sharper statistic:
+the gated arm is a strict subset of the ungated one, so `kept − rejected` measures the
+question directly — the gates earn their place only if what they throw away is worse than
+what they keep.
+
+| run | kept − rejected | 90% CI |
+|---|---:|---|
+| tuning (2018–2025) | −0.128pp | [−0.365, **+0.122**] |
+| **primary** — time holdout (2025–2026, 9 symbols) | **+0.108pp** | [−0.627, +0.760] |
+| secondary — market holdout (10 new symbols) | +0.901pp | [+0.125, +1.672] |
+
+- **PRIMARY: INCONCLUSIVE.** Direction favours the gates, interval contains zero — the
+  case the pre-registration named. Both arms cleared the n≥100 guard; one year of nine
+  symbols cannot resolve 0.1pp.
+- **SECONDARY: PASS** on its own rule, pre-registered as unable to overturn the primary
+  because its 1D-only warmup zeroes the HTF condition throughout.
+
+### Withdrawn
+- **"H-B FAILED — remove `no_chase`, `anti_fomo`, `entry_wick`."** That conclusion rested
+  on a bare comparison of two overlapping pooled means. With the paired statistic the
+  tuning difference is −0.128pp on an interval that **contains zero**, and both holdouts
+  point the other way. There is no version of this evidence that supports removing them.
+
+### Also reversed (post-hoc, not a pre-registered criterion)
+- H-A. The entry lost to random by 0.203pp on tuning and **beat** it by 0.727pp on the
+  holdout year, intervals disjoint both times. The engine barely moved (−0.646 → −0.080);
+  random entry fell from −0.443 to −0.807. The holdout year punished indiscriminate entry
+  far harder.
+
+### What reproduces
+Only this: the sign of every headline flips with the period. That is STEP 1's finding —
+*no component's predictive power survived a change of market or period* — arriving for the
+five veto gates and for the assembled entry, neither of which STEP 1 tested.
+
+### Added
+- `scripts/entry_ic.py` — `rejected` arm via `split_by_gates()`, which asserts the subset
+  property rather than assuming it; `--start` and `--htf-warmup` for the two holdout
+  windows; a bootstrap interval on `kept − rejected`.
+
+### Notes
+- **No production file changed.** An INCONCLUSIVE primary licenses no edit in either
+  direction.
+- Breadth figures exclude symbols with fewer than 20 entries in either arm. Counting every
+  symbol inflates them to 6/9 on both holdouts on the strength of symbols with one trade.
+
+### Tests
+- 116 → **121**: the kept/rejected partition and its failure mode, the daily-warmup rule
+  admitting a symbol the strict rule rejects, and `--start` never cutting the warmup short.
+
+---
+
 ## 2026-09-24 — research: the assembled entry loses to random entry
 
 A pre-registered test of the one question this repository had never asked: does the
