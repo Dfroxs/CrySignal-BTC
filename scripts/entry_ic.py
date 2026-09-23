@@ -102,7 +102,20 @@ def load_symbol(base: str, cache: Path = NAKHODA_CACHE, end: str | None = SPLIT_
     return df
 
 
-def htf_ready_index(df: pd.DataFrame, frames) -> int:
+def eval_start(df: pd.DataFrame, frames, start: str | None, htf_mode: str) -> int:
+    """First index to EVALUATE: the later of the HTF warmup and an explicit --start.
+
+    Everything before it is still loaded, because the indicators need the history; it is
+    simply not scored. That is what makes a time holdout possible without re-warming.
+    """
+    i = htf_ready_index(df, frames, htf_mode)
+    if start is not None:
+        i = max(i, int(np.searchsorted(df.index.values, np.datetime64(pd.Timestamp(start)),
+                                       side="left")))
+    return i
+
+
+def htf_ready_index(df: pd.DataFrame, frames, htf_mode: str = "strict") -> int:
     """First 4h index at which BOTH higher timeframes have a real EMA200.
 
     `htf_indicator_series` labels a bar BULLISH/BEARISH by `close > ema200`, and a NaN
@@ -112,8 +125,9 @@ def htf_ready_index(df: pd.DataFrame, frames) -> int:
     condition worth up to +2.0. Live never sees this (it fetches 250 bars of each), so
     evaluating those candles would measure a warmup artefact, not the strategy.
     """
+    required = ("1d", "1w") if htf_mode == "strict" else ("1d",)
     ready = None
-    for tf, (series, _) in frames.items():
+    for tf, (series, _) in ((k, v) for k, v in frames.items() if k in required):
         if len(series) <= 199:
             return len(df)                      # never ready — symbol contributes nothing
         bar = series.index[199] + TF_DELTA[tf]
@@ -190,6 +204,20 @@ def entries_donchian(df, start=WARMUP, n_in=20, n_out=10):
     return [int(p) for p in pos if start <= p < len(df)]
 
 
+def split_by_gates(ungated, gated):
+    """The entries the gates threw away = ungated minus gated, by candle index.
+
+    The gates can only turn a BUY into a HOLD, so `gated` is a subset of `ungated` and
+    the two halves partition it exactly. Asserted rather than assumed: if that ever stops
+    holding, the `rejected` arm silently stops meaning what its name says.
+    """
+    kept = {i for i, _ in gated}
+    stray = kept - {i for i, _ in ungated}
+    if stray:
+        raise ValueError(f"gated arm is not a subset of the ungated one at {sorted(stray)[:5]}")
+    return [(i, sig) for i, sig in ungated if i not in kept]
+
+
 def entries_random(df, n, seed, lo=WARMUP):
     hi = len(df) - 1
     if n <= 0 or hi <= lo:
@@ -254,6 +282,13 @@ def main() -> int:
     ap.add_argument("--symbols", default=",".join(TUNING))
     ap.add_argument("--cache", type=Path, default=NAKHODA_CACHE)
     ap.add_argument("--end", default=SPLIT_DATE)
+    ap.add_argument("--start", default=None,
+                    help="evaluate only from this date; earlier candles still warm the indicators")
+    ap.add_argument("--htf-warmup", choices=("strict", "daily"), default="strict",
+                    help="strict: 1D AND 1W EMA200 must be real. daily: 1D only — the 1W "
+                         "trend then reads BEARISH throughout, so `aligned` never fires and "
+                         "the HTF condition is permanently 0 for BOTH engine arms. Valid "
+                         "for an engine-vs-engine comparison, NOT for one against random.")
     ap.add_argument("--seeds", type=int, default=20, help="random-baseline seeds per symbol")
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument("-v", "--verbose", action="store_true")
@@ -262,7 +297,7 @@ def main() -> int:
                         format="%(levelname)s %(name)s — %(message)s")
 
     max_hold = MAX_HOLD_CANDLES["4h"]
-    per_symbol, arms = {}, ("spotsignal", "no_antichase", "donchian", "random")
+    per_symbol, arms = {}, ("spotsignal", "rejected", "no_antichase", "donchian", "random")
     pooled = {a: [] for a in arms}
 
     for base in args.symbols.split(","):
@@ -274,7 +309,7 @@ def main() -> int:
             logger.warning("%s: only %d candles — skipped", base, len(df))
             continue
         htf_frames = build_htf(df)
-        start = htf_ready_index(df, htf_frames)
+        start = eval_start(df, htf_frames, args.start, args.htf_warmup)
         if start >= len(df) - 50:
             logger.warning("%s: HTF never warms up in this span — skipped", base)
             continue
@@ -283,8 +318,11 @@ def main() -> int:
         e_full = entries_engine(df, htf_frames, start, only=[i for i, _ in e_open])
         e_donc = entries_donchian(df, start)
 
+        e_rej = split_by_gates(e_open, e_full)
+
         row = {}
         row["spotsignal"], _ = run_entries(df, e_full, max_hold)
+        row["rejected"], _ = run_entries(df, e_rej, max_hold)
         row["no_antichase"], _ = run_entries(df, e_open, max_hold)
         row["donchian"], _ = run_entries(df, e_donc, max_hold)
 
@@ -305,10 +343,22 @@ def main() -> int:
         print(f"{base:6s} {len(df) - start:6d}c  " + "  ".join(
             f"{a[:4]}: n={s[a]['n']:4d} mean={s[a]['mean']:+.3f}pp" for a in arms), flush=True)
 
+    diff_ci = None
+    if pooled["spotsignal"] and pooled["rejected"]:
+        rng = np.random.default_rng(7)
+        k = np.asarray(pooled["spotsignal"], float); r = np.asarray(pooled["rejected"], float)
+        bk = rng.choice(k, size=(2000, len(k)), replace=True).mean(axis=1)
+        br = rng.choice(r, size=(2000, len(r)), replace=True).mean(axis=1)
+        d = bk - br
+        diff_ci = [float(np.percentile(d, 5)), float(np.percentile(d, 95))]
+        print(f"  90% CI on (kept - rejected): [{diff_ci[0]:+.3f}, {diff_ci[1]:+.3f}]")
+
     result = {
+        "kept_minus_rejected_ci90": diff_ci,
         "pooled": {a: summarise(pooled[a]) for a in arms},
         "per_symbol": per_symbol,
-        "config": {"symbols": args.symbols, "end": args.end, "seeds": args.seeds,
+        "config": {"symbols": args.symbols, "end": args.end, "start": args.start,
+                   "htf_warmup": args.htf_warmup, "seeds": args.seeds,
                    "max_hold": max_hold, "antichase_ablated": list(ANTICHASE)},
     }
     p = result["pooled"]
@@ -322,6 +372,14 @@ def main() -> int:
         print(f"{a:14s} {r['n']:7d} {r['mean']:+10.3f} {ci:>22s} "
               f"{r['win_rate']:6.1f}% {r['pf']:6.2f} {r['mean'] - base_mean:+11.3f}")
     print("=" * 78)
+
+    kept, rej = p["spotsignal"], p["rejected"]
+    if kept["n"] and rej["n"]:
+        d = kept["mean"] - rej["mean"]
+        print(f"\nGATE VERDICT  kept {kept['mean']:+.3f}pp (n={kept['n']})  vs  "
+              f"rejected {rej['mean']:+.3f}pp (n={rej['n']})   kept-rejected = {d:+.3f}pp")
+        print("  the gates earn their place only if this is POSITIVE — "
+              "what they throw away must be worse than what they keep.")
 
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)

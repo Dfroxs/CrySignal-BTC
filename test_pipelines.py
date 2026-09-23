@@ -1779,6 +1779,85 @@ def test_no_gates_disabled_leaves_every_gate_running():
 
 
 
+# ── 22. Holdout windowing in entry_ic ────────────────────────────────────────
+
+def _plain_4h(n):
+    """A 4h frame long enough for a daily EMA200 but far short of a weekly one."""
+    import numpy as np
+    import pandas as pd
+    close = 100 * np.cumprod(np.full(n, 1.001))
+    return pd.DataFrame(
+        {"open": close, "high": close * 1.002, "low": close * 0.998, "close": close,
+         "volume": np.full(n, 1000.0)},
+        index=pd.date_range("2024-01-01", periods=n, freq="4h"))
+
+
+def test_daily_warmup_admits_a_symbol_the_strict_one_rejects():
+    """Every one of Nakhoda's ten holdout symbols is younger than 200 WEEKS, so the
+    strict rule leaves nothing to evaluate there. The daily rule trades the weekly trend
+    away — `aligned` then never fires and the HTF condition is 0 for BOTH engine arms —
+    to make an engine-vs-engine comparison possible on those markets at all."""
+    import scripts.entry_ic as E
+    df = _plain_4h(2000)                 # ~333 daily bars, ~47 weekly
+    frames = E.build_htf(df)
+    assert len(frames["1w"][0]) < 200, "fixture no longer isolates the weekly rule"
+    assert E.htf_ready_index(df, frames, "strict") == len(df), "strict admitted a young symbol"
+    daily = E.htf_ready_index(df, frames, "daily")
+    assert daily < len(df), "daily rule admitted nothing"
+    assert daily >= E.WARMUP
+
+
+def test_an_explicit_start_never_shortens_the_htf_warmup():
+    """A time holdout starts where its date says, or later if the indicators are not yet
+    real — never earlier. Loading the full history and scoring only the tail is what
+    makes a time holdout possible without re-warming."""
+    import scripts.entry_ic as E
+    df = _plain_4h(2000)
+    frames = E.build_htf(df)
+    warm = E.htf_ready_index(df, frames, "daily")
+
+    early = E.eval_start(df, frames, str(df.index[10].date()), "daily")
+    assert early == warm, "an early --start was allowed to cut the warmup short"
+
+    wanted = df.index[1500]
+    late = E.eval_start(df, frames, str(wanted.date()), "daily")
+    assert late > warm and df.index[late] >= wanted.normalize(), df.index[late]
+
+
+def test_no_start_leaves_the_window_at_the_warmup():
+    import scripts.entry_ic as E
+    df = _plain_4h(2000)
+    frames = E.build_htf(df)
+    assert E.eval_start(df, frames, None, "daily") == E.htf_ready_index(df, frames, "daily")
+
+
+
+def test_split_by_gates_partitions_the_ungated_arm():
+    """kept and rejected must together be exactly the ungated arm, with no overlap —
+    otherwise the `rejected` arm is not what its name claims and the gate verdict is
+    measured against the wrong population."""
+    import scripts.entry_ic as E
+    ungated = [(i, {"i": i}) for i in (5, 9, 12, 20, 33)]
+    gated = [(i, {"i": i}) for i in (9, 20)]
+    rejected = E.split_by_gates(ungated, gated)
+    assert [i for i, _ in rejected] == [5, 12, 33], rejected
+    assert len(rejected) + len(gated) == len(ungated)
+    assert not ({i for i, _ in rejected} & {i for i, _ in gated})
+
+
+def test_split_by_gates_rejects_a_gated_entry_that_is_not_in_the_ungated_arm():
+    """The gates can only turn BUY into HOLD, so this cannot happen — and if it ever
+    does, it must fail loudly rather than quietly shrink the rejected arm."""
+    import scripts.entry_ic as E
+    try:
+        E.split_by_gates([(1, {})], [(2, {})])
+    except ValueError as e:
+        assert "subset" in str(e), e
+    else:
+        raise AssertionError("a gated entry outside the ungated arm was accepted")
+
+
+
 # ── 20. Exit simulator ───────────────────────────────────────────────────────
 
 def _exit_fixture(closes, highs=None, lows=None, atr=100.0):
@@ -2393,6 +2472,13 @@ if __name__ == "__main__":
     run("gates_disabled is not clobbered",        test_gates_disabled_is_not_clobbered_by_the_conditions_parameter)
     run("unknown gate name raises",               test_an_unknown_gate_name_raises_instead_of_ablating_nothing)
     run("default leaves gates running",           test_no_gates_disabled_leaves_every_gate_running)
+
+    print("\n── 22. Holdout windowing ──")
+    run("daily warmup admits young symbols",      test_daily_warmup_admits_a_symbol_the_strict_one_rejects)
+    run("--start never shortens warmup",          test_an_explicit_start_never_shortens_the_htf_warmup)
+    run("no --start keeps the warmup window",     test_no_start_leaves_the_window_at_the_warmup)
+    run("rejected arm partitions the ungated",    test_split_by_gates_partitions_the_ungated_arm)
+    run("a stray gated entry is rejected",        test_split_by_gates_rejects_a_gated_entry_that_is_not_in_the_ungated_arm)
 
     print("\n── 20. Exit simulator ──")
     run("TP1 then TP2 closes WIN",                test_exit_tp2_path_returns_win)
