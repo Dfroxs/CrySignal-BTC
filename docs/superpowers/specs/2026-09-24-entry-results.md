@@ -46,6 +46,15 @@ evidence the anti-chase gates pay for themselves**, and the direction of the poi
 is against them.
 
 **H-C — Donchian 20/10: descriptive only, as pre-registered.**
+
+> **Update, 2026-09-24 (later the same day).** The sibling project's out-of-domain test of
+> this exact rule was finished and scored: it **FAILED all three of its pre-registered
+> criteria** on 22 non-crypto instruments — annualised edge −2.2%/yr against a +3.0%
+> bar, breadth 2 of 22 against 60%, and, decisively, an edge over *matched* random entry
+> of −0.007pp/yr. Its timing outside crypto is indistinguishable from noise. See
+> `../../../../Nakhoda/docs/OOS-FINDING-2026-09-08.md`. Whatever the figures below
+> suggest, Donchian is now measured as a crypto-and-period effect, not a general
+> mechanism — so treat this row as a lead about THIS dataset only, and a weak one.
 Best of the four arms on every statistic — mean −0.058pp, PF 0.97, +0.384pp over random —
 and it is two parameters against 22 conditions, five gates and an adaptive controller. But
 n = 133, the interval [−0.675, +0.606] contains both zero and random's mean, and these are
