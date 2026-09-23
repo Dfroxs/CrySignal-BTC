@@ -4,6 +4,59 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-09-24 — research: the assembled entry loses to random entry
+
+A pre-registered test of the one question this repository had never asked: does the
+entry — 22 conditions, an adaptive threshold and five veto gates — pick better points
+than a dart? Run on the sibling project's OKX 4h cache (10 tuning symbols, 39,762
+candles from 2018, never touched here), four arms over identical candles, exits and
+costs.
+
+| arm | n | mean | 90% CI | PF | vs random |
+|---|---:|---:|---|---:|---:|
+| spotsignal | 1,872 | **−0.646pp** | [−0.805, −0.492] | 0.66 | **−0.203** |
+| no_antichase | 4,060 | −0.577pp | [−0.696, −0.459] | 0.71 | −0.134 |
+| donchian 20/10 | 133 | −0.058pp | [−0.675, +0.606] | 0.97 | +0.384 |
+| random | 37,495 | −0.443pp | [−0.481, −0.406] | 0.76 | — |
+
+- **H-A FAILED.** The interval lies entirely below random's mean, so the entry is not
+  merely uninformative — it is worse than chance by 0.203pp per trade. Beat random on
+  1 of 8 symbols.
+- **H-B FAILED.** Ablating no_chase / anti_fomo / entry_wick improves the mean by
+  0.069pp and more than doubles the entry count. Intervals overlap, so the honest claim
+  is that there is no evidence the anti-chase gates pay for themselves.
+- **H-C descriptive only.** Donchian 20/10 is the best arm on every statistic with two
+  parameters, but n=133 and these are its own tuning symbols. A lead, not a finding.
+
+### Added
+- `scripts/entry_ic.py` — four-arm entry comparison against a count-matched random
+  baseline over 20 seeds, reusing `backtest._simulate_forward` so no arm can drift from
+  the shipped exit logic. Committed before it produced a figure.
+- `signals/engine.py` — `gates_disabled`, mirroring the existing `disabled` and
+  `threshold_override` knobs. No gate logic, weight or threshold changed.
+
+### Fixed
+- **The ablation knob was a no-op on first release.** Its `_off` collided with the name
+  line 71 already binds to the condition-ablation set, so every gate guard read the wrong
+  variable and the ablated arm came back a byte-identical copy of its control. Renamed to
+  `_gates_off`. The first run was killed, not scored; the re-run reproduces the original
+  figures for the three unaffected arms exactly.
+
+### Notes
+- **No production file changed as a result of this run** — `config.py`, `signals/`
+  (beyond the additive knob), `trading/` and `run_bot.py` are untouched, and nothing
+  should change on this evidence alone.
+- Limits are recorded in the results document: one asset class, spot only, fixed
+  threshold 4.3 against a live controller that moves 3.0–7.0, entries simulated
+  independently so this measures an entry POINT and not portfolio sequencing.
+
+### Tests
+- 112 → **116**. Four cover the ablation knob, the first walking all five gates and
+  asserting each both fires on a fixture and stops firing when ablated; one pins the
+  exact name collision by passing `disabled` and `gates_disabled` together.
+
+---
+
 ## 2026-09-24 — fix: cycle_log discarded every reason that explained a HOLD
 
 `log_cycle()` stored `reasons[:10]`. The engine appends its veto lines *after*
