@@ -492,7 +492,9 @@ def _net_pnl(stype, entry, exit_px, partial_closed, partial_pnl, mode="futures")
         gross = (exit_px - entry) / entry * 100
     else:
         gross = (entry - exit_px) / entry * 100
-    gross -= _costs(mode, 1 if partial_closed else 2)
+    # 2 sides whether or not TP1 was taken — see the note in trading/paper.py::_calc_pnl.
+    # This is a mirror of that function and must charge what it charges.
+    gross -= _costs(mode, 2)
     if partial_closed:
         return partial_pnl * 0.5 + gross * 0.5
     return gross

@@ -1471,7 +1471,7 @@ def test_colours_return_on_a_terminal():
 
 # ── 19. cycle_log records everything it fetches ──────────────────────────────
 
-def _log_one_cycle(db_path, market_structure, reasons=()):
+def _log_one_cycle(db_path, market_structure, reasons=(), contributions=None):
     import numpy as np
     import pandas as pd
     import trading.history as h
@@ -1487,6 +1487,8 @@ def _log_one_cycle(db_path, market_structure, reasons=()):
         sig = {"type": "HOLD", "buy_score": 5.0, "sell_score": 2.0, "strength": 5.0,
                "_threshold": 4.05, "rsi_divergence": "NONE", "fear_greed_value": 69,
                "news_sentiment": "BULLISH", "reasons": list(reasons)}
+        if contributions is not None:
+            sig["_contributions"] = contributions
         h.log_cycle(sig, df, market_structure, {"1d": "BULLISH"}, "futures")
     finally:
         try:
@@ -1855,6 +1857,163 @@ def test_split_by_gates_rejects_a_gated_entry_that_is_not_in_the_ungated_arm():
         assert "subset" in str(e), e
     else:
         raise AssertionError("a gated entry outside the ungated arm was accepted")
+
+
+
+# ── 23. Execution cost on a partial exit ─────────────────────────────────────
+
+def _cost_per_side(mode):
+    from config import EXECUTION_CONFIG as ec
+    fee = ec["futures_fee_pct"] if mode == "futures" else ec["spot_fee_pct"]
+    return fee + ec.get("slippage_pct", 0.05)
+
+
+def test_a_partial_exit_pays_a_full_round_trip_not_one_and_a_half():
+    """A position that takes TP1 is bought once and sold twice, so weighted by size it
+    pays entry 1.0 + exit 0.5 + exit 0.5 = 2.0 sides — the same as a trade that never
+    partials.
+
+    The TP1 half is charged 2 sides where it is booked (trading/paper.py: `_costs = ... * 2`),
+    covering its own entry and exit. The remainder was charged 1, covering only its exit, so
+    ITS ENTRY LEG WAS NEVER CHARGED: 0.5x2 + 0.5x1 = 1.5 sides. Every trade that hit TP1
+    recorded roughly 0.075pp (spot) better than it should have.
+
+    Pinned at zero price movement, where the answer is unambiguous: a round trip that goes
+    nowhere costs exactly the round trip.
+    """
+    from trading.paper import _calc_pnl
+    for mode in ("spot", "futures"):
+        side = _cost_per_side(mode)
+        partial_pnl = -side * 2          # TP1 taken at the entry price
+        pos = {"entry_price": 100.0, "type": "BUY", "mode": mode,
+               "partial_closed": 1, "partial_pnl": partial_pnl}
+        got = _calc_pnl(pos, 100.0)
+        assert abs(got - (-side * 2)) < 1e-9, f"{mode}: {got:.4f} vs {-side*2:.4f}"
+
+
+def test_the_backtest_charges_a_partial_exit_the_same_as_the_live_path():
+    """backtest._net_pnl documents itself as a mirror of trading/paper.py::_calc_pnl. A
+    mirror that charges different costs makes every backtest figure disagree with the run
+    it is supposed to predict."""
+    from backtest import _net_pnl
+    from trading.paper import _calc_pnl
+    for mode in ("spot", "futures"):
+        side = _cost_per_side(mode)
+        partial_pnl = -side * 2
+        bt = _net_pnl("BUY", 100.0, 100.0, True, partial_pnl, mode)
+        live = _calc_pnl({"entry_price": 100.0, "type": "BUY", "mode": mode,
+                          "partial_closed": 1, "partial_pnl": partial_pnl}, 100.0)
+        assert abs(bt - live) < 1e-9, f"{mode}: backtest {bt:.4f} vs live {live:.4f}"
+        assert abs(bt - (-side * 2)) < 1e-9, f"{mode}: {bt:.4f}"
+
+
+def test_a_trade_without_a_partial_still_pays_exactly_two_sides():
+    """The no-partial path was always right; this holds it there while the other is fixed."""
+    from backtest import _net_pnl
+    from trading.paper import _calc_pnl
+    for mode in ("spot", "futures"):
+        side = _cost_per_side(mode)
+        pos = {"entry_price": 100.0, "type": "BUY", "mode": mode, "partial_closed": 0}
+        assert abs(_calc_pnl(pos, 100.0) - (-side * 2)) < 1e-9
+        assert abs(_net_pnl("BUY", 100.0, 100.0, False, 0.0, mode) - (-side * 2)) < 1e-9
+
+
+def test_taking_tp1_never_costs_less_than_not_taking_it():
+    """The defect in one sentence: hitting TP1 handed the trade a cost discount that no
+    exchange gives. Same entry, same exit, one takes TP1 on the way — its total cost must
+    not be lower."""
+    from backtest import _net_pnl
+    side = _cost_per_side("spot")
+    # TP1 booked at +2%, remainder exits at +2% too, so the price path is identical
+    partial_pnl = 2.0 - side * 2
+    with_tp1 = _net_pnl("BUY", 100.0, 102.0, True, partial_pnl, "spot")
+    without = _net_pnl("BUY", 100.0, 102.0, False, 0.0, "spot")
+    assert abs(with_tp1 - without) < 1e-9, f"TP1 path {with_tp1:.4f} vs plain {without:.4f}"
+
+
+
+# ── 24. Per-condition contributions in cycle_log ─────────────────────────────
+
+def test_cycle_log_stores_the_per_condition_contributions():
+    """The engine already computes `signal['_contributions'][name] = (buy, sell)` for every
+    condition, and cycle_log threw it away — keeping only the summed buy_score.
+
+    Without it, comparing the live bot against a replay can only be done on the total,
+    where the 3.50 of SPOT_MAX_SCORE that no replay can see (market_structure 3.00 +
+    gold_vix 0.50) swamps any drift smaller than itself. Item #5 measured exactly that and
+    could conclude nothing. Stored per condition, the technical conditions can be compared
+    directly and the blind ones subtracted instead of tolerated.
+    """
+    import json
+    import os
+    import sqlite3
+    import tempfile
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        contrib = {"ema200": (1.0, 0.0), "rsi": (0.0, 1.5), "macd": (0.75, 0.0)}
+        _log_one_cycle(path, _EMPTY_MARKET, contributions=contrib)
+        c = sqlite3.connect(path)
+        raw = c.execute("SELECT contributions FROM cycle_log").fetchone()[0]
+        c.close()
+        got = json.loads(raw)
+        assert got == {"ema200": [1.0, 0.0], "rsi": [0.0, 1.5], "macd": [0.75, 0.0]}, got
+    finally:
+        os.unlink(path)
+
+
+def test_contributions_survive_a_cycle_that_produced_none():
+    """A signal dict without _contributions must store NULL, not crash and not '{}' — the
+    two mean different things when you read the column back years later."""
+    import os
+    import sqlite3
+    import tempfile
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        _log_one_cycle(path, _EMPTY_MARKET)          # no contributions passed
+        c = sqlite3.connect(path)
+        raw = c.execute("SELECT contributions FROM cycle_log").fetchone()[0]
+        c.close()
+        assert raw is None, repr(raw)
+    finally:
+        os.unlink(path)
+
+
+def test_an_existing_cycle_log_gains_the_contributions_column():
+    """The paper run's database predates this column. It must be added in place, not
+    require a rebuild — the rows already in it cannot be recreated."""
+    import os
+    import sqlite3
+    import tempfile
+    import trading.history as h
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE cycle_log (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                 "timestamp TEXT NOT NULL, mode TEXT NOT NULL, type TEXT NOT NULL, "
+                 "price REAL NOT NULL)")
+    conn.execute("INSERT INTO cycle_log (timestamp, mode, type, price) "
+                 "VALUES ('2026-01-01 00:00:00', 'spot', 'HOLD', 50000.0)")
+    conn.commit()
+    conn.close()
+    saved = h.SIGNAL_HISTORY_DB, h.DB
+    h.SIGNAL_HISTORY_DB, h.DB = path, None
+    try:
+        h._migrate_cycle_log()
+        conn = sqlite3.connect(path)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(cycle_log)")}
+        n = conn.execute("SELECT COUNT(*) FROM cycle_log").fetchone()[0]
+        conn.close()
+        assert "contributions" in cols, sorted(cols)
+        assert n == 1, "the existing row was lost"
+    finally:
+        try:
+            h.DB.close()
+        except Exception:
+            pass
+        h.SIGNAL_HISTORY_DB, h.DB = saved
+        os.unlink(path)
 
 
 
@@ -2477,6 +2636,17 @@ if __name__ == "__main__":
     run("daily warmup admits young symbols",      test_daily_warmup_admits_a_symbol_the_strict_one_rejects)
     run("--start never shortens warmup",          test_an_explicit_start_never_shortens_the_htf_warmup)
     run("no --start keeps the warmup window",     test_no_start_leaves_the_window_at_the_warmup)
+
+    print("\n── 23. Partial-exit costs ──")
+    run("partial pays a full round trip",         test_a_partial_exit_pays_a_full_round_trip_not_one_and_a_half)
+    run("backtest matches the live path",         test_the_backtest_charges_a_partial_exit_the_same_as_the_live_path)
+    run("no-partial still pays two sides",        test_a_trade_without_a_partial_still_pays_exactly_two_sides)
+    run("TP1 never buys a cost discount",         test_taking_tp1_never_costs_less_than_not_taking_it)
+
+    print("\n── 24. Contributions in cycle_log ──")
+    run("contributions are stored",               test_cycle_log_stores_the_per_condition_contributions)
+    run("absent contributions store NULL",        test_contributions_survive_a_cycle_that_produced_none)
+    run("existing database gains the column",     test_an_existing_cycle_log_gains_the_contributions_column)
     run("rejected arm partitions the ungated",    test_split_by_gates_partitions_the_ungated_arm)
     run("a stray gated entry is rejected",        test_split_by_gates_rejects_a_gated_entry_that_is_not_in_the_ungated_arm)
 

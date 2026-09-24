@@ -4,6 +4,45 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-09-25 — fix: a partial exit was charged 1.5 round-trip sides, not 2
+
+Two changes for the **next** paper run. The running bot is untouched: it tracks `main`,
+this lands on `develop`, and the live run stays pinned to the version it started on.
+
+### Fixed
+- **`trading/paper.py::_calc_pnl` and `backtest.py::_net_pnl` undercharged every trade
+  that hit TP1.** A position taking TP1 is bought once and sold twice — weighted by size,
+  entry 1.0 + exit 0.5 + exit 0.5 = **2.0 sides**, the same round trip as a trade that
+  never partials. The TP1 half is charged 2 sides where it is booked, covering its own
+  entry and exit; the remainder was charged `1 if partial else 2`, covering only ITS exit
+  and leaving its entry leg unpaid. The blend came to 0.5×2 + 0.5×1 = **1.5**.
+
+  Every trade that hit TP1 recorded **~0.075pp (spot) / ~0.045pp (futures)** better than
+  it should have — a cost discount for hitting a target, which no exchange gives. Both
+  the live path and its backtest mirror carried it identically, so no comparison between
+  them ever revealed it.
+
+  Of the paper run's three closed spot positions, one hit TP1.
+
+### Added
+- **`contributions` column on `cycle_log`** — the engine's per-condition `(buy, sell)`
+  deltas as JSON, which it has always computed and this table always discarded. Without
+  them a live-vs-replay comparison can only be made on the summed `buy_score`, where the
+  3.50 of `SPOT_MAX_SCORE` no replay can see (`market_structure` 3.00 + `gold_vix` 0.50)
+  swamps any drift smaller than itself — see the item #5 finding. Stored per condition,
+  technical conditions can be compared directly and the blind ones subtracted rather than
+  tolerated. `NULL` when the engine produced none, never `{}`: "not recorded" and "every
+  condition scored zero" are different facts. Existing databases gain the column in place.
+- **`scripts/forming_bar_impact.py`** — measures what scoring the unclosed bar does to the
+  verdict, by simulating it against closed bars on historical data.
+
+### Tests
+- 121 → **128**. Four pin the cost accounting, including the one-line statement of the
+  defect: taking TP1 must never cost less than not taking it. Three cover the new column,
+  its NULL case, and in-place migration of a database that predates it.
+
+---
+
 ## 2026-09-24 — research: the gate holdout reverses the tuning result
 
 Confirmatory test of H-B on data the tuning run never touched, with a sharper statistic:
