@@ -71,3 +71,48 @@ Nothing, to the running bot — the one rule holds. For the **next** run:
    deltas. Storing them would make this comparison sharp instead of blunt: technical
    conditions could be compared directly and the market-structure blind spot subtracted
    rather than tolerated.
+
+---
+
+# Measured, 2026-09-25 — what the unclosed bar actually does
+
+`scripts/forming_bar_impact.py`, 1,200 candles across BTC/ETH/SOL. Both arms go through
+the identical indicator function over the identical 1,500-bar window; they differ only in
+whether the last row is the closed bar or a stub at that bar's open.
+
+| | |
+|---|---|
+| verdict differs | **163/1,200 = 13.6%** |
+| `buy_score` difference | mean −0.212, **median +0.000**, max \|diff\| **3.75** |
+
+The median is exactly zero: on most candles the forming bar changes nothing. But it
+changes the verdict on **one candle in seven**, and can move the score by 3.75 of
+SPOT_MAX_SCORE 22.50 — 17%.
+
+The mean is negative, so scoring the unclosed bar makes the system **quieter**, which is
+consistent with how little the live run fires.
+
+*A confound found and removed first:* the initial version compared the stub frame
+(recomputed) against `load_symbol`'s columns (computed over the symbol's whole history).
+That difference is the window, not the bar, and it would have read as "the forming bar
+changes everything".
+
+## What this does and does not settle
+
+It settles that the difference is **material, not cosmetic**. It does not settle which
+version is *better* — nothing here measures P&L, and no backtest can, since the backtest
+is one of the two arms being compared.
+
+The case for closed bars is not statistical:
+
+- The indicators on that row are computed over a bar that has barely begun. `RSI_14`'s
+  most recent element has zero range.
+- The entry-wick gate divides by that range. At minute one it is measuring the first
+  minute's noise, not a rejection.
+- Scoring the bar that closed at T uses information that is complete at T. The forming
+  bar adds one minute on a four-hour timeframe.
+- It would make `backtest.py` and the live path comparable **for the first time**.
+
+The case against changing it is the run's own rule: this moves 13.6% of verdicts, so it
+is a strategy change, and it belongs to the next run with the change recorded in that
+run's manifest — not to this one.

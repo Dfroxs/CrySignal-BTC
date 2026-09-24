@@ -40,13 +40,17 @@ from signals.indicators import (  # noqa: E402
 )
 
 
-def with_stub_last_bar(raw: pd.DataFrame, i: int) -> pd.DataFrame:
-    """Bars 0..i-1 closed, plus bar i collapsed to its own open — the shape live sees at
-    :01. Indicators are recomputed over that frame, which is the point: every rolling
-    window's most recent element becomes the stub."""
-    f = raw.iloc[: i + 1].copy()
-    o = float(f.iloc[-1]["open"])
-    f.iloc[-1, f.columns.get_indexer(["open", "high", "low", "close"])] = [o, o, o, o]
+WINDOW = 1500          # bars fed to each arm; both arms get the identical treatment
+
+
+def _indicators(f: pd.DataFrame) -> pd.DataFrame:
+    """Every column the engine reads, computed over exactly the frame given.
+
+    BOTH arms go through this. An earlier version compared the stub frame (recomputed)
+    against load_symbol's columns (computed over the symbol's whole history) — a confound
+    that would have shown up as "the forming bar changes everything" when the real
+    difference was the window the indicators were computed on.
+    """
     f["EMA_200"] = calculate_ema(f["close"], 200)
     f["RSI_14"] = calculate_rsi(f["close"])
     f["MACD"], f["MACD_Signal"], f["MACD_Histogram"] = calculate_macd(f["close"])
@@ -58,6 +62,16 @@ def with_stub_last_bar(raw: pd.DataFrame, i: int) -> pd.DataFrame:
     f["MFI_14"] = compute_mfi(f)
     f["CMF_20"] = compute_cmf(f)
     return f
+
+
+def arms(raw: pd.DataFrame, i: int):
+    """(replay-shaped, live-shaped) frames at bar i, identical but for the last row."""
+    lo = max(0, i + 1 - WINDOW)
+    closed = _indicators(raw.iloc[lo:i].copy())          # bars up to i-1, all closed
+    f = raw.iloc[lo: i + 1].copy()
+    o = float(f.iloc[-1]["open"])
+    f.iloc[-1, f.columns.get_indexer(["open", "high", "low", "close"])] = [o, o, o, o]
+    return closed, _indicators(f)
 
 
 def main() -> int:
@@ -74,14 +88,15 @@ def main() -> int:
         df = load_symbol(base)
         raw = df[["open", "high", "low", "close", "volume"]]
         frames = build_htf(df)
-        start = max(eval_start(df, frames, None, "strict"), len(df) - args.limit)
+        start = max(eval_start(df, frames, None, "strict"), WINDOW, len(df) - args.limit)
         n, f_sym, d_sym = 0, 0, []
         for i in range(start, len(df)):
             htf = _htf_at(frames, df.index[i])
-            closed = generate_signals(df.iloc[:i], htf, None, None, mode="spot",
+            f_closed, f_forming = arms(raw, i)
+            closed = generate_signals(f_closed, htf, None, None, mode="spot",
                                       threshold_override=SPOT_THRESHOLD)
-            forming = generate_signals(with_stub_last_bar(raw, i), htf, None, None,
-                                       mode="spot", threshold_override=SPOT_THRESHOLD)
+            forming = generate_signals(f_forming, htf, None, None, mode="spot",
+                                       threshold_override=SPOT_THRESHOLD)
             d = forming["buy_score"] - closed["buy_score"]
             d_sym.append(d)
             n += 1
