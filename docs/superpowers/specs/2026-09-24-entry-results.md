@@ -82,7 +82,13 @@ ambiguity rather than picking the convenient reading.
 entry apparatus does not select good entry points of any kind — adding a second archetype
 to it would add a second way to lose. Subtraction is the indicated direction, not addition.
 
-**Does not:** this is one asset class, spot only, 4h, long-only, at a fixed threshold of 4.3
+**Does not:** and one limit here was understated at the time. The engine arms score
+**19.00 of SPOT_MAX_SCORE 22.50**, not the whole thing: `market_structure` (DXY, S&P500,
+stablecoin supply, BTC dominance — 0.75 each) and `gold_vix` have no historical source, so
+a replay scores 3.50 of the ceiling at zero. H-A's "the entry loses to random" was measured
+on an engine running at 84% of what the live bot scores with. H-B is unaffected, because
+both its arms are missing the same 3.50. Beyond that, this is one asset class, spot only,
+4h, long-only, at a fixed threshold of 4.3
 while the live controller moves 3.0–7.0. Entries are simulated independently, so this
 measures the quality of an entry POINT and says nothing about portfolio sequencing. The
 `_net_pnl` cost asymmetry recorded in `2026-09-21-exit-prereg.md` §7.1 is present in every

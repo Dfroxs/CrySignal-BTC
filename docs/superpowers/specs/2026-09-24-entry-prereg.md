@@ -105,13 +105,26 @@ first run was killed, not scored.
 ## 2. "The engine here is quieter than live" overstated the blind spot
 
 The limits section above says market-structure conditions cost the engine its
-funding/L-S/OI/basis scoring. That is the **futures** ceiling — 7.5 of 26.5. In spot mode
-those conditions are already `0.00` in `CONDITION_MAX` and are skipped by design, so the
-only spot condition blind to history is `gold_vix`, worth **0.50 of 22.50**.
+funding/L-S/OI/basis scoring. That is the **futures** ceiling — 7.5 of 26.5, and in spot
+mode those four are `0.00` in `CONDITION_MAX` and skipped by design.
 
-The spot engine in this experiment therefore scores 22.00 of 22.50 — not a quieter system,
-essentially the whole one. The remaining difference from live is the fixed threshold, which
-the limits section already states correctly.
+**But this correction was itself wrong**, and is corrected again on 2026-09-24. Skipping
+funding/L-S/OI/basis is not the same as having no blind spot. The `market_structure`
+condition also scores **DXY, S&P500, stablecoin supply and BTC dominance at 0.75 each** —
+3.00 for spot — and `gold_vix` adds 0.50. No free historical API serves any of them, and
+`backtest.py` passes `market_structure=None`, so a replay scores all of it zero.
+
+**The spot blind spot is 3.50 of 22.50 — 15.6%, not 2%.** The engine arms in this
+experiment run at 19.00 of 22.50, materially quieter than live. The original "quieter than
+live" claim was right in direction and wrong in magnitude; the first correction was wrong
+outright. Both are left standing above rather than edited away.
+
+What this changes, and what it does not:
+- **H-B is unaffected.** Both engine arms are missing the identical 3.50, so the
+  kept-vs-rejected comparison stays controlled.
+- **H-A is weakened, and its limitation was understated.** "The assembled entry loses to
+  random" was measured on an engine running at 84% of its live ceiling.
+- **H-C is unaffected** — Donchian never reads market structure.
 
 ## Disclosure: what had been seen when the correction was made
 
