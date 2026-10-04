@@ -18,7 +18,9 @@
 Host `45.151.155.178` — Kamatera, Singapore, Ubuntu 24.04, **960 MB RAM, 1 core**.
 `ssh dmonk@45.151.155.178`. Roughly 380 MB free with both bots up.
 
-**There is no passwordless sudo.** Two consequences that cost a previous session time:
+**There is no passwordless sudo**, and `sudo` needs a real TTY — neither Claude Code's
+Bash tool nor its `!` prefix provides one, so anything needing root has to be pasted into
+a terminal application. Two consequences that cost a previous session time:
 - `nakhoda-alloc` is a **user-scope** unit (`systemctl --user ...`, `journalctl --user -u ...`)
   with `loginctl enable-linger` set — that needs no root and still survives reboot.
   The runbook in Nakhoda's CLAUDE.md said `sudo systemctl`; that was wrong and is fixed.
@@ -105,12 +107,25 @@ loudly. Keeps 30 days. Pull one to the Mac occasionally.
    08:01. Two things to confirm:
    `SELECT contributions FROM cycle_log ORDER BY id DESC LIMIT 1;` must be JSON, not NULL
    (every row from run 1 is NULL), and a vetoed cycle's `reasons` must contain `⛔`.
-2. **`PermitRootLogin yes` is still set.** Root SSH is open on a box that saw 30 failed
-   attempts and 4 bans in its first hours. fail2ban is running. Needs sudo:
-   `sudo sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config && sudo systemctl restart ssh`
-3. **The reboot test has never been done** (PAPER_RUN item #1 from run 1). The machine has
-   been up 3+ weeks. Both units are `enabled` / lingered so they should survive, but it
-   has not been proven. 40 seconds: `sudo reboot`, wait, check both services.
+2. ~~`PermitRootLogin yes`~~ — **done 2026-10-04.** Set to `no` and sshd restarted.
+   Access is unaffected: both operator and tooling log in as `dmonk`.
+3. ~~The reboot test~~ — **done 2026-10-04, and it passed.** First real reboot since the
+   host came online. Nothing was touched afterwards:
+
+   | | |
+   |---|---|
+   | machine booted | 08:52:53 UTC |
+   | `spotsignal` active | 08:53:00 — **7 s later** |
+   | `nakhoda-alloc` active | 08:53:01 — **8 s later** |
+
+   Both resumed working, not merely `active`: spotsignal re-entered loop mode with zero
+   errors, allocbot reconnected to OKX and still held its 9 sleeves (equity 28,739 USDT
+   virtual) — its state is the wallet, so it picked up exactly where it was.
+
+   **On allocbot's demo clock:** the process restarted, so `ActiveEnterTimestamp` and
+   `NRestarts` reset. That was a deliberate reboot with clean automatic recovery, not a
+   fault, and no error was logged either side of it. Judge the two-week requirement on
+   errors and missed daily decisions, not on one process's uptime.
 4. **`nakhoda-alloc`'s demo clock.** Nakhoda's CLAUDE.md requires **two weeks clean** before
    real money is considered. Started 2026-09-24 04:17 UTC, zero errors and zero restarts as
    of 2026-10-04. But read `Nakhoda/docs/OOS-FINDING-2026-09-08.md` first: the rule passed a
