@@ -75,6 +75,17 @@ among them. No threshold, weight, gate or risk parameter moved.**
 ## Check it in five minutes
 
 ```bash
+bash scripts/morning_check.sh          # both bots, run 2's health, backups — one command
+```
+
+It exits non-zero if anything needs attention, so it can be cron'd. The contributions
+check starts at the **run's** start from `paper_run_manifest.json`, not a fixed 24-hour
+window — rows from the previous run are legitimately NULL and would otherwise read as a
+fault every morning for a day after any restart.
+
+By hand:
+
+```bash
 ssh dmonk@45.151.155.178
 cd ~/playground/CrySignal-BTC
 systemctl status spotsignal                 # active (running)?
