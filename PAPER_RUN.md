@@ -4,6 +4,43 @@
 
 ---
 
+## New session? Do this first
+
+```bash
+bash scripts/morning_check.sh
+```
+
+Both bots, one command, exits non-zero if anything needs attention. Expect
+`>>> semua bersih <<<`. If something is flagged, the line names it; the rest of this
+document explains the context.
+
+**What was still unproven when this was written (2026-10-04 ~09:00 UTC), in the order it
+will become visible:**
+
+1. **allocbot crossing a UTC midnight on its own.** Every daily decision so far was
+   triggered by a start or a restart. The 00:00 UTC rollover on 2026-10-05 is its first
+   unprompted one. `keputusan harian terjadi` in the check should be ≥ 1.
+2. **Run 2 completing a full day.** It started 07:37 UTC on 2026-10-04, so its first
+   complete day closes 2026-10-05. `contributions kosong` must stay 0.
+3. **Two of run 2's four fixes have not been seen in production yet** — both have tests
+   that fail against the old code, but that is lab evidence, not field evidence:
+   - `_net_pnl`'s cost fix needs a trade that hits TP1.
+   - The veto-reason fix needs a cycle where a gate actually fires (look for `⛔` in
+     `cycle_log.reasons`).
+
+**Waiting on `develop`, for run 3 — do not deploy into run 2:**
+`notifier/telegram.py`, `run_bot.py`, `signals/market_data.py`, `signals/spot.py`,
+`signals/futures.py` — the unopenable-signal alert and the controller counting opens
+instead of fires. See `docs/superpowers/specs/2026-10-04-deadzone-results.md` for why,
+and note that neither is a route to profit: that experiment's H1 failed.
+
+**allocbot's demo gate:** started 2026-09-24 04:17 UTC, two weeks lands ~2026-10-08. Read
+`../Nakhoda/docs/OOS-FINDING-2026-09-08.md` before treating a pass as permission to trade
+real money — the rule failed out of domain and its timing is indistinguishable from
+matched random entry outside crypto.
+
+---
+
 ## Two bots are running, on one VPS
 
 | | **spotsignal** | **nakhoda-alloc** |
