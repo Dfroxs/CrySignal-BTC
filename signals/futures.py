@@ -24,7 +24,6 @@ from signals.market_data import (
     fetch_taker_buy_sell_ratio,
     fetch_vix,
     get_adaptive_threshold,
-    update_threshold_state,
 )
 from signals.terminal import display_analysis
 
@@ -82,7 +81,6 @@ def analyze_futures_signal(symbol='BTC/USDT', include_news=True, display=False):
         if display:
             display_analysis(df, signal, news_data, htf, market_structure, timeframe='1H', mode='futures')
         signal['db_id'] = log_signal(signal, df, htf)
-        update_threshold_state(signal['type'])
 
         signal['mode'] = 'futures'
         # `_threshold` is left as generate_signals() set it: the EFFECTIVE

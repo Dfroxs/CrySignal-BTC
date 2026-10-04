@@ -21,7 +21,6 @@ from signals.market_data import (
     fetch_stablecoin_supply,
     fetch_vix,
     get_spot_adaptive_threshold,
-    update_spot_threshold_state,
 )
 from signals.terminal import display_analysis
 
@@ -92,7 +91,6 @@ def analyze_spot_signal(symbol='BTC/USDT', include_news=True, display=False):
         if display:
             display_analysis(df, signal, news_data, htf, market_structure, timeframe='4H', mode='spot')
         signal['db_id'] = log_signal(signal, df, htf)
-        update_spot_threshold_state(signal['type'])
 
         signal['mode'] = 'spot'
         # `_threshold` is left as generate_signals() set it: the EFFECTIVE

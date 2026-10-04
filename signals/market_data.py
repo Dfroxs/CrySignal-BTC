@@ -16,8 +16,10 @@ from config import (
     ADAPTIVE_MAX_SIGNALS,
     ADAPTIVE_WINDOW_HOURS,
     BTC_DOM_CACHE_FILE,
+    FUTURES_CONFIG,
     HTTP_SESSION,
     OI_CACHE_FILE,
+    RISK_CONFIG,
     SIGNAL_THRESHOLD,
     SPOT_THRESHOLD,
     SPOT_THRESHOLD_MAX,
@@ -552,6 +554,39 @@ def get_signal_confidence(strength, threshold, htf=None, signal_type=None):
     return "WEAK"
 
 
+CONFIDENCE_LEVEL = {"WEAK": 0, "NORMAL": 1, "STRONG": 2}
+
+
+def confidence_at_least(actual, minimum):
+    """True when `actual` confidence meets or exceeds `minimum`. Ordinal, not equality.
+
+    Lived in run_bot as a private helper while the notifier had no opinion at all, which
+    is how the alert came to announce a tradeable BUY for a position Phase 3 would refuse.
+    One definition now; run_bot and the notifier both import it.
+    """
+    return CONFIDENCE_LEVEL.get(actual, -1) >= CONFIDENCE_LEVEL.get(minimum, 0)
+
+
+def will_open(signal):
+    """Does this signal clear the CONFIDENCE bar Phase 3 opens on?
+
+    Asymmetric on purpose, and the asymmetry matters:
+      False — the position will definitely not open. The confidence gate is unconditional.
+      True  — it clears THIS gate. Fakeout, regime, S/R, re-entry and aggregate-risk
+              checks can still refuse it.
+
+    The minimum is read from the same config Phase 3 reads, never copied as a literal —
+    a duplicated bar is how the alert and the gate drift apart and the alert starts lying
+    again.
+    """
+    if not signal or signal.get("type") not in ("BUY", "SELL"):
+        return False
+    mode = signal.get("mode", "futures")
+    minimum = (RISK_CONFIG["pyramid"]["min_initial_confidence"] if mode == "spot"
+               else FUTURES_CONFIG["entry"]["min_confidence"])
+    return confidence_at_least(signal.get("confidence"), minimum)
+
+
 # ---------------------------------------------------------------------------
 # Adaptive threshold
 # ---------------------------------------------------------------------------
@@ -625,9 +660,23 @@ def _get_adaptive_threshold(base, t_min, t_max, state_file, env_var):
     return base
 
 
-def _update_threshold_state(signal_type, state_file):
-    """Shared adaptive threshold state update."""
-    if signal_type == "HOLD":
+def _update_threshold_state(opened, state_file):
+    """Record that a position actually OPENED. Not that a signal fired.
+
+    It counted fires. Over paper run 1 futures fired 29 signals and opened 0 positions,
+    and the controller raised the bar in response to activity that never happened. Its
+    other arm already reads closed positions for the win rate, so the frequency half and
+    the quality half were measuring different populations.
+
+    Simulated on run 1's data, counting opens holds the futures threshold in 4.95-5.20
+    where counting fires pushed it to 5.70. It cannot run away: `_get_adaptive_threshold`
+    recomputes `base ± step` from the config constant on every call, so there is no
+    ratchet and no path to the floor.
+
+    Callers must therefore be downstream of Phase 3 — `signals/spot.py` and
+    `signals/futures.py` run in Phase 2 and cannot know, which is how this started.
+    """
+    if not opened:
         return
     state = load_cache(state_file)
     signals = state.get("signals", [])
@@ -650,9 +699,9 @@ def get_spot_adaptive_threshold():
     )
 
 
-def update_threshold_state(signal_type):
-    _update_threshold_state(signal_type, THRESHOLD_STATE_FILE)
+def update_threshold_state(opened):
+    _update_threshold_state(opened, THRESHOLD_STATE_FILE)
 
 
-def update_spot_threshold_state(signal_type):
-    _update_threshold_state(signal_type, SPOT_THRESHOLD_STATE_FILE)
+def update_spot_threshold_state(opened):
+    _update_threshold_state(opened, SPOT_THRESHOLD_STATE_FILE)

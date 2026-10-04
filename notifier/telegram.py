@@ -31,7 +31,20 @@ def _format_compact_signal_telegram(signal):
     lines = []
 
     # ── Header ──────────────────────────────────────────────
-    if stype == "BUY":
+    # A scored BUY/SELL below the confidence bar CANNOT open — Phase 3 refuses it
+    # unconditionally. It used to be announced as `🟢 BUY · SPOT · WEAK`, which reads as
+    # a tradeable signal; 25 of paper run 1's 29 futures signals were exactly that, and
+    # futures opened nothing in 35 days. The row still reaches cycle_log — that is data.
+    # What stops is the alert claiming something will happen.
+    from signals.market_data import will_open
+    openable = will_open(signal)
+    if stype in ("BUY", "SELL") and not openable:
+        side = "BUY" if stype == "BUY" else "SELL"
+        hdr = f"🔇 <b>{side} (below the bar)</b> · {label}"
+        if conf:
+            hdr += f"  ·  <b>{conf}</b>"
+        hdr += "  —  no position will open"
+    elif stype == "BUY":
         hdr = f"🟢 <b>BUY</b> · {label}"
         if conf:
             hdr += f"  ·  <b>{conf}</b>"

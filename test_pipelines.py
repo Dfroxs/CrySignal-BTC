@@ -2099,6 +2099,129 @@ def test_an_unknown_timeframe_raises_rather_than_guessing():
 
 
 
+# ── 26. A signal that cannot open must not read as tradeable ─────────────────
+
+def test_will_open_derives_the_bar_from_config_not_a_literal():
+    """Phase 3 refuses a BUY below NORMAL confidence. The alert used to announce it
+    anyway, in green, as `🟢 BUY · SPOT · WEAK` — 25 of paper run 1's 29 futures signals
+    were that, and futures opened nothing in 35 days.
+
+    The notifier must read the SAME minimum Phase 3 reads. A literal copied into the
+    formatter is how the two drift apart and the alert starts lying again."""
+    from config import FUTURES_CONFIG, RISK_CONFIG
+    from signals.market_data import will_open
+    spot_min = RISK_CONFIG["pyramid"]["min_initial_confidence"]
+    fut_min = FUTURES_CONFIG["entry"]["min_confidence"]
+    for mode, minimum in (("spot", spot_min), ("futures", fut_min)):
+        for conf, expected in (("WEAK", False), ("NORMAL", True), ("STRONG", True)):
+            got = will_open({"type": "BUY", "mode": mode, "confidence": conf})
+            want = expected if minimum == "NORMAL" else None
+            if want is not None:
+                assert got is want, f"{mode}/{conf}: {got}, config minimum is {minimum}"
+
+
+def test_will_open_is_false_for_a_hold_whatever_its_confidence():
+    from signals.market_data import will_open
+    assert will_open({"type": "HOLD", "mode": "spot", "confidence": "STRONG"}) is False
+    assert will_open({"type": "BUY", "mode": "spot", "confidence": None}) is False
+
+
+def test_phase3_and_the_notifier_share_one_comparator():
+    """run_bot gated on its own private _confidence_at_least while the notifier had no
+    opinion at all. One definition now, imported by both."""
+    import run_bot
+    from signals.market_data import confidence_at_least
+    assert run_bot._confidence_at_least is confidence_at_least
+    assert confidence_at_least("STRONG", "NORMAL") is True
+    assert confidence_at_least("WEAK", "NORMAL") is False
+    assert confidence_at_least(None, "NORMAL") is False
+
+
+def test_a_weak_buy_alert_says_no_position_will_open():
+    """The row still goes to cycle_log — it is data. What must stop is announcing a
+    tradeable BUY for a position that will be refused."""
+    from notifier.telegram import _format_compact_signal_telegram
+    sig = {"type": "BUY", "mode": "spot", "confidence": "WEAK", "strength": 5.5,
+           "buy_score": 5.5, "sell_score": 2.0, "_threshold": 4.8, "entry_price": 80000.0,
+           "reasons": []}
+    out = _format_compact_signal_telegram(sig)
+    assert "no position" in out.lower(), out
+    assert "🟢" not in out, "a signal that cannot open must not carry the go marker"
+
+
+def test_a_normal_buy_alert_is_still_a_tradeable_signal():
+    from notifier.telegram import _format_compact_signal_telegram
+    sig = {"type": "BUY", "mode": "spot", "confidence": "NORMAL", "strength": 6.5,
+           "buy_score": 6.5, "sell_score": 2.0, "_threshold": 4.8, "entry_price": 80000.0,
+           "reasons": []}
+    out = _format_compact_signal_telegram(sig)
+    assert "🟢" in out, out
+    assert "no position" not in out.lower(), out
+
+
+
+# ── 27. The controller counts opens, not fires ───────────────────────────────
+
+def _threshold_state_len(path):
+    import json
+    import os
+    if not os.path.exists(path):
+        return 0
+    return len(json.load(open(path)).get("signals", []))
+
+
+def test_the_controller_records_an_open_and_ignores_a_fire_that_did_not():
+    """`_update_threshold_state` counted every signal that FIRED. Over paper run 1
+    futures fired 29 and opened 0, and the controller raised the bar in response to
+    activity that never happened — a feedback loop watching the wrong variable. Its
+    other arm already reads closed POSITIONS for the win rate, so the two halves were
+    measuring different populations.
+
+    Simulated on run 1's data, counting opens would have held the futures threshold in
+    4.95–5.20 instead of 4.95–5.70. It cannot run away: _get_adaptive_threshold computes
+    base ± step fresh from the config constant each call, so there is no ratchet.
+    """
+    import os
+    import tempfile
+    from signals.market_data import _update_threshold_state
+    fd, path = tempfile.mkstemp(suffix=".json")
+    os.close(fd)
+    os.unlink(path)
+    try:
+        _update_threshold_state(False, path)
+        assert _threshold_state_len(path) == 0, "a signal that opened nothing was counted"
+        _update_threshold_state(True, path)
+        assert _threshold_state_len(path) == 1, "an actual open was not counted"
+        _update_threshold_state(True, path)
+        assert _threshold_state_len(path) == 2
+    finally:
+        if os.path.exists(path):
+            os.unlink(path)
+
+
+def test_the_analysis_functions_no_longer_update_the_controller():
+    """They run in Phase 2 and cannot know whether Phase 3 opened anything. Leaving the
+    call there is what made the controller count fires in the first place."""
+    for mod in ("signals/spot.py", "signals/futures.py"):
+        src = open(mod, encoding="utf-8").read()
+        assert "update_spot_threshold_state(" not in src and "update_threshold_state(" not in src, \
+            f"{mod} still updates the controller before Phase 3 has run"
+
+
+def test_every_position_open_marks_the_cycle_as_opened():
+    """A missed call site silently reverts this fix for one path — the pyramid entry, or
+    the futures flip — and nothing would fail. Counted in the source instead."""
+    lines = open("run_bot.py", encoding="utf-8").read().split("\n")
+    sites = [i for i, ln in enumerate(lines)
+             if ln.strip().startswith("pid = open_paper_position(")]
+    assert len(sites) == 4, f"{len(sites)} call sites, expected 4 — update this test"
+    for i in sites:
+        nxt = lines[i + 1].strip()
+        assert nxt.startswith("_opened_this_cycle["), (
+            f"line {i + 1} opens a position without marking the cycle: {lines[i].strip()[:60]}")
+
+
+
 # ── 20. Exit simulator ───────────────────────────────────────────────────────
 
 def _exit_fixture(closes, highs=None, lows=None, atr=100.0):
@@ -2736,6 +2859,18 @@ if __name__ == "__main__":
     run("exact at the close instant",             test_dropping_is_exact_at_the_close_instant)
     run("empty/single frame unharmed",            test_an_empty_or_single_row_frame_is_returned_unharmed)
     run("unknown timeframe raises",               test_an_unknown_timeframe_raises_rather_than_guessing)
+
+    print("\n── 26. Unopenable signals ──")
+    run("will_open reads config, not a literal",  test_will_open_derives_the_bar_from_config_not_a_literal)
+    run("HOLD never opens",                       test_will_open_is_false_for_a_hold_whatever_its_confidence)
+    run("one comparator, two consumers",          test_phase3_and_the_notifier_share_one_comparator)
+    run("WEAK alert says no position",            test_a_weak_buy_alert_says_no_position_will_open)
+    run("NORMAL alert still tradeable",           test_a_normal_buy_alert_is_still_a_tradeable_signal)
+
+    print("\n── 27. Controller counts opens ──")
+    run("records opens, ignores bare fires",      test_the_controller_records_an_open_and_ignores_a_fire_that_did_not)
+    run("analysis no longer updates it",          test_the_analysis_functions_no_longer_update_the_controller)
+    run("every open marks the cycle",             test_every_position_open_marks_the_cycle_as_opened)
     run("rejected arm partitions the ungated",    test_split_by_gates_partitions_the_ungated_arm)
     run("a stray gated entry is rejected",        test_split_by_gates_rejects_a_gated_entry_that_is_not_in_the_ungated_arm)
 

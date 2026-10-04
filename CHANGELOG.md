@@ -4,6 +4,55 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-04 — fix: two correctness defects the dead-zone experiment exposed
+
+Both for a **future** run. Paper run 2 started 2026-10-04 07:37 UTC and is pinned; these
+land on `develop`. Neither moves a threshold, a weight, a gate or a risk parameter, and
+neither is a route to profit — `2026-10-04-deadzone-results.md` H1 failed, so there is
+none here to recover.
+
+### Fixed
+- **A signal that cannot open no longer reads as tradeable.** A scored BUY below the
+  confidence bar is refused by Phase 3 unconditionally, and was still announced as
+  `🟢 BUY · SPOT · WEAK`. Across paper run 1 that was **25 of 29 futures signals**, while
+  futures opened nothing in 35 days. The `cycle_log` row still goes in — that is data;
+  what stops is the alert claiming something will happen.
+
+  The bar is read from the same config Phase 3 reads, via a new
+  `market_data.will_open()`. `run_bot._confidence_at_least` moved to
+  `market_data.confidence_at_least` so there is **one comparator with two consumers** —
+  a literal copied into the formatter is how the alert and the gate drift apart again.
+  `will_open` is deliberately asymmetric and says so: False means the position definitely
+  will not open; True means it clears *this* gate, and fakeout, regime, S/R, re-entry and
+  aggregate-risk checks can still refuse it.
+
+- **The adaptive controller counts positions that OPEN, not signals that FIRE.**
+  `_update_threshold_state` counted every fire. Futures fired 29 and opened 0, and the
+  controller raised the bar in response to activity that never happened — while its other
+  arm already read closed positions for the win rate, so the frequency half and the
+  quality half were measuring different populations.
+
+  The call moved out of `signals/spot.py` and `signals/futures.py`, which run in Phase 2
+  and cannot know whether Phase 3 opened anything — that is how it came to count fires —
+  and into `run_bot.py` after Phase 3, fed by a per-cycle flag set at all four
+  `open_paper_position` sites.
+
+  **Measured before changing it**, on run 1's own data: counting opens would have held
+  the futures threshold in **4.95–5.20** where counting fires pushed it to **5.70**. It
+  cannot run away — `_get_adaptive_threshold` recomputes `base ± step` from the config
+  constant on every call, so there is no ratchet and no path to the floor. An earlier
+  worry that this would drive the threshold down was wrong, and the simulation is what
+  showed it.
+
+### Tests
+- 133 → **141**. Five cover the unopenable signal, including that the notifier and Phase 3
+  resolve the bar from config rather than a literal. Three cover the controller, one of
+  them checking every `open_paper_position` call site is followed by the flag — mutation
+  tested by deleting the pyramid site's marker, which fails it. A missed site would
+  silently revert the fix for one path and nothing else would notice.
+
+---
+
 ## 2026-10-04 — fix: the engine was scoring a bar that had not closed
 
 Completes the four items queued for the next run. The running bot is untouched — it

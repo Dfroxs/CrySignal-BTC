@@ -74,14 +74,10 @@ def _section(title):
 
 atexit.register(close_db)
 
-_CONFIDENCE_LEVEL = {"WEAK": 0, "NORMAL": 1, "STRONG": 2}
+from signals.market_data import confidence_at_least as _confidence_at_least  # noqa: E402
+from signals.market_data import update_spot_threshold_state, update_threshold_state  # noqa: E402
 _last_atr_spot = 0  # cached for mid-cycle vol-exit checks (4H scale)
 _last_atr_fut  = 0  # cached for mid-cycle vol-exit checks (1H scale)
-
-
-def _confidence_at_least(actual, minimum):
-    """Return True if actual confidence meets or exceeds the minimum level."""
-    return _CONFIDENCE_LEVEL.get(actual, -1) >= _CONFIDENCE_LEVEL.get(minimum, 0)
 
 
 def _check_reentry_quality(signal, mode):
@@ -399,6 +395,9 @@ def run_cycle():
     _loading("Phase 3  Updating paper positions...")
     phase3_actions = []     # track what happened for summary
     pending_tg    = []      # defer Telegram notifications until after Phase 4
+    # Did Phase 3 actually OPEN anything this cycle? The adaptive controller is updated
+    # from this, not from whether a signal fired — see market_data._update_threshold_state.
+    _opened_this_cycle = {"spot": False, "futures": False}
 
     # ── Circuit breaker: per-mode drawdown + daily loss ──
     # Spot and futures have very different risk profiles. Evaluating combined
@@ -541,6 +540,7 @@ def run_cycle():
 
                 else:
                     pid = open_paper_position(spot_signal, mode="spot", pyramid_entry=1, size_factor=1.0)
+                    _opened_this_cycle["spot"] = True
                     msg = f"SPOT {spot_signal['type']} opened (#{pid}) @ ${spot_signal['entry_price']:,.0f}"
                     logger.info(msg)
                     phase3_actions.append(f"🚀 {msg}")
@@ -668,6 +668,7 @@ def run_cycle():
                                    f"Spot {spot_signal['type']} pyramid #{entry_number} — {agg_warn}")
                         else:
                             pid = open_paper_position(spot_signal, mode="spot", pyramid_entry=entry_number, size_factor=size_factor)
+                            _opened_this_cycle["spot"] = True
                             size_note = f" (size {size_factor * 100:.0f}% of base)" if size_factor < 1.0 else ""
                             sl_note = f" [SL {new_atr_mult:.2f}×ATR]" if new_atr_mult < base_atr_mult else ""
                             msg = f"SPOT {spot_signal['type']} pyramid entry #{entry_number} opened (#{pid}) @ ${spot_signal['entry_price']:,.0f}{size_note}{sl_note}"
@@ -754,6 +755,7 @@ def run_cycle():
                            f"FUT {futures_signal['type']} flip blocked — trend confluence < 2/3")
                 else:
                     pid = open_paper_position(futures_signal, mode="futures")
+                    _opened_this_cycle["futures"] = True
                     msg = f"FUT {futures_signal['type']} opened (#{pid}) @ ${futures_signal['entry_price']:,.0f} (flip)"
                     logger.info(msg)
                     phase3_actions.append(f"🔄 {msg}")
@@ -812,6 +814,7 @@ def run_cycle():
                                f"FUT {futures_signal['type']} — {agg_warn}")
                     else:
                         pid = open_paper_position(futures_signal, mode="futures")
+                        _opened_this_cycle["futures"] = True
                         msg = f"FUT {futures_signal['type']} opened (#{pid}) @ ${futures_signal['entry_price']:,.0f}"
                         logger.info(msg)
                         phase3_actions.append(f"🚀 {msg}")
@@ -876,6 +879,15 @@ def run_cycle():
     except Exception as e:
         logger.error("Paper trading update failed: %s", e)
         _err(f"Phase 3  Failed  ({e})")
+
+    # Controller update — AFTER Phase 3, because only here is it known whether a
+    # position opened. Phase 2 cannot know, and updating there is what made the
+    # controller count fires and tighten against activity that never happened.
+    try:
+        update_spot_threshold_state(_opened_this_cycle["spot"])
+        update_threshold_state(_opened_this_cycle["futures"])
+    except Exception as e:  # noqa: BLE001 — a cache write must not kill the cycle
+        logger.warning("threshold state update failed: %s", e)
 
     # Phase 4 — notifications (defensive: a Telegram hiccup should never
     # crash the cycle loop. The send helpers already catch HTTP errors, but
