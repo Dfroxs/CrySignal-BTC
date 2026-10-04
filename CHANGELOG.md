@@ -4,6 +4,520 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-04 — fix: the engine was scoring a bar that had not closed
+
+Completes the four items queued for the next run. The running bot is untouched — it
+tracks `main`, this is on `develop`, and the live run stays pinned.
+
+### Fixed
+- **`fetch_ohlcv_df` now drops the forming bar before computing any indicator**
+  (`closed_only=True`, the default; `drop_unclosed()` is the pure, tested helper). The
+  exchange serves the current incomplete bar as the last row and the engine scores
+  `df.iloc[-1]`. Running at `:01`, that bar was **one minute old** — open, high, low and
+  close within a few dollars, every rolling window ending on a stub, and the entry-wick
+  gate dividing by a range of a few dollars, measuring the first minute's noise rather
+  than a rejection.
+
+  Measured first, over 1,200 candles on BTC/ETH/SOL: it changes the verdict on **13.6%**
+  and the score by up to **3.75 of SPOT_MAX_SCORE 22.50**. The mean is negative, so the
+  old behaviour made the system quieter — consistent with how rarely the live run fires.
+
+  The default is on because every caller wants it: the live paths must not score a stub,
+  and `backtest.py` and `scripts/` were already written around closed bars. **This is the
+  change that makes backtest and live comparable for the first time.**
+
+  Running at `:01` means the newest closed bar is one minute old, so its close is the
+  live price for every purpose here — nothing needed injecting to replace it.
+
+### Notes
+- **This is a strategy change, not a bug fix in the usual sense**, and it was put to the
+  owner with the measurement before being made. It belongs to the next run; the manifest
+  for that run should record it.
+- The three preceding items — the 1.5-side cost defect, `contributions` on `cycle_log`,
+  and the `reasons[:10]` truncation — are also on `develop` awaiting that run.
+
+### Tests
+- 128 → **133**. The helper is pinned on the exact close instant (a bar is closed when
+  its period elapses, not a tick later — an off-by-one there would silently discard the
+  freshest complete bar every cycle), on a one-row frame (the engine indexes `iloc[-2]`,
+  so an empty frame turns stale data into a crash), and on an unknown timeframe raising
+  rather than guessing a duration.
+
+---
+
+## 2026-09-25 — fix: a partial exit was charged 1.5 round-trip sides, not 2
+
+Two changes for the **next** paper run. The running bot is untouched: it tracks `main`,
+this lands on `develop`, and the live run stays pinned to the version it started on.
+
+### Fixed
+- **`trading/paper.py::_calc_pnl` and `backtest.py::_net_pnl` undercharged every trade
+  that hit TP1.** A position taking TP1 is bought once and sold twice — weighted by size,
+  entry 1.0 + exit 0.5 + exit 0.5 = **2.0 sides**, the same round trip as a trade that
+  never partials. The TP1 half is charged 2 sides where it is booked, covering its own
+  entry and exit; the remainder was charged `1 if partial else 2`, covering only ITS exit
+  and leaving its entry leg unpaid. The blend came to 0.5×2 + 0.5×1 = **1.5**.
+
+  Every trade that hit TP1 recorded **~0.075pp (spot) / ~0.045pp (futures)** better than
+  it should have — a cost discount for hitting a target, which no exchange gives. Both
+  the live path and its backtest mirror carried it identically, so no comparison between
+  them ever revealed it.
+
+  Of the paper run's three closed spot positions, one hit TP1.
+
+### Added
+- **`contributions` column on `cycle_log`** — the engine's per-condition `(buy, sell)`
+  deltas as JSON, which it has always computed and this table always discarded. Without
+  them a live-vs-replay comparison can only be made on the summed `buy_score`, where the
+  3.50 of `SPOT_MAX_SCORE` no replay can see (`market_structure` 3.00 + `gold_vix` 0.50)
+  swamps any drift smaller than itself — see the item #5 finding. Stored per condition,
+  technical conditions can be compared directly and the blind ones subtracted rather than
+  tolerated. `NULL` when the engine produced none, never `{}`: "not recorded" and "every
+  condition scored zero" are different facts. Existing databases gain the column in place.
+- **`scripts/forming_bar_impact.py`** — measures what scoring the unclosed bar does to the
+  verdict, by simulating it against closed bars on historical data.
+
+### Tests
+- 121 → **128**. Four pin the cost accounting, including the one-line statement of the
+  defect: taking TP1 must never cost less than not taking it. Three cover the new column,
+  its NULL case, and in-place migration of a database that predates it.
+
+---
+
+## 2026-09-24 — research: the gate holdout reverses the tuning result
+
+Confirmatory test of H-B on data the tuning run never touched, with a sharper statistic:
+the gated arm is a strict subset of the ungated one, so `kept − rejected` measures the
+question directly — the gates earn their place only if what they throw away is worse than
+what they keep.
+
+| run | kept − rejected | 90% CI |
+|---|---:|---|
+| tuning (2018–2025) | −0.128pp | [−0.365, **+0.122**] |
+| **primary** — time holdout (2025–2026, 9 symbols) | **+0.108pp** | [−0.627, +0.760] |
+| secondary — market holdout (10 new symbols) | +0.901pp | [+0.125, +1.672] |
+
+- **PRIMARY: INCONCLUSIVE.** Direction favours the gates, interval contains zero — the
+  case the pre-registration named. Both arms cleared the n≥100 guard; one year of nine
+  symbols cannot resolve 0.1pp.
+- **SECONDARY: PASS** on its own rule, pre-registered as unable to overturn the primary
+  because its 1D-only warmup zeroes the HTF condition throughout.
+
+### Withdrawn
+- **"H-B FAILED — remove `no_chase`, `anti_fomo`, `entry_wick`."** That conclusion rested
+  on a bare comparison of two overlapping pooled means. With the paired statistic the
+  tuning difference is −0.128pp on an interval that **contains zero**, and both holdouts
+  point the other way. There is no version of this evidence that supports removing them.
+
+### Also reversed (post-hoc, not a pre-registered criterion)
+- H-A. The entry lost to random by 0.203pp on tuning and **beat** it by 0.727pp on the
+  holdout year, intervals disjoint both times. The engine barely moved (−0.646 → −0.080);
+  random entry fell from −0.443 to −0.807. The holdout year punished indiscriminate entry
+  far harder.
+
+### What reproduces
+Only this: the sign of every headline flips with the period. That is STEP 1's finding —
+*no component's predictive power survived a change of market or period* — arriving for the
+five veto gates and for the assembled entry, neither of which STEP 1 tested.
+
+### Added
+- `scripts/entry_ic.py` — `rejected` arm via `split_by_gates()`, which asserts the subset
+  property rather than assuming it; `--start` and `--htf-warmup` for the two holdout
+  windows; a bootstrap interval on `kept − rejected`.
+
+### Notes
+- **No production file changed.** An INCONCLUSIVE primary licenses no edit in either
+  direction.
+- Breadth figures exclude symbols with fewer than 20 entries in either arm. Counting every
+  symbol inflates them to 6/9 on both holdouts on the strength of symbols with one trade.
+
+### Tests
+- 116 → **121**: the kept/rejected partition and its failure mode, the daily-warmup rule
+  admitting a symbol the strict rule rejects, and `--start` never cutting the warmup short.
+
+---
+
+## 2026-09-24 — research: the assembled entry loses to random entry
+
+A pre-registered test of the one question this repository had never asked: does the
+entry — 22 conditions, an adaptive threshold and five veto gates — pick better points
+than a dart? Run on the sibling project's OKX 4h cache (10 tuning symbols, 39,762
+candles from 2018, never touched here), four arms over identical candles, exits and
+costs.
+
+| arm | n | mean | 90% CI | PF | vs random |
+|---|---:|---:|---|---:|---:|
+| spotsignal | 1,872 | **−0.646pp** | [−0.805, −0.492] | 0.66 | **−0.203** |
+| no_antichase | 4,060 | −0.577pp | [−0.696, −0.459] | 0.71 | −0.134 |
+| donchian 20/10 | 133 | −0.058pp | [−0.675, +0.606] | 0.97 | +0.384 |
+| random | 37,495 | −0.443pp | [−0.481, −0.406] | 0.76 | — |
+
+- **H-A FAILED.** The interval lies entirely below random's mean, so the entry is not
+  merely uninformative — it is worse than chance by 0.203pp per trade. Beat random on
+  1 of 8 symbols.
+- **H-B FAILED.** Ablating no_chase / anti_fomo / entry_wick improves the mean by
+  0.069pp and more than doubles the entry count. Intervals overlap, so the honest claim
+  is that there is no evidence the anti-chase gates pay for themselves.
+- **H-C descriptive only.** Donchian 20/10 is the best arm on every statistic with two
+  parameters, but n=133 and these are its own tuning symbols. A lead, not a finding.
+
+### Added
+- `scripts/entry_ic.py` — four-arm entry comparison against a count-matched random
+  baseline over 20 seeds, reusing `backtest._simulate_forward` so no arm can drift from
+  the shipped exit logic. Committed before it produced a figure.
+- `signals/engine.py` — `gates_disabled`, mirroring the existing `disabled` and
+  `threshold_override` knobs. No gate logic, weight or threshold changed.
+
+### Fixed
+- **The ablation knob was a no-op on first release.** Its `_off` collided with the name
+  line 71 already binds to the condition-ablation set, so every gate guard read the wrong
+  variable and the ablated arm came back a byte-identical copy of its control. Renamed to
+  `_gates_off`. The first run was killed, not scored; the re-run reproduces the original
+  figures for the three unaffected arms exactly.
+
+### Notes
+- **No production file changed as a result of this run** — `config.py`, `signals/`
+  (beyond the additive knob), `trading/` and `run_bot.py` are untouched, and nothing
+  should change on this evidence alone.
+- Limits are recorded in the results document: one asset class, spot only, fixed
+  threshold 4.3 against a live controller that moves 3.0–7.0, entries simulated
+  independently so this measures an entry POINT and not portfolio sequencing.
+
+### Tests
+- 112 → **116**. Four cover the ablation knob, the first walking all five gates and
+  asserting each both fires on a fixture and stops firing when ablated; one pins the
+  exact name collision by passing `disabled` and `gates_disabled` together.
+
+---
+
+## 2026-09-24 — fix: cycle_log discarded every reason that explained a HOLD
+
+`log_cycle()` stored `reasons[:10]`. The engine appends its veto lines *after*
+the ~10 condition lines, so the slice dropped all of them — the one field that
+says why the bot stood down never reached the database.
+
+Measured on the live paper run (2026-08-30 → 2026-09-23, 586 futures + 151 spot
+cycles): **195 cycles cleared the score bar and were then vetoed by an engine
+gate. The stored veto reason survived for 3.** The string `No-chase` appears 0 times
+in the VPS's 3.4 MB `paper_run.log` as well — the veto reasons existed only in
+the terminal display, which nothing reads on an unattended host.
+
+This matters more than an ordinary logging gap. CLAUDE.md keeps this run alive
+for the database it produces ("worth more than the strategy that generated it"),
+and the discarded field is the one that explains the bot's dominant behaviour:
+across those 24 days the engine vetoed 127 of 139 scored futures cycles and 68
+of 90 spot cycles.
+
+### Fixed
+- **`trading/history.py` — `_select_reasons()` replaces the flat slice.** Every
+  decisive reason is kept unconditionally; the 10-line budget is now spent on
+  the descriptive ones, and the engine's original ordering is preserved so a
+  stored row reads the same as the terminal output. Decisive means a line
+  carrying the `⛔` veto marker, or one of the two gates that force HOLD through
+  a warning line instead (`forced HOLD` — macro; `downgraded to HOLD` —
+  post-news re-validation).
+
+### Notes
+- **No decision logic changed.** `config.py`, `signals/`, `trading/paper.py` and
+  `run_bot.py` are untouched. This changes what is written down, not what the
+  bot does — no threshold, weight or gate moved.
+- **`analyze.py` reports are unaffected.** Both of its `reasons` consumers
+  filter `type != 'HOLD'`, and every veto forces HOLD, so the rescued lines
+  cannot enter its condition-frequency histograms.
+- **Phase 3 blocks were never affected by this bug** — they are logged
+  separately to the `signal_blocks` table and are complete (`confidence_first`
+  10×, `stale_cache` 63×, and so on). The gap was only ever the engine-level
+  veto gates, which have no persistence of their own.
+- **Rows already written cannot be recovered.** The fix applies from the next
+  cycle after deployment; the first 24 days keep their truncated reasons.
+
+### Tests
+- 106 → **112**. Three of the six fail against the pre-fix code (veto past the
+  budget, several vetoes at once, a forced HOLD carrying no marker); the other
+  three pin invariants the fix must not break — the descriptive cap still holds
+  at 10, engine ordering is preserved, and `_HOLD_PHRASES` is checked against
+  `signals/engine.py` so a reword there fails loudly instead of silently
+  dropping the reason from the log again.
+- Verified end to end on real 4H data at the 2026-09-21 candle the live bot
+  vetoed: the engine emits 13 reasons, the stored row now carries 11 — the
+  10 descriptive lines plus `⛔ No-chase: price $85,928 > VWAP+0.5×ATR
+  ($84,248)`, which the old slice discarded.
+
+---
+
+## 2026-09-22 — fix: final whole-branch review — exit_ic.py denominator integrity, hold/hour coupling pinned, doc corrections
+
+Robustness and documentation fixes from the review that approved this branch
+to merge. `config.py` is untouched, `backtest.py`'s exit logic is unchanged,
+and no scored result above moves — the exit-mechanics experiment stays closed
+and rejected.
+
+### Fixed
+- **`scripts/exit_ic.py` could not tell a complete grid from an incomplete
+  one.** `main()`'s `except Exception` around `run_cell` caught a fetch
+  failure and an internal bug (e.g. a lost `Pnls.time_exit` attribute)
+  identically, logging both as "cell failed — skipped"; `AttributeError` and
+  `KeyError` now re-raise instead of being swallowed. `rows_printed == 0` only
+  ever caught *total* failure — 37 of 40 cells missing still exited 0 and
+  printed nothing unusual; `main()` now computes `expected_rows` from years ×
+  symbols × rules and `sys.exit(1)`s on any shortfall, per the
+  pre-registration's fixed-denominator rule (§2: a failed cell "must be
+  retried until it produces a row, not dropped"). `run_cell` now raises when
+  `synth_entries` returns `[]` (frame too short for the rule table's warmup +
+  tail) instead of letting an `n=0 mean_diff=+0.0000` row silently count
+  against criterion 1 while contributing zero weight to the pooled mean.
+- **`--only H1` was not restricted to `--mode spot`.** H1 has no futures cells
+  (prereg §2/§5); running it against `--mode`'s default (futures) produced
+  plausible-looking rows for a comparison the pre-registration never defines.
+  Now rejected explicitly.
+- **`rule.get("max_hold") or MAX_HOLD_CANDLES[timeframe]`** (`exit_ic.py`)
+  silently substituted the timeframe default for an explicit `max_hold: 0`.
+  Changed to an `is None` check.
+- **`backtest.py`'s `TIME_EXIT` reachability rests on an unasserted
+  invariant** — the `+2` loop-bound trick (see `6d085cd` above) is reachable
+  only because `MAX_HOLD_CANDLES[tf] * hours_per_candle ==
+  max_position_hours*` EXACTLY, for both modes. Added
+  `test_max_hold_candles_matches_max_position_hours`, and softened the
+  in-code comment at the loop bound from stating the coupling as though it
+  were a guarantee to naming it as a dependency the test now enforces.
+
+### Docs
+- This file: the `_compute_stats` fix is a separate commit (`a63c3ca`) from
+  the `TIME_EXIT` fix (`6d085cd`) in the entry below, not "the same commit";
+  noted that the `TIME_EXIT` fix moves `open_until` for a position that now
+  resolves one candle later than before — exact per-trade, not guaranteed
+  per-sequence.
+- `docs/superpowers/specs/2026-09-21-exit-results.md`: added a Limitations
+  section (BUY-only entries, synthetic entries have no edge, stride-6
+  overlapping windows — all already disclosed in the design spec §4.2, now
+  stated in the document that actually gets quoted); committed the five
+  confirmatory run logs and `confirmatory.sh` to
+  `docs/superpowers/specs/2026-09-21-exit-run/` (~16 KB) since
+  `.superpowers/sdd/.gitignore` is `*` and the local copies do not ship.
+- `docs/superpowers/specs/2026-09-21-exit-mechanics-design.md`: corrected
+  §4.2's claim that `exit_ic.py` mirrors `condition_ic.py`'s CLI including
+  `--start/--end` and `--matrix` — it has neither, and per YAGNI should not
+  gain them; the pre-registration pins calendar years.
+
+### Tests
+Six new tests cover the `exit_ic.py` fixes directly, each proving the failure
+mode it closes rather than just the line changed — fetch is monkeypatched to
+local fixtures, so none touches network/DB/exchange: an internal
+`AttributeError` propagates instead of being logged as a fetch failure; an
+intentionally incomplete grid (1 of 2 cells) exits 1; an empty entry set
+raises instead of printing a row; `--only H1` without `--mode spot` is
+rejected; `max_hold: 0` is honoured instead of silently defaulting. Suite:
+**106/106**.
+
+---
+
+## 2026-09-22 — EXIT MECHANICS CLOSED: all three hypotheses rejected. Nothing ships.
+
+Task 6 of the exit-mechanics plan. The confirmatory grid pre-registered in
+`docs/superpowers/specs/2026-09-21-exit-prereg.md` was run and scored. Three
+hypotheses, all registered before any cell of their grid was seen, **all three
+rejected by their own criteria**. Full working:
+`docs/superpowers/specs/2026-09-21-exit-results.md`.
+
+### Result
+
+| hypothesis | criterion | required | got |
+|---|---|---|---|
+| `H1` spot cap in candles | positive sign across cells | ≥ 16 of 20 | **6 of 20** |
+| `H1` | pooled effect, all 6,405 entries | ≥ +0.05 pp | **−0.0957 pp** |
+| `H1` | §5 additional criterion — **one conjunction**: `TIME_EXIT` share falls **and** per-trade P&L does not fall | ≥ 10 pp fall **and** `cand ≥ base` | **FAILED** — share fell 25.42 pp (that half met); P&L fell, **−0.6310 vs −0.5354 pp** (that half missed) |
+| `H2` no post-TP1 tighten | positive sign across cells | ≥ 32 of 40 | **22 of 40** |
+| `H2` | pooled effect, all 34,880 entries | ≥ +0.05 pp | **+0.0036 pp** |
+| `H2` | both mode subtotals favour candidate | spot & futures > 0 | +0.0179 / +0.0003 pp — PASS by a hair |
+| `H3` drop the 50/50 partial | positive sign across cells | ≥ 32 of 40 | **3 of 40** |
+| `H3` | pooled effect, all 34,880 entries | ≥ +0.05 pp | **−0.0619 pp** |
+| `H3` | both mode subtotals favour candidate | spot & futures > 0 | **−0.0812 / −0.0574 pp** |
+
+100 cells across 5 assets × 4 years × 2 modes (BTC, ETH, BNB, XRP, LINK;
+2020–2023), every cell producing a row, `unresolved=0/0` on all of them. BTC
+2024–2025 was excluded as burned exploratory data; the non-BTC 2024–2025 reserve
+holdout **was not read** and stays available.
+
+### Nothing ships
+No hypothesis met every applicable criterion, so **no value changes**.
+`MAX_HOLD_CANDLES["4h"]` stays `18`, `max_position_hours_spot` stays `72`,
+`trailing_post_tp1_factor` stays `0.8`, and the 50/50 partial at TP1 stays
+enabled. `config.py` and `backtest.py` are untouched by this task;
+`test_pipelines.py` stands at 100/100.
+
+### The finding worth keeping
+H1 split cleanly, and that is the useful part. Giving spot the same 72-candle
+allowance futures already has does exactly what it was designed to do — the
+`TIME_EXIT` share collapses from 25.5% of entries to 0.05%, clearing its
+10-point bar by 15.4 — and per-trade P&L gets **worse** by 0.096 pp. Over the
+1,631 pairs that differ, the candidate loses 0.376 pp each. The positions the
+cap was cutting short were, on average, positions worth cutting short. The
+spot/futures unit asymmetry is real; removing it costs money on 20 untouched
+cells.
+
+That is not a licence to try 36 candles. Every criterion was fixed before any
+cell ran, and picking a new cap after seeing 72 fail is the move the
+pre-registration exists to prevent.
+
+H3's failure is evidence about a **three-part bundle** — the split, the inert
+post-TP1 tighten, and the lost TP1 breakeven snap — not about the split alone
+(prereg §7). Its registered execution-cost asymmetry (§7.1) biases *against* the
+candidate by 0.075 pp on spot and 0.045 pp on futures, and was not corrected for:
+the observed per-differing-pair deficit is ~0.58–0.62 pp, an order of magnitude
+larger than the bias could explain.
+
+---
+
+## 2026-09-22 — feat: `partial_enabled` exit knob; pre-register exit-mechanics hypotheses
+
+Task 5 of the exit-mechanics plan. Kept H3 ("the 50/50 partial beats a single
+exit at TP2") rather than dropping it: the partial is a core exit mechanic
+that had never been tested, the cost of testing it is a few lines plus one
+test, and the repo's own answer to the multiple-comparison problem — `--only`,
+reading a single committed row — already covers the concern that dropping a
+hypothesis would address.
+
+### Added
+`_simulate_forward` (`backtest.py`) takes `partial_enabled` in `exit_params`,
+defaulting to `True`. Guards the TP1/partial block on **both** the BUY
+(`high >= tp1`) and SELL (`low <= tp1`) sides. When `False`, TP1 never fires —
+`trailing_post_tp1_factor` goes inert on its own, since the trail factor is
+already keyed off `partial_closed`, which then never becomes `True` — and the
+TP2 check no longer waits on a partial that will never happen, so the position
+still closes WIN at TP2 (100% of size, not 50%), or via the trailing stop, a
+vol exit, or the time cap. `exit_params=None` and
+`exit_params={"partial_enabled": True}` are both byte-identical to today's
+behaviour; three new tests in `test_pipelines.py` (BUY, SELL, explicit-True)
+cover it, on top of the existing suite staying green untouched.
+
+`scripts/exit_ic.py` registers `H3` in `KNOWN` and the rule table as
+`{"exit_params": {"partial_enabled": False}}` — the **candidate** arm is the
+one with the partial disabled, so a pass means the partial does not earn its
+place and a failure means it stands.
+
+### Docs
+`docs/superpowers/specs/2026-09-21-exit-prereg.md` — the pre-registration for
+H1/H2/H3, committed before any confirmatory cell is run: exact rule dicts,
+the 40-cell grid (20 for H1), the shared adoption criteria verbatim from the
+design doc (sign consistency, effect size measured over all entries not
+`n_eff`, no mode reversal), and the closing rule that criteria are not
+revised after results are seen.
+
+### Harness (review round 2, same day)
+`scripts/exit_ic.py`'s `Pnls` gains a `.time_exit` counter alongside
+`.unresolved`, incremented by `run_rule` whenever a trade resolves
+`TIME_EXIT`. `run_cell` turns each arm's count into `time_exit_pct_base` /
+`time_exit_pct_cand` — the share of ALL entries in the cell, the same
+denominator already used for effect size — and `main()` prints both on every
+row as `time_exit%=base/cand`. This is the field H1's registered "TIME_EXIT
+share falls by ≥10pp" criterion is read from; it didn't exist when that
+criterion was first written down, so it had to be added before any cell runs
+rather than after. Covered by a new test
+(`test_run_rule_counts_time_exit_share`) asserting the counter is per-entry,
+not "TIME_EXIT appeared anywhere in the dataframe."
+
+### Docs (review round 2, same day)
+The pre-registration also picked up, all before any confirmatory cell: H2's
+sign direction corrected (the rule dict already had the right candidate; the
+prose didn't); H3 disclosed as a three-part bundle — the 50/50 split, the
+post-TP1 tighten going inert, and, first missed, the TP1 breakeven snap also
+disappearing — rather than a single clean variable; the execution-cost
+asymmetry between H3's arms registered (the partial-taking baseline pays an
+effective 1.5 sides of cost via its 50/50 blend, the candidate always pays
+2.0 — 0.075pp spot / 0.045pp futures, biasing against the candidate, and
+`_net_pnl` is deliberately left unchanged); `--stride` pinned alongside
+`--symbols`/`--years`; every `RISK_CONFIG`/`FUTURES_CONFIG`/
+`EXECUTION_CONFIG` value each hypothesis moves against pinned numerically to
+a commit; the per-cell `mean_diff` criterion separated from the per-entry
+`diff`/`win_share` it was easy to conflate with; and the unresolved-entries
+rule (stay in the sample at 0.0, unconditionally, no threshold) registered.
+
+### No behaviour change
+`partial_enabled` is opt-in and off by default in the sense that omitting it
+(or passing `True`) reproduces today's trades exactly — nothing the running
+bot does changes.
+
+---
+
+## 2026-09-21 — fix: TIME_EXIT was unreachable — the backtest discarded slow trades
+
+Task 3 of the exit-mechanics plan. Deliberate behaviour change, isolated in
+its own commit so the before/after is reviewable — unlike Tasks 1 and 2,
+which only added test coverage around `_simulate_forward`.
+
+### Fixed
+`_simulate_forward` iterated `age` from 1 to `max_hold` candles, while its own
+time-exit check needs `age * mult > max_hours` to fire. Because
+`max_hold * mult` equals `max_hours` exactly (18 × 4h = 72h, matching
+`RISK_CONFIG["max_position_hours_spot"]`), the loop always ended one candle
+before the branch could ever be true. `TIME_EXIT` was dead code in **both**
+modes: every position still alive at the cap fell through to the `OPEN` row at
+`pnl_pct = 0.00`, and `RESOLVED` excludes `OPEN` rows from every statistic —
+so the backtest was discarding slow trades rather than measuring them.
+
+The loop bound now extends by one candle
+(`min(entry_idx + 2 + max_hold, len(df))`) so the age at which the time-exit
+check first evaluates true is reachable. Every earlier iteration (ages
+`1..max_hold`) is unchanged, so a trade that already exited on TP1/TP2/trailing
+stop/vol-expansion still exits at exactly the same candle it did before this
+fix — only a position that survived all of them gets the one extra candle
+needed to close as `TIME_EXIT` instead of falling off the end.
+
+That is exact **per trade**, not per sequence: a position that used to fall
+through to `OPEN` at `candles_held == max_hold` now closes `TIME_EXIT` one
+candle later, at `max_hold + 1`. In `run_backtest`'s walk that moves
+`open_until` for that direction by one candle, which can admit or block a
+different later signal — so a full backtest run is not guaranteed to reproduce
+its pre-fix trade sequence beyond the position this fix directly resolves.
+
+Measured on spot 2025 (`--start 2025-01-01 --end 2025-12-31`):
+
+| | Before | After |
+|---|---|---|
+| Closed Trades | 2 | 4 |
+| Open (max hold) | 2 | 0 |
+| Total P&L | +1.37% | +2.56% |
+| Win Rate | 50.0% (of 2 closed) | 75.0% (of 4 closed) |
+| Profit Factor | 6.26 | 10.83 |
+
+The "before" total is the two closed rows only (`-0.26%` LOSS, `+1.64%` WIN);
+the two OPEN rows were excluded from it, but the total itself existed. Both
+formerly-open positions now close `TIME_EXIT` at 19 candles with real P&L
+(+0.95%, +0.24%) — exactly the +1.19% delta between the two totals, and the
+reason Win Rate moves from 1-of-2 to 3-of-4 rather than climbing.
+
+A pre-existing `_compute_stats` bug surfaced by this same run is fixed in the
+same task, in a separate commit (`a63c3ca`, distinct from this fix's
+`6d085cd`): it bucketed `losses` by `outcome != "WIN"` rather than by P&L
+sign, which was equivalent while `TIME_EXIT` was dead code (every non-WIN row
+had `pnl_pct <= 0`) but silently misfiled a profitable `TIME_EXIT` as a loss
+the moment this fix made the branch reachable — an unpatched first run of this
+backtest read Win Rate 25.0% and Avg Loss +0.31% for a run where 3 of 4 trades
+made money. It also closed a live `ZeroDivisionError`: `profit_factor`'s guard
+tested `sum(abs(...)) > 0` while the denominator divided by `abs(sum(...))` —
+a bucket where positive and negative P&L cancel passes the former and zeros
+the latter. `wins`/`losses` now split on `pnl_pct` sign and the guard tests
+the same expression the denominator uses.
+
+This moves the baseline that every exit hypothesis is judged against, which is
+why it lands before the exit-mechanics test harness rather than after.
+
+### Tests
+`test_exit_time_cap_is_unreachable_today`, which pinned the defect, is
+replaced by `test_exit_time_cap_fires_at_the_cap` (a position alive at the cap
+must close `TIME_EXIT` at exactly `candles_held == 19`, with nonzero P&L) and
+`test_exit_open_row_still_used_when_candles_run_out` (a frame that runs out of
+candles — a data limit, not a hold limit — must still produce `OPEN`, not be
+mislabelled `TIME_EXIT`).
+
+`test_compute_stats_buckets_by_pnl_sign_not_outcome_label` covers the
+`_compute_stats` bug directly, with fake trade dicts (no signal, no exchange,
+no DB): a profitable `TIME_EXIT` alongside a real `LOSS` and `WIN` must bucket
+as a win, and a loss bucket whose P&L sums to exactly zero must not raise
+`ZeroDivisionError`. Suite: 90/90.
+
+---
+
 ## 2026-08-30 — feat: cycle_log records the taker ratio, gold and VIX
 
 Closes the gap noted when step 1 was closed. With development stopped, the

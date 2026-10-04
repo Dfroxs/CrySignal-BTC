@@ -101,6 +101,7 @@ def _init_tables():
             news_sentiment TEXT,
             htf_data      TEXT,
             reasons       TEXT,
+            contributions TEXT,
             open_positions INTEGER
         );
 
@@ -153,9 +154,21 @@ def _migrate_cycle_log():
     and an hour that goes by unrecorded cannot be recovered later.
     """
     c = _conn()
-    for col in ("taker_ratio", "gold", "gold_change", "vix", "vix_change"):
+    cols = [
+        ("taker_ratio",   "REAL"),
+        ("gold",          "REAL"),
+        ("gold_change",   "REAL"),
+        ("vix",           "REAL"),
+        ("vix_change",    "REAL"),
+        # Per-condition (buy, sell) deltas as JSON. The engine already computes them and
+        # this table kept only their sum, so a live-vs-replay comparison could only be made
+        # on the total — where the 3.50 of SPOT_MAX_SCORE no replay can see swamps any
+        # smaller drift. See docs/superpowers/specs/2026-09-24-live-vs-backtest.md.
+        ("contributions", "TEXT"),
+    ]
+    for col, coltype in cols:
         try:
-            c.execute(f"ALTER TABLE cycle_log ADD COLUMN {col} REAL")
+            c.execute(f"ALTER TABLE cycle_log ADD COLUMN {col} {coltype}")
         except Exception:
             pass  # column already exists
     c.commit()
@@ -331,6 +344,36 @@ def log_signal(signal, df, htf=None):
     return cur.lastrowid
 
 
+# Reasons stored per cycle. The engine appends its veto lines AFTER the ~10
+# condition lines, so the flat `reasons[:10]` slice this used to take dropped
+# every one of them: across the first 24 days of the paper run, 195 cycles
+# cleared the score bar, were vetoed by an engine gate, and stored a reason
+# explaining that for 3. Keep the decisive lines unconditionally and
+# spend the budget on the descriptive ones.
+_REASON_BUDGET = 10          # descriptive lines kept per cycle
+_VETO_MARKER = "⛔"
+# The macro and post-news gates force HOLD through a warning line, not a veto
+# marker, so they are matched on the phrase that states the verdict.
+_HOLD_PHRASES = ("forced HOLD", "downgraded to HOLD")
+
+
+def _is_decisive(reason):
+    """True when this reason changed the verdict rather than describing it."""
+    return reason.startswith(_VETO_MARKER) or any(p in reason for p in _HOLD_PHRASES)
+
+
+def _select_reasons(reasons_raw, budget=_REASON_BUDGET):
+    """Every decisive reason plus up to `budget` descriptive ones, in engine order."""
+    keep, spent = [], 0
+    for r in reasons_raw:
+        if _is_decisive(r):
+            keep.append(r)
+        elif spent < budget:
+            keep.append(r)
+            spent += 1
+    return [r[2:].strip() if r[:1] in "✓✗⚠" else r.strip() for r in keep]
+
+
 def log_cycle(signal, df, market_structure, htf, mode):
     """Log every cycle (including HOLD) to cycle_log for later analysis."""
     last     = df.iloc[-1]
@@ -363,10 +406,14 @@ def log_cycle(signal, df, market_structure, htf, mode):
     import json
     htf_json = json.dumps(htf_clean) if htf_clean else ""
 
-    # Reasons — top 10, cleaned
-    reasons_raw = signal.get("reasons", [])
-    reasons_clean = [r[2:].strip() if r[:1] in "✓✗⚠" else r.strip()
-                     for r in reasons_raw[:10]]
+    reasons_clean = _select_reasons(signal.get("reasons", []))
+
+    # NULL, not "{}", when the engine produced none: "no contributions recorded" and
+    # "every condition scored zero" are different facts and the column must keep them apart.
+    _contrib = signal.get("_contributions")
+    contributions_json = json.dumps(
+        {k: [round(float(v[0]), 4), round(float(v[1]), 4)] for k, v in _contrib.items()}
+    ) if _contrib else None
 
     # Open positions count for this mode
     open_count = len(get_open_positions(mode))
@@ -412,6 +459,7 @@ def log_cycle(signal, df, market_structure, htf, mode):
         signal.get("news_sentiment", "NEUTRAL"),
         htf_json,
         " | ".join(reasons_clean),
+        contributions_json,
         open_count,
     )
     c = _conn()
@@ -422,8 +470,8 @@ def log_cycle(signal, df, market_structure, htf, mode):
             obv_slope, bb_upper, bb_lower, rsi_div, funding_rate, ls_ratio, dxy,
             dxy_change, sp500, sp500_change, btc_dom, stablecoin_b, oi_change,
             basis_pct, taker_ratio, gold, gold_change, vix, vix_change,
-            fear_greed, news_sentiment, htf_data, reasons, open_positions)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            fear_greed, news_sentiment, htf_data, reasons, contributions, open_positions)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         row,
     )
     c.commit()

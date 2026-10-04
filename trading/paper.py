@@ -45,8 +45,15 @@ def _calc_pnl(pos, price, with_fees=True):
         ec = EXECUTION_CONFIG
         fee_pct = ec["futures_fee_pct"] if mode == "futures" else ec["spot_fee_pct"]
         slip = ec.get("slippage_pct", 0.05)
-        sides = 1 if partial else 2
-        costs = (fee_pct + slip) * sides
+        # 2 sides ALWAYS, partial or not. A position that takes TP1 is bought once and
+        # sold twice: weighted by size that is entry 1.0 + exit 0.5 + exit 0.5 = 2.0, the
+        # same round trip as a trade that never partials. The TP1 half is charged 2 sides
+        # where it is booked below, covering its own entry and exit; charging the
+        # remainder 1 covered only ITS exit and left its entry leg unpaid, so the blend
+        # came to 0.5x2 + 0.5x1 = 1.5. Every trade that hit TP1 recorded ~0.075pp (spot)
+        # better than it should have — a cost discount for hitting a target, which no
+        # exchange gives.
+        costs = (fee_pct + slip) * 2
         gross_pnl -= costs
 
     # Blend with partial TP1 if already taken

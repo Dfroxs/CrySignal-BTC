@@ -1471,7 +1471,7 @@ def test_colours_return_on_a_terminal():
 
 # ── 19. cycle_log records everything it fetches ──────────────────────────────
 
-def _log_one_cycle(db_path, market_structure):
+def _log_one_cycle(db_path, market_structure, reasons=(), contributions=None):
     import numpy as np
     import pandas as pd
     import trading.history as h
@@ -1486,7 +1486,9 @@ def _log_one_cycle(db_path, market_structure):
             "BB_Upper": [81000.0] * 10, "BB_Lower": [79000.0] * 10, "OBV": np.arange(10.0)})
         sig = {"type": "HOLD", "buy_score": 5.0, "sell_score": 2.0, "strength": 5.0,
                "_threshold": 4.05, "rsi_divergence": "NONE", "fear_greed_value": 69,
-               "news_sentiment": "BULLISH", "reasons": []}
+               "news_sentiment": "BULLISH", "reasons": list(reasons)}
+        if contributions is not None:
+            sig["_contributions"] = contributions
         h.log_cycle(sig, df, market_structure, {"1d": "BULLISH"}, "futures")
     finally:
         try:
@@ -1581,6 +1583,1000 @@ def test_existing_database_gains_the_columns():
             pass
         h.SIGNAL_HISTORY_DB, h.DB = saved
         os.unlink(path)
+
+
+_EMPTY_MARKET = {"funding": {}, "long_short": {}, "taker": {}, "gold": {}, "vix": {},
+                 "dxy": {}, "sp500": {}, "btc_dom": {}, "stablecoin": {}, "open_interest": {}}
+
+
+def _stored_reasons(reasons):
+    """Round-trip a reasons list through log_cycle and read back what landed."""
+    import os
+    import sqlite3
+    import tempfile
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        _log_one_cycle(path, _EMPTY_MARKET, reasons=reasons)
+        c = sqlite3.connect(path)
+        stored = c.execute("SELECT reasons FROM cycle_log").fetchone()[0]
+        c.close()
+        return stored.split(" | ")
+    finally:
+        os.unlink(path)
+
+
+def test_cycle_log_keeps_the_veto_reason_past_the_budget():
+    """The veto line IS the explanation for a HOLD, and the engine appends it
+    after every condition line. The old flat reasons[:10] slice therefore threw
+    away the one field that says why the bot stood down: over the first 24 days
+    of the paper run, 195 cycles cleared the score bar, were vetoed by an engine
+    gate, and recorded a reason saying so for 3."""
+    conditions = [f"✓ Condition {i}" for i in range(12)]
+    veto = "⛔ No-chase: price $84894 > VWAP+0.5×ATR ($83329)"
+    stored = _stored_reasons(conditions + [veto])
+    assert veto in stored, stored
+
+
+def test_cycle_log_keeps_every_veto_when_several_fire():
+    """Gates run in sequence and more than one can append before the verdict
+    settles. Keeping only the first would misattribute the rejection."""
+    vetoes = ["⛔ No-chase: price above VWAP", "⛔ Anti-FOMO: prev candle +1.40×ATR up"]
+    stored = _stored_reasons([f"✓ Condition {i}" for i in range(15)] + vetoes)
+    assert all(v in stored for v in vetoes), stored
+
+
+def test_cycle_log_keeps_a_forced_hold_that_carries_no_veto_marker():
+    """The macro gate forces HOLD through a warning line rather than a veto
+    marker. Matching on the marker alone would drop it."""
+    macro = "⚠️  MACRO CAUTION: HIGH impact event in <2h (CPI) — forced HOLD"
+    stored = _stored_reasons([f"✓ Condition {i}" for i in range(12)] + [macro])
+    assert any("forced HOLD" in r for r in stored), stored
+
+
+def test_cycle_log_still_caps_the_descriptive_reasons():
+    """The budget exists to bound row size. Rescuing the decisive lines must not
+    turn into storing every condition line ever appended."""
+    stored = _stored_reasons([f"✓ Condition {i}" for i in range(30)])
+    assert len(stored) == 10, len(stored)
+
+
+def test_cycle_log_preserves_the_order_the_engine_appended():
+    """Reasons read as a narrative ending in the verdict. Hoisting the veto to
+    the front would make the stored row disagree with the terminal output."""
+    stored = _stored_reasons(["✓ First", "✓ Second", "⛔ Short-term down: 5-SMA slope -0.80×ATR"])
+    assert stored == ["First", "Second", "⛔ Short-term down: 5-SMA slope -0.80×ATR"], stored
+
+
+def test_engine_still_emits_the_hold_phrases_history_matches_on():
+    """history._HOLD_PHRASES matches engine prose, which nothing else pins. If a
+    reword lands in the engine, this fails instead of silently dropping the
+    reason from the log again."""
+    import io as _io
+    import trading.history as h
+    src = _io.open("signals/engine.py", encoding="utf-8").read()
+    missing = [p for p in h._HOLD_PHRASES if p not in src]
+    assert not missing, f"engine.py no longer emits: {missing}"
+
+
+
+# ── 21. Veto-gate ablation (research knob) ───────────────────────────────────
+
+_GATE_MARKER = {
+    "counter_trend": "Counter-trend block", "no_chase": "No-chase",
+    "anti_fomo": "Anti-FOMO", "entry_wick": "Entry wick", "short_term": "Short-term",
+}
+_HTF_BEARISH = {"1d": "BEARISH", "1w": "BEARISH", "aligned": False,
+                "1d_indicators": {}, "1w_indicators": {}}
+
+
+def _gate_frame(n=260, drift=0.004, spike=None, wick=0.0):
+    """A frame carrying every column the engine reads, shaped to trip one gate."""
+    import numpy as np
+    import pandas as pd
+    from signals.indicators import (
+        calculate_atr, calculate_bollinger_bands, calculate_ema, calculate_macd,
+        calculate_obv, calculate_rsi, calculate_stoch_rsi, calculate_vwap,
+        compute_cmf, compute_mfi,
+    )
+    close = 100 * np.cumprod(np.full(n, 1 + drift))
+    high, low, op = close * 1.002, close * 0.998, close / (1 + drift)
+    if spike:                       # impulsive green body on the penultimate candle
+        op[-2] = close[-2] / (1 + spike)
+    if wick:                        # long upper wick on the entry candle
+        high[-1] = close[-1] * (1 + wick)
+    df = pd.DataFrame({"open": op, "high": high, "low": low, "close": close,
+                       "volume": np.full(n, 1000.0)},
+                      index=pd.date_range("2024-01-01", periods=n, freq="4h"))
+    df["EMA_200"] = calculate_ema(df["close"], 200)
+    df["RSI_14"] = calculate_rsi(df["close"])
+    df["MACD"], df["MACD_Signal"], df["MACD_Histogram"] = calculate_macd(df["close"])
+    df["BB_Upper"], df["BB_Middle"], df["BB_Lower"] = calculate_bollinger_bands(df["close"])
+    df["ATR_14"] = calculate_atr(df)
+    df["OBV"] = calculate_obv(df)
+    df["StochRSI_K"], df["StochRSI_D"] = calculate_stoch_rsi(df["close"])
+    df["VWAP_24"] = calculate_vwap(df, period=6)
+    df["MFI_14"] = compute_mfi(df)
+    df["CMF_20"] = compute_cmf(df)
+    return df
+
+
+def _gate_fixture(gate):
+    if gate == "counter_trend":
+        return _gate_frame(), _HTF_BEARISH
+    if gate == "anti_fomo":
+        return _gate_frame(spike=0.05), None
+    if gate == "entry_wick":
+        return _gate_frame(wick=0.04), None
+    if gate == "short_term":
+        return _gate_frame(drift=-0.004), None
+    return _gate_frame(), None
+
+
+def _fires(gate, df, htf, gates_disabled):
+    from signals.engine import generate_signals
+    sig = generate_signals(df, htf, None, None, mode="spot",
+                           threshold_override=0.5, gates_disabled=gates_disabled)
+    return any(_GATE_MARKER[gate] in r for r in sig["reasons"])
+
+
+def test_every_veto_gate_can_actually_be_ablated():
+    """Each name in _VETO_GATES must switch its own gate off.
+
+    The gates run in sequence and the first to fire sets HOLD, so a later gate is only
+    reachable once the earlier ones are off â hence the prefix. Without this test the
+    knob shipped broken: `_gates_off` was originally named `_off`, which line 71 already
+    binds to the CONDITION ablation set, so every gate guard read the wrong variable and
+    no gate was ever disabled. The suite was green and the experiment's ablated arm came
+    out identical to the un-ablated one.
+    """
+    from signals.engine import _VETO_GATES
+    for k, gate in enumerate(_VETO_GATES):
+        df, htf = _gate_fixture(gate)
+        prior = _VETO_GATES[:k]
+        assert _fires(gate, df, htf, prior), f"{gate}: fixture does not trip the gate"
+        assert not _fires(gate, df, htf, prior + (gate,)), f"{gate}: ablation had no effect"
+
+
+def test_gates_disabled_is_not_clobbered_by_the_conditions_parameter():
+    """`disabled` and `gates_disabled` are different switches and must not share state.
+
+    This is the exact collision that made the knob a no-op: one name bound twice in the
+    same function, the second binding winning at every gate guard.
+    """
+    from signals.engine import generate_signals
+    df, _ = _gate_fixture("no_chase")
+    gates = ("counter_trend", "no_chase")
+    kw = dict(mode="spot", threshold_override=0.5, gates_disabled=gates)
+
+    both = generate_signals(df, None, None, None, disabled=["ema200"], **kw)
+    gate_only = generate_signals(df, None, None, None, disabled=[], **kw)
+
+    # the gate switch still bites with `disabled` also set
+    assert not any("No-chase" in r for r in both["reasons"]), both["reasons"]
+    # and the condition switch still bites with `gates_disabled` also set
+    assert both["buy_score"] < gate_only["buy_score"], (
+        f"ablating ema200 changed nothing: {both['buy_score']} vs {gate_only['buy_score']}")
+
+
+def test_an_unknown_gate_name_raises_instead_of_ablating_nothing():
+    """A typo must fail loudly. Silently ablating nothing is how a research arm ends up
+    identical to its control without anyone noticing."""
+    from signals.engine import generate_signals
+    df, _ = _gate_fixture("no_chase")
+    try:
+        generate_signals(df, None, None, None, mode="spot", threshold_override=0.5,
+                         gates_disabled=("no_chse",))
+    except ValueError as e:
+        assert "no_chse" in str(e), e
+    else:
+        raise AssertionError("a misspelled gate name was accepted")
+
+
+def test_no_gates_disabled_leaves_every_gate_running():
+    """None and () are both 'disable nothing' â the default must not ablate by accident."""
+    df, _ = _gate_fixture("no_chase")
+    for gd in (None, ()):
+        assert _fires("no_chase", df, None, gd), f"gates_disabled={gd!r} disabled a gate"
+
+
+
+# ── 22. Holdout windowing in entry_ic ────────────────────────────────────────
+
+def _plain_4h(n):
+    """A 4h frame long enough for a daily EMA200 but far short of a weekly one."""
+    import numpy as np
+    import pandas as pd
+    close = 100 * np.cumprod(np.full(n, 1.001))
+    return pd.DataFrame(
+        {"open": close, "high": close * 1.002, "low": close * 0.998, "close": close,
+         "volume": np.full(n, 1000.0)},
+        index=pd.date_range("2024-01-01", periods=n, freq="4h"))
+
+
+def test_daily_warmup_admits_a_symbol_the_strict_one_rejects():
+    """Every one of Nakhoda's ten holdout symbols is younger than 200 WEEKS, so the
+    strict rule leaves nothing to evaluate there. The daily rule trades the weekly trend
+    away — `aligned` then never fires and the HTF condition is 0 for BOTH engine arms —
+    to make an engine-vs-engine comparison possible on those markets at all."""
+    import scripts.entry_ic as E
+    df = _plain_4h(2000)                 # ~333 daily bars, ~47 weekly
+    frames = E.build_htf(df)
+    assert len(frames["1w"][0]) < 200, "fixture no longer isolates the weekly rule"
+    assert E.htf_ready_index(df, frames, "strict") == len(df), "strict admitted a young symbol"
+    daily = E.htf_ready_index(df, frames, "daily")
+    assert daily < len(df), "daily rule admitted nothing"
+    assert daily >= E.WARMUP
+
+
+def test_an_explicit_start_never_shortens_the_htf_warmup():
+    """A time holdout starts where its date says, or later if the indicators are not yet
+    real — never earlier. Loading the full history and scoring only the tail is what
+    makes a time holdout possible without re-warming."""
+    import scripts.entry_ic as E
+    df = _plain_4h(2000)
+    frames = E.build_htf(df)
+    warm = E.htf_ready_index(df, frames, "daily")
+
+    early = E.eval_start(df, frames, str(df.index[10].date()), "daily")
+    assert early == warm, "an early --start was allowed to cut the warmup short"
+
+    wanted = df.index[1500]
+    late = E.eval_start(df, frames, str(wanted.date()), "daily")
+    assert late > warm and df.index[late] >= wanted.normalize(), df.index[late]
+
+
+def test_no_start_leaves_the_window_at_the_warmup():
+    import scripts.entry_ic as E
+    df = _plain_4h(2000)
+    frames = E.build_htf(df)
+    assert E.eval_start(df, frames, None, "daily") == E.htf_ready_index(df, frames, "daily")
+
+
+
+def test_split_by_gates_partitions_the_ungated_arm():
+    """kept and rejected must together be exactly the ungated arm, with no overlap —
+    otherwise the `rejected` arm is not what its name claims and the gate verdict is
+    measured against the wrong population."""
+    import scripts.entry_ic as E
+    ungated = [(i, {"i": i}) for i in (5, 9, 12, 20, 33)]
+    gated = [(i, {"i": i}) for i in (9, 20)]
+    rejected = E.split_by_gates(ungated, gated)
+    assert [i for i, _ in rejected] == [5, 12, 33], rejected
+    assert len(rejected) + len(gated) == len(ungated)
+    assert not ({i for i, _ in rejected} & {i for i, _ in gated})
+
+
+def test_split_by_gates_rejects_a_gated_entry_that_is_not_in_the_ungated_arm():
+    """The gates can only turn BUY into HOLD, so this cannot happen — and if it ever
+    does, it must fail loudly rather than quietly shrink the rejected arm."""
+    import scripts.entry_ic as E
+    try:
+        E.split_by_gates([(1, {})], [(2, {})])
+    except ValueError as e:
+        assert "subset" in str(e), e
+    else:
+        raise AssertionError("a gated entry outside the ungated arm was accepted")
+
+
+
+# ── 23. Execution cost on a partial exit ─────────────────────────────────────
+
+def _cost_per_side(mode):
+    from config import EXECUTION_CONFIG as ec
+    fee = ec["futures_fee_pct"] if mode == "futures" else ec["spot_fee_pct"]
+    return fee + ec.get("slippage_pct", 0.05)
+
+
+def test_a_partial_exit_pays_a_full_round_trip_not_one_and_a_half():
+    """A position that takes TP1 is bought once and sold twice, so weighted by size it
+    pays entry 1.0 + exit 0.5 + exit 0.5 = 2.0 sides — the same as a trade that never
+    partials.
+
+    The TP1 half is charged 2 sides where it is booked (trading/paper.py: `_costs = ... * 2`),
+    covering its own entry and exit. The remainder was charged 1, covering only its exit, so
+    ITS ENTRY LEG WAS NEVER CHARGED: 0.5x2 + 0.5x1 = 1.5 sides. Every trade that hit TP1
+    recorded roughly 0.075pp (spot) better than it should have.
+
+    Pinned at zero price movement, where the answer is unambiguous: a round trip that goes
+    nowhere costs exactly the round trip.
+    """
+    from trading.paper import _calc_pnl
+    for mode in ("spot", "futures"):
+        side = _cost_per_side(mode)
+        partial_pnl = -side * 2          # TP1 taken at the entry price
+        pos = {"entry_price": 100.0, "type": "BUY", "mode": mode,
+               "partial_closed": 1, "partial_pnl": partial_pnl}
+        got = _calc_pnl(pos, 100.0)
+        assert abs(got - (-side * 2)) < 1e-9, f"{mode}: {got:.4f} vs {-side*2:.4f}"
+
+
+def test_the_backtest_charges_a_partial_exit_the_same_as_the_live_path():
+    """backtest._net_pnl documents itself as a mirror of trading/paper.py::_calc_pnl. A
+    mirror that charges different costs makes every backtest figure disagree with the run
+    it is supposed to predict."""
+    from backtest import _net_pnl
+    from trading.paper import _calc_pnl
+    for mode in ("spot", "futures"):
+        side = _cost_per_side(mode)
+        partial_pnl = -side * 2
+        bt = _net_pnl("BUY", 100.0, 100.0, True, partial_pnl, mode)
+        live = _calc_pnl({"entry_price": 100.0, "type": "BUY", "mode": mode,
+                          "partial_closed": 1, "partial_pnl": partial_pnl}, 100.0)
+        assert abs(bt - live) < 1e-9, f"{mode}: backtest {bt:.4f} vs live {live:.4f}"
+        assert abs(bt - (-side * 2)) < 1e-9, f"{mode}: {bt:.4f}"
+
+
+def test_a_trade_without_a_partial_still_pays_exactly_two_sides():
+    """The no-partial path was always right; this holds it there while the other is fixed."""
+    from backtest import _net_pnl
+    from trading.paper import _calc_pnl
+    for mode in ("spot", "futures"):
+        side = _cost_per_side(mode)
+        pos = {"entry_price": 100.0, "type": "BUY", "mode": mode, "partial_closed": 0}
+        assert abs(_calc_pnl(pos, 100.0) - (-side * 2)) < 1e-9
+        assert abs(_net_pnl("BUY", 100.0, 100.0, False, 0.0, mode) - (-side * 2)) < 1e-9
+
+
+def test_taking_tp1_never_costs_less_than_not_taking_it():
+    """The defect in one sentence: hitting TP1 handed the trade a cost discount that no
+    exchange gives. Same entry, same exit, one takes TP1 on the way — its total cost must
+    not be lower."""
+    from backtest import _net_pnl
+    side = _cost_per_side("spot")
+    # TP1 booked at +2%, remainder exits at +2% too, so the price path is identical
+    partial_pnl = 2.0 - side * 2
+    with_tp1 = _net_pnl("BUY", 100.0, 102.0, True, partial_pnl, "spot")
+    without = _net_pnl("BUY", 100.0, 102.0, False, 0.0, "spot")
+    assert abs(with_tp1 - without) < 1e-9, f"TP1 path {with_tp1:.4f} vs plain {without:.4f}"
+
+
+
+# ── 24. Per-condition contributions in cycle_log ─────────────────────────────
+
+def test_cycle_log_stores_the_per_condition_contributions():
+    """The engine already computes `signal['_contributions'][name] = (buy, sell)` for every
+    condition, and cycle_log threw it away — keeping only the summed buy_score.
+
+    Without it, comparing the live bot against a replay can only be done on the total,
+    where the 3.50 of SPOT_MAX_SCORE that no replay can see (market_structure 3.00 +
+    gold_vix 0.50) swamps any drift smaller than itself. Item #5 measured exactly that and
+    could conclude nothing. Stored per condition, the technical conditions can be compared
+    directly and the blind ones subtracted instead of tolerated.
+    """
+    import json
+    import os
+    import sqlite3
+    import tempfile
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        contrib = {"ema200": (1.0, 0.0), "rsi": (0.0, 1.5), "macd": (0.75, 0.0)}
+        _log_one_cycle(path, _EMPTY_MARKET, contributions=contrib)
+        c = sqlite3.connect(path)
+        raw = c.execute("SELECT contributions FROM cycle_log").fetchone()[0]
+        c.close()
+        got = json.loads(raw)
+        assert got == {"ema200": [1.0, 0.0], "rsi": [0.0, 1.5], "macd": [0.75, 0.0]}, got
+    finally:
+        os.unlink(path)
+
+
+def test_contributions_survive_a_cycle_that_produced_none():
+    """A signal dict without _contributions must store NULL, not crash and not '{}' — the
+    two mean different things when you read the column back years later."""
+    import os
+    import sqlite3
+    import tempfile
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        _log_one_cycle(path, _EMPTY_MARKET)          # no contributions passed
+        c = sqlite3.connect(path)
+        raw = c.execute("SELECT contributions FROM cycle_log").fetchone()[0]
+        c.close()
+        assert raw is None, repr(raw)
+    finally:
+        os.unlink(path)
+
+
+def test_an_existing_cycle_log_gains_the_contributions_column():
+    """The paper run's database predates this column. It must be added in place, not
+    require a rebuild — the rows already in it cannot be recreated."""
+    import os
+    import sqlite3
+    import tempfile
+    import trading.history as h
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE cycle_log (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                 "timestamp TEXT NOT NULL, mode TEXT NOT NULL, type TEXT NOT NULL, "
+                 "price REAL NOT NULL)")
+    conn.execute("INSERT INTO cycle_log (timestamp, mode, type, price) "
+                 "VALUES ('2026-01-01 00:00:00', 'spot', 'HOLD', 50000.0)")
+    conn.commit()
+    conn.close()
+    saved = h.SIGNAL_HISTORY_DB, h.DB
+    h.SIGNAL_HISTORY_DB, h.DB = path, None
+    try:
+        h._migrate_cycle_log()
+        conn = sqlite3.connect(path)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(cycle_log)")}
+        n = conn.execute("SELECT COUNT(*) FROM cycle_log").fetchone()[0]
+        conn.close()
+        assert "contributions" in cols, sorted(cols)
+        assert n == 1, "the existing row was lost"
+    finally:
+        try:
+            h.DB.close()
+        except Exception:
+            pass
+        h.SIGNAL_HISTORY_DB, h.DB = saved
+        os.unlink(path)
+
+
+
+# ── 25. Only closed bars reach the engine ────────────────────────────────────
+
+def _bars(n, tf_ms, last_open_ms):
+    import numpy as np
+    import pandas as pd
+    idx = [last_open_ms - (n - 1 - k) * tf_ms for k in range(n)]
+    close = np.arange(100.0, 100.0 + n)
+    return pd.DataFrame(
+        {"open": close, "high": close * 1.001, "low": close * 0.999,
+         "close": close, "volume": np.full(n, 10.0)},
+        index=pd.to_datetime(idx, unit="ms"))
+
+
+def test_an_unclosed_last_bar_is_dropped():
+    """The exchange serves the bar currently forming as the last row, and the engine
+    scores df.iloc[-1]. Spot runs at :01, so that bar was ONE MINUTE OLD: open, high, low
+    and close within a few dollars, every rolling indicator ending on a stub, and the
+    entry-wick gate dividing by a range of a few dollars.
+
+    Measured over 1,200 candles, scoring it instead of the bar that closed changes the
+    verdict on 13.6% of them and the score by up to 3.75 of SPOT_MAX_SCORE 22.50. It also
+    made backtest.py structurally unable to reproduce the live bot, because the backtest
+    scores closed bars. See docs/superpowers/specs/2026-09-24-live-vs-backtest.md.
+    """
+    from signals.ohlcv import drop_unclosed
+    tf = 4 * 3600 * 1000
+    last_open = 1_700_000_000_000 // tf * tf
+    df = _bars(10, tf, last_open)
+    now = last_open + 60_000                      # one minute into the last bar
+    out = drop_unclosed(df, "4h", now)
+    assert len(out) == len(df) - 1, f"{len(out)} rows kept of {len(df)}"
+    assert out.index[-1] == df.index[-2]
+
+
+def test_a_bar_that_has_closed_is_kept():
+    """Run at :01 the previous bar has closed one minute ago — it is the newest complete
+    information there is and must survive."""
+    from signals.ohlcv import drop_unclosed
+    tf = 4 * 3600 * 1000
+    last_open = 1_700_000_000_000 // tf * tf
+    df = _bars(10, tf, last_open)
+    now = last_open + tf + 60_000                 # one minute after the last bar closed
+    assert len(drop_unclosed(df, "4h", now)) == len(df)
+
+
+def test_dropping_is_exact_at_the_close_instant():
+    """A bar is closed the moment its period elapses, not a tick later — an off-by-one
+    here silently discards the freshest complete bar on every single cycle."""
+    from signals.ohlcv import drop_unclosed
+    tf = 60 * 60 * 1000
+    last_open = 1_700_000_000_000 // tf * tf
+    df = _bars(5, tf, last_open)
+    assert len(drop_unclosed(df, "1h", last_open + tf - 1)) == len(df) - 1
+    assert len(drop_unclosed(df, "1h", last_open + tf)) == len(df)
+
+
+def test_an_empty_or_single_row_frame_is_returned_unharmed():
+    """Never return an empty frame to the engine, which indexes iloc[-1] and iloc[-2]."""
+    import pandas as pd
+    from signals.ohlcv import drop_unclosed
+    tf = 60 * 60 * 1000
+    last_open = 1_700_000_000_000 // tf * tf
+    empty = pd.DataFrame()
+    assert drop_unclosed(empty, "1h", last_open).empty
+    one = _bars(1, tf, last_open)
+    assert len(drop_unclosed(one, "1h", last_open + 60_000)) == 1
+
+
+def test_an_unknown_timeframe_raises_rather_than_guessing():
+    """Guessing a duration would drop the wrong row, or none, without saying so."""
+    from signals.ohlcv import drop_unclosed
+    tf = 60 * 60 * 1000
+    df = _bars(5, tf, 1_700_000_000_000 // tf * tf)
+    try:
+        drop_unclosed(df, "7m", 1_700_000_000_000)
+    except ValueError as e:
+        assert "7m" in str(e), e
+    else:
+        raise AssertionError("an unknown timeframe was accepted")
+
+
+
+# ── 20. Exit simulator ───────────────────────────────────────────────────────
+
+def _exit_fixture(closes, highs=None, lows=None, atr=100.0):
+    """Deterministic OHLCV frame for _simulate_forward. No network, no exchange."""
+    import pandas as pd
+    n = len(closes)
+    highs = highs if highs is not None else [c + 1 for c in closes]
+    lows = lows if lows is not None else [c - 1 for c in closes]
+    return pd.DataFrame(
+        {"open": closes, "high": highs, "low": lows, "close": closes,
+         "ATR_14": [atr] * n},
+        index=pd.date_range("2026-01-01", periods=n, freq="4h"),
+    )
+
+
+def _exit_signal(stype="BUY", entry=1000.0, sl=850.0, tp1=1150.0, tp2=1300.0, atr=100.0):
+    return {"type": stype, "entry_price": entry, "stop_loss": sl,
+            "take_profit": tp1, "tp2": tp2, "atr": atr}
+
+
+def test_exit_tp2_path_returns_win():
+    """Price walks up through TP1 then TP2 — the trade closes WIN at tp2."""
+    from backtest import _simulate_forward
+    closes = [1000] + [1000 + 40 * k for k in range(1, 20)]
+    df = _exit_fixture(closes, highs=[c + 30 for c in closes])
+    t = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot")
+    assert t["outcome"] == "WIN", t["outcome"]
+    assert t["exit_price"] == 1300.0, t["exit_price"]
+
+
+def test_exit_stop_path_returns_loss():
+    """Price gaps straight down through the stop — trailing stop hit, LOSS."""
+    from backtest import _simulate_forward
+    closes = [1000] + [800] * 19
+    df = _exit_fixture(closes, lows=[c - 60 for c in closes])
+    t = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot")
+    assert t["outcome"] == "LOSS", t["outcome"]
+
+
+def test_exit_time_cap_fires_at_the_cap():
+    """A position alive at the cap must close as TIME_EXIT with a real P&L.
+
+    It used to fall through to an OPEN row at 0.00%, which RESOLVED excludes
+    from every statistic — so the backtest discarded slow trades instead of
+    measuring them. The loop ran `age` 1..max_hold while the test needed
+    `age * mult > max_hours`, and `max_hold * mult` equals `max_hours` exactly.
+    """
+    from backtest import _simulate_forward
+    closes = [1000] * 30
+    df = _exit_fixture(closes)
+    t = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot")
+    assert t["outcome"] == "TIME_EXIT", t["outcome"]
+    assert t["pnl_pct"] != 0, t["pnl_pct"]
+    # Pins WHICH candle fires: max_hold(18) + 1, the exact one candle the fix
+    # adds. `>` -> `>=` at the time-exit check, or widening the loop bound
+    # past +2, would still pass outcome/pnl_pct alone — this line is what
+    # would catch either off-by-one.
+    assert t["candles_held"] == 19, t["candles_held"]
+
+
+def test_max_hold_candles_matches_max_position_hours():
+    """The `TIME_EXIT` branch's reachability is not a law of `_simulate_forward`
+    — it is a configuration dependency this test is the only thing enforcing.
+
+    `_simulate_forward`'s loop bound (`backtest.py`, the `+2 rather than +1`
+    comment above the forward loop) makes `TIME_EXIT` reachable only because
+    `(max_hold + 1) * mult > max_hours`, which holds only because
+    `MAX_HOLD_CANDLES[tf] * mult == max_position_hours*` EXACTLY — coincidence
+    dressed as arithmetic (18 x 4 == 72, 72 x 1 == 72).
+
+    If either side of either pair drifts on its own, one of two things happens
+    silently: lower `max_position_hours*` (or raise `MAX_HOLD_CANDLES`) and
+    the equality breaks the OTHER way, and `TIME_EXIT` goes unreachable again
+    exactly as it was before `6d085cd` fixed it. Raise `max_position_hours*`
+    instead (e.g. spot 72 -> 80) and `TIME_EXIT` stays dead too, but for a
+    different reason: the loop's extra `+2` candle stops being consumed by the
+    time check and becomes a real extra candle of TP2/trail/vol-exit
+    opportunity in every trade that reaches it — changing every exit path in
+    that mode, not just the slow ones, not just TIME_EXIT.
+
+    This does not fix either failure mode — it only makes the dependency loud
+    the moment someone edits `config.py` without reading this comment.
+    """
+    from backtest import MAX_HOLD_CANDLES
+    from config import RISK_CONFIG
+    assert MAX_HOLD_CANDLES["4h"] * 4 == RISK_CONFIG["max_position_hours_spot"], \
+        (MAX_HOLD_CANDLES["4h"], RISK_CONFIG["max_position_hours_spot"])
+    assert MAX_HOLD_CANDLES["1h"] * 1 == RISK_CONFIG["max_position_hours"], \
+        (MAX_HOLD_CANDLES["1h"], RISK_CONFIG["max_position_hours"])
+
+
+def test_exit_open_row_still_used_when_candles_run_out():
+    """OPEN is still correct when the FRAME ends early — that is a data
+    limit, not a hold limit, and must not be mislabelled TIME_EXIT."""
+    from backtest import _simulate_forward
+    df = _exit_fixture([1000] * 6)
+    t = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot")
+    assert t["outcome"] == "OPEN", t["outcome"]
+
+
+def test_exit_params_none_matches_config():
+    """exit_params=None must behave exactly as reading config directly."""
+    from backtest import _simulate_forward
+    closes = [1000] + [1000 + 40 * k for k in range(1, 20)]
+    df = _exit_fixture(closes, highs=[c + 30 for c in closes])
+    a = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot")
+    b = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot", exit_params=None)
+    assert a["outcome"] == b["outcome"] and a["pnl_pct"] == b["pnl_pct"], (a, b)
+
+
+def test_exit_params_trailing_factor_changes_the_exit():
+    """A much wider trail must not stop the trade out at the same candle."""
+    from backtest import _simulate_forward
+    closes = [1000, 1120, 1040] + [1050] * 17
+    df = _exit_fixture(closes, highs=[c + 10 for c in closes],
+                       lows=[c - 10 for c in closes])
+    tight = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot",
+                              exit_params={"trailing_atr_factor": 0.2})
+    wide = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot",
+                             exit_params={"trailing_atr_factor": 10.0})
+    assert tight["candles_held"] != wide["candles_held"] \
+        or tight["outcome"] != wide["outcome"], (tight, wide)
+
+
+def test_exit_params_rejects_an_unknown_key():
+    """A typo must fail loudly. Silently ignoring it would make a whole
+    confirmatory run measure the baseline against itself."""
+    from backtest import _simulate_forward
+    df = _exit_fixture([1000] * 20)
+    try:
+        _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot",
+                          exit_params={"trailing_atr_factorr": 1.0})
+    except ValueError:
+        return
+    raise AssertionError("unknown exit_params key was accepted")
+
+
+def test_exit_partial_disabled_never_takes_partial_buy():
+    """H3's knob: partial_enabled=False must skip TP1 entirely and take the
+    WHOLE position at TP2 instead — proven against a fixture where the
+    partial-enabled arm demonstrably DOES take a partial, so a fixture that
+    never reaches TP1 could not accidentally pass this.
+    """
+    from backtest import _simulate_forward
+    closes = [1000] + [1000 + 40 * k for k in range(1, 20)]
+    df = _exit_fixture(closes, highs=[c + 30 for c in closes])
+
+    enabled = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot")
+    assert enabled["partial"] is True, enabled  # sanity: fixture reaches TP1
+
+    disabled = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot",
+                                 exit_params={"partial_enabled": False})
+    assert disabled["partial"] is False, disabled
+    # Whole position closes WIN at TP2 — TP2 is not gated behind a partial
+    # that never happened.
+    assert disabled["outcome"] == "WIN", disabled["outcome"]
+    assert disabled["exit_price"] == 1300.0, disabled["exit_price"]
+    # Skipping the partial changes the cost/blend math, so the two arms must
+    # not silently produce the same P&L (that would mean the guard did
+    # nothing).
+    assert disabled["pnl_pct"] != enabled["pnl_pct"], (disabled, enabled)
+
+
+def test_exit_partial_disabled_never_takes_partial_sell():
+    """Mirrors the BUY test for the SELL branch — the branch most likely to
+    be left unguarded, which would silently make H3 measure only half its
+    population (spot cannot short, but futures entries can be SELL).
+    """
+    from backtest import _simulate_forward
+    closes = [1000] + [1000 - 40 * k for k in range(1, 20)]
+    df = _exit_fixture(closes, lows=[c - 30 for c in closes])
+    sig = lambda: _exit_signal(stype="SELL", entry=1000.0, sl=1150.0,
+                               tp1=850.0, tp2=700.0, atr=100.0)
+
+    enabled = _simulate_forward(df, 0, sig(), 18, "4h", "spot")
+    assert enabled["partial"] is True, enabled  # sanity: fixture reaches TP1
+
+    disabled = _simulate_forward(df, 0, sig(), 18, "4h", "spot",
+                                 exit_params={"partial_enabled": False})
+    assert disabled["partial"] is False, disabled
+    assert disabled["outcome"] == "WIN", disabled["outcome"]
+    assert disabled["exit_price"] == 700.0, disabled["exit_price"]
+    assert disabled["pnl_pct"] != enabled["pnl_pct"], (disabled, enabled)
+
+
+def test_exit_partial_enabled_true_matches_default_behaviour():
+    """exit_params={'partial_enabled': True} (explicit) must reproduce
+    exit_params=None exactly — the new knob must not perturb the default
+    path even when passed explicitly."""
+    from backtest import _simulate_forward
+    closes = [1000] + [1000 + 40 * k for k in range(1, 20)]
+    df = _exit_fixture(closes, highs=[c + 30 for c in closes])
+    a = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot")
+    b = _simulate_forward(df, 0, _exit_signal(), 18, "4h", "spot",
+                          exit_params={"partial_enabled": True})
+    assert a["outcome"] == b["outcome"] and a["pnl_pct"] == b["pnl_pct"] \
+        and a["partial"] == b["partial"], (a, b)
+
+
+def test_compute_stats_buckets_by_pnl_sign_not_outcome_label():
+    """A profitable TIME_EXIT must count as a win, not a loss, and the
+    profit-factor guard must never diverge from what the denominator divides
+    by — on pain of ZeroDivisionError when a bucket's P&L cancels to zero.
+
+    Trade dicts built directly in the shape _make_trade emits. No signal, no
+    exchange, no DB. Figures mirror the real spot-2025 run that surfaced the
+    bug: TIME_EXIT +0.95%, LOSS -0.26%, WIN +1.64%.
+    """
+    from backtest import _compute_stats
+    trades = [
+        {"outcome": "TIME_EXIT", "pnl_pct": 0.95, "candles_held": 19, "confidence": "NORMAL"},
+        {"outcome": "LOSS",      "pnl_pct": -0.26, "candles_held": 15, "confidence": "NORMAL"},
+        {"outcome": "WIN",       "pnl_pct": 1.64, "candles_held": 6, "confidence": "NORMAL"},
+    ]
+    stats = _compute_stats(trades, 100.0)
+    assert stats["wins"] == 2, stats["wins"]      # TIME_EXIT (+0.95%) is a win
+    assert stats["losses"] == 1, stats["losses"]  # only the real LOSS
+
+    # Guard/denominator agreement: a loss bucket whose P&L sums to exactly
+    # zero must fall through to the "no real losses" branch, not divide by it.
+    zero_sum_trades = [
+        {"outcome": "LOSS",     "pnl_pct": 0.0, "candles_held": 10, "confidence": "NORMAL"},
+        {"outcome": "VOL_EXIT", "pnl_pct": 0.0, "candles_held": 8, "confidence": "NORMAL"},
+        {"outcome": "WIN",      "pnl_pct": 1.5, "candles_held": 6, "confidence": "NORMAL"},
+    ]
+    zero_stats = _compute_stats(zero_sum_trades, 100.0)  # must not raise ZeroDivisionError
+    assert zero_stats["profit_factor"] == "∞", zero_stats["profit_factor"]
+
+
+def test_synth_entries_respects_stride_and_warmup():
+    from scripts.exit_ic import synth_entries
+    df = _exit_fixture([1000] * 260)
+    e = synth_entries(df, stride=6, warmup=200)
+    assert e[0] == 200, e[:3]
+    assert e[1] - e[0] == 6, e[:3]
+    assert max(e) < len(df), max(e)
+
+
+def test_paired_stats_is_paired_not_two_samples():
+    """mean_diff must be the mean of per-entry differences, which is only
+    defined when both arms have the same length and order."""
+    from scripts.exit_ic import paired_stats
+    s = paired_stats([1.0, -2.0, 3.0], [1.5, -1.0, 3.0])
+    assert s["n"] == 3, s
+    assert abs(s["mean_diff"] - 0.5) < 1e-9, s
+    assert abs(s["win_share"] - (2 / 3)) < 1e-9, s
+    # n_eff excludes the exact tie (3.0 vs 3.0, diff=0) that win_share cannot
+    # tell apart from "a rule that never touched this entry".
+    assert s["n_eff"] == 2, s
+    try:
+        paired_stats([1.0, 2.0], [1.0])
+    except ValueError:
+        return
+    raise AssertionError("unequal arms were accepted")
+
+
+def test_synth_entries_drop_the_untradeable_tail():
+    """Entries with no room to complete are truncated by the FRAME, not closed
+    by a rule — and rules hold for different lengths, so that truncation lands
+    unevenly across arms and reads as a real effect."""
+    from scripts.exit_ic import synth_entries
+    df = _exit_fixture([1000] * 260)
+    e = synth_entries(df, stride=6, warmup=200, tail=40)
+    assert max(e) < 220, max(e)
+
+
+def test_run_rule_honours_a_max_hold_override():
+    """A rule asking for a longer hold must actually get one. Passing only
+    max_position_hours cannot do it: the loop stops at max_hold+1 candles and
+    the position becomes an OPEN row that RESOLVED discards.
+
+    Price must actually move: config's max_position_hours_spot (72) equals
+    MAX_HOLD_CANDLES["4h"] * 4 exactly, so BOTH arms deterministically resolve
+    via TIME_EXIT at their own last candle regardless of max_hold. On a flat
+    fixture that gives both arms the same exit price and therefore the same
+    P&L even when max_hold is wired correctly. A mild upward drift makes the
+    two exit candles land at different prices, so P&L reflects which hold
+    length was used — and lets the assertion check DIRECTION, which only
+    correct wiring can produce: the long arm holds through more of the drift
+    and must come out ahead, not merely "different".
+
+    `short[0] != long_[0] or short[0] == 0.0` (the brief's original form) does
+    not do this. Under the bug (run_rule ignoring rule["max_hold"], so both
+    arms use the default 18-candle hold) the long arm's exit_params
+    (max_position_hours=288) never gets reached before the frame's own
+    max_hold+1 loop bound, so it falls through to an OPEN row at pnl=0.0 while
+    short still resolves TIME_EXIT at a nonzero P&L. Those two values are
+    unequal, so the old assertion PASSES under the bug it exists to catch.
+    `long_[0] > short[0]` does not: under the bug long_[0] == 0.0 while
+    short[0] > 0 (price only drifts up), so long_ > short is False and the
+    test fails as it must.
+    """
+    from scripts.exit_ic import run_rule
+    df = _exit_fixture([1000 + k for k in range(120)])
+    short = run_rule(df, [10], "spot", "4h", {})
+    long_ = run_rule(df, [10], "spot", "4h",
+                     {"max_hold": 72, "exit_params": {"max_position_hours": 288}})
+    assert long_[0] > short[0], (short, long_)
+
+
+def test_run_rule_honours_an_explicit_zero_max_hold():
+    """`rule.get('max_hold') or MAX_HOLD_CANDLES[tf]` used to silently swap in
+    the timeframe default whenever `max_hold: 0` was passed — `0` is falsy but
+    a legitimate (if degenerate) request, and only `is None` correctly means
+    "not specified". A `max_hold` of 0 lets the forward loop see exactly one
+    candle (`range(entry_idx+1, entry_idx+2)`), which on this ramp is nowhere
+    near TP/SL and must fall through to an unresolved OPEN row at 0.0 —
+    sharply different from the nonzero, resolved P&L the 18-candle default
+    produces on the very same entry (see test_run_rule_honours_a_max_hold_
+    override, identical fixture). Under the old `or` bug, `max_hold: 0` was
+    indistinguishable from `{}` and this would assert the same nonzero value.
+    """
+    from scripts.exit_ic import run_rule
+    df = _exit_fixture([1000 + k for k in range(120)])
+    zero = run_rule(df, [10], "spot", "4h", {"max_hold": 0})
+    assert zero[0] == 0.0, zero
+    assert zero.unresolved == 1, zero.unresolved
+
+
+def test_run_cell_raises_on_an_empty_entry_set():
+    """`synth_entries` returns `[]` when the frame is too short for a rule
+    table's warmup + tail margin. Letting that reach `run_rule` used to print
+    a row with n=0 mean_diff=+0.0000 — contributing zero weight to the pooled
+    mean while still counting as a non-positive cell against criterion 1, a
+    silent bias toward failure. `run_cell` must raise instead.
+
+    `fetch_ohlcv_df` is monkeypatched to a short local fixture — no network,
+    no exchange.
+    """
+    import scripts.exit_ic as ei
+    saved = ei.fetch_ohlcv_df
+    try:
+        ei.fetch_ohlcv_df = lambda *a, **k: _exit_fixture([1000] * 50)
+        try:
+            ei.run_cell("BTC/USDT", 2020, "spot", {"baseline": {}}, stride=6)
+        except ValueError as e:
+            assert "no synthetic entries" in str(e), e
+            return
+        raise AssertionError("an empty entry set was silently accepted")
+    finally:
+        ei.fetch_ohlcv_df = saved
+
+
+def test_only_h1_without_spot_mode_is_rejected():
+    """`--only H1` with no explicit `--mode` used to default to futures and run
+    a grid the pre-registration never defines (H1 has no futures cells, prereg
+    §2/§5). Must fail before any fetch happens — proven by never installing a
+    fetch fake, so a network call here would be a test failure by hanging or
+    erroring, not a false pass.
+    """
+    import sys
+    from scripts.exit_ic import main
+    saved_argv = sys.argv
+    try:
+        sys.argv = ["exit_ic.py", "--only", "H1"]  # --mode defaults to futures
+        try:
+            main()
+        except ValueError as e:
+            assert "spot" in str(e), e
+            return
+        raise AssertionError("--only H1 without --mode spot was accepted")
+    finally:
+        sys.argv = saved_argv
+
+
+def test_main_reraises_internal_errors_instead_of_treating_them_as_fetch_failures():
+    """An internal bug (e.g. a lost `Pnls.time_exit` attribute) must crash the
+    run, not be swallowed by the same `except Exception` that catches a fetch
+    failure — that was the exact silent-failure mode this finding closes: a
+    bug indistinguishable from "cell failed — skipped" at the log line.
+    """
+    import sys
+    import scripts.exit_ic as ei
+    saved_argv, saved_fetch = sys.argv, ei.fetch_ohlcv_df
+    try:
+        def _boom(*a, **k):
+            raise AttributeError("simulated internal bug, not a fetch failure")
+        ei.fetch_ohlcv_df = _boom
+        sys.argv = ["exit_ic.py", "--mode", "spot", "--symbols", "BTC/USDT",
+                   "--years", "2020", "--only", "H2"]
+        try:
+            ei.main()
+        except AttributeError:
+            return
+        raise AssertionError("AttributeError was swallowed as a fetch failure")
+    finally:
+        sys.argv = saved_argv
+        ei.fetch_ohlcv_df = saved_fetch
+
+
+def test_main_exits_nonzero_on_an_incomplete_grid():
+    """37 of 40 cells producing a row and 3 failing must not exit 0 — that is
+    what let a short grid look complete to an unattended multi-hour run.
+    One symbol's fetch is monkeypatched to fail, the other to succeed, so the
+    grid is deliberately incomplete without ever touching a network.
+    """
+    import sys
+    import scripts.exit_ic as ei
+    saved_argv, saved_fetch = sys.argv, ei.fetch_ohlcv_df
+    try:
+        def _fake(symbol, timeframe, since=None, until=None):
+            if symbol == "A/USDT":
+                raise ConnectionError("simulated fetch failure")
+            return _exit_fixture([1000 + k for k in range(260)])
+        ei.fetch_ohlcv_df = _fake
+        sys.argv = ["exit_ic.py", "--mode", "spot", "--symbols", "A/USDT,B/USDT",
+                   "--years", "2020", "--only", "H2"]
+        try:
+            ei.main()
+        except SystemExit as e:
+            assert e.code == 1, e.code
+            return
+        raise AssertionError("an incomplete grid exited 0")
+    finally:
+        sys.argv = saved_argv
+        ei.fetch_ohlcv_df = saved_fetch
+
+
+def test_run_rule_counts_time_exit_share():
+    """H1's registered additional criterion (prereg doc section 5) reads the
+    TIME_EXIT share per arm, so Pnls must actually carry that count, not just
+    `.unresolved`. One entry parked in a long flat run must resolve
+    TIME_EXIT; a second entry placed where price ramps hard must resolve WIN
+    — proving `.time_exit` counts per-entry outcomes, not "TIME_EXIT ever
+    appeared anywhere in this df".
+    """
+    from scripts.exit_ic import run_rule
+    flat = [1000] * 26                            # indices 0..25 (entry 0 sits here)
+    ramp = [1000 + 100 * k for k in range(1, 19)]  # indices 26..43 (entry 25 sits at 25)
+    closes = flat + ramp
+    highs = [c + 1 for c in flat] + [c + 50 for c in ramp]
+    df = _exit_fixture(closes, highs=highs)
+    out = run_rule(df, [0, 25], "spot", "4h", {})
+    assert len(out) == 2, len(out)
+    assert out.unresolved == 0, out.unresolved
+    assert out.time_exit == 1, out.time_exit
+
+
+def test_run_rule_is_deterministic():
+    """Same frame, same entries, same params -> byte-identical output. A
+    confirmatory run that cannot be reproduced cannot be checked."""
+    from scripts.exit_ic import run_rule, synth_entries
+    df = _exit_fixture([1000 + (k % 7) * 20 for k in range(260)])
+    e = synth_entries(df, stride=20, warmup=200, tail=20)
+    a = run_rule(df, e, "spot", "4h", {})
+    b = run_rule(df, e, "spot", "4h", {})
+    assert a == b, (a[:5], b[:5])
+    assert len(a) == len(e), (len(a), len(e))
+
+
+def test_tail_margin_sizes_to_the_longest_rule_not_baseline():
+    """The tail margin must clear the LONGEST-held rule across ALL rules,
+    baseline included -- not just the baseline. Get this wrong and a longer
+    rule's late entries get cut off by the end of the frame while the
+    baseline's complete: truncation landing on one arm only, which a paired
+    comparison reports as a real effect instead of an artefact of framing.
+
+    Built offline against the arithmetic `run_cell` uses (no network/fetch):
+    `_tail_margin` is the extracted sizing expression.
+    """
+    from scripts.exit_ic import _tail_margin
+    from backtest import MAX_HOLD_CANDLES
+
+    # A candidate rule held far longer than the default must win the max.
+    rules = {"baseline": {}, "H1": {"max_hold": 72}}
+    assert _tail_margin(rules, "4h") == 72 + 2, _tail_margin(rules, "4h")
+
+    # With no rule overriding max_hold, the margin falls back to the
+    # timeframe's own default hold (baseline's implicit length), not 0/None.
+    rules_default = {"baseline": {}, "H2": {"exit_params": {}}}
+    assert _tail_margin(rules_default, "4h") == MAX_HOLD_CANDLES["4h"] + 2, \
+        _tail_margin(rules_default, "4h")
+
+    # A rule shorter than the default must not shrink the margin below it --
+    # the max is over every rule, so the longest still wins.
+    rules_mixed = {"baseline": {}, "short": {"max_hold": 3},
+                   "long": {"max_hold": 100}}
+    assert _tail_margin(rules_mixed, "4h") == 100 + 2, _tail_margin(rules_mixed, "4h")
 
 
 if __name__ == "__main__":
@@ -1705,6 +2701,71 @@ if __name__ == "__main__":
     run("taker/gold/VIX are stored",              test_cycle_log_stores_taker_gold_and_vix)
     run("spot leaves futures-only fields NULL",   test_spot_rows_leave_futures_only_fields_null)
     run("existing database gains the columns",    test_existing_database_gains_the_columns)
+    run("veto reason survives the budget",        test_cycle_log_keeps_the_veto_reason_past_the_budget)
+    run("every veto is kept",                     test_cycle_log_keeps_every_veto_when_several_fire)
+    run("forced HOLD without a marker is kept",   test_cycle_log_keeps_a_forced_hold_that_carries_no_veto_marker)
+    run("descriptive reasons stay capped",        test_cycle_log_still_caps_the_descriptive_reasons)
+    run("engine ordering is preserved",           test_cycle_log_preserves_the_order_the_engine_appended)
+    run("engine still emits the HOLD phrases",    test_engine_still_emits_the_hold_phrases_history_matches_on)
+
+    print("\n── 21. Veto-gate ablation ──")
+    run("every veto gate can be ablated",         test_every_veto_gate_can_actually_be_ablated)
+    run("gates_disabled is not clobbered",        test_gates_disabled_is_not_clobbered_by_the_conditions_parameter)
+    run("unknown gate name raises",               test_an_unknown_gate_name_raises_instead_of_ablating_nothing)
+    run("default leaves gates running",           test_no_gates_disabled_leaves_every_gate_running)
+
+    print("\n── 22. Holdout windowing ──")
+    run("daily warmup admits young symbols",      test_daily_warmup_admits_a_symbol_the_strict_one_rejects)
+    run("--start never shortens warmup",          test_an_explicit_start_never_shortens_the_htf_warmup)
+    run("no --start keeps the warmup window",     test_no_start_leaves_the_window_at_the_warmup)
+
+    print("\n── 23. Partial-exit costs ──")
+    run("partial pays a full round trip",         test_a_partial_exit_pays_a_full_round_trip_not_one_and_a_half)
+    run("backtest matches the live path",         test_the_backtest_charges_a_partial_exit_the_same_as_the_live_path)
+    run("no-partial still pays two sides",        test_a_trade_without_a_partial_still_pays_exactly_two_sides)
+    run("TP1 never buys a cost discount",         test_taking_tp1_never_costs_less_than_not_taking_it)
+
+    print("\n── 24. Contributions in cycle_log ──")
+    run("contributions are stored",               test_cycle_log_stores_the_per_condition_contributions)
+    run("absent contributions store NULL",        test_contributions_survive_a_cycle_that_produced_none)
+    run("existing database gains the column",     test_an_existing_cycle_log_gains_the_contributions_column)
+
+    print("\n── 25. Closed bars only ──")
+    run("unclosed last bar is dropped",           test_an_unclosed_last_bar_is_dropped)
+    run("a closed bar is kept",                   test_a_bar_that_has_closed_is_kept)
+    run("exact at the close instant",             test_dropping_is_exact_at_the_close_instant)
+    run("empty/single frame unharmed",            test_an_empty_or_single_row_frame_is_returned_unharmed)
+    run("unknown timeframe raises",               test_an_unknown_timeframe_raises_rather_than_guessing)
+    run("rejected arm partitions the ungated",    test_split_by_gates_partitions_the_ungated_arm)
+    run("a stray gated entry is rejected",        test_split_by_gates_rejects_a_gated_entry_that_is_not_in_the_ungated_arm)
+
+    print("\n── 20. Exit simulator ──")
+    run("TP1 then TP2 closes WIN",                test_exit_tp2_path_returns_win)
+    run("stop hit closes LOSS",                   test_exit_stop_path_returns_loss)
+    run("time cap closes as TIME_EXIT",           test_exit_time_cap_fires_at_the_cap)
+    run("hold/hour coupling is pinned",           test_max_hold_candles_matches_max_position_hours)
+    run("OPEN kept when the frame runs out",      test_exit_open_row_still_used_when_candles_run_out)
+    run("exit_params=None matches config",        test_exit_params_none_matches_config)
+    run("trailing factor override takes effect",  test_exit_params_trailing_factor_changes_the_exit)
+    run("unknown exit_params key is rejected",    test_exit_params_rejects_an_unknown_key)
+    run("partial_enabled=False skips TP1 (BUY)",   test_exit_partial_disabled_never_takes_partial_buy)
+    run("partial_enabled=False skips TP1 (SELL)",  test_exit_partial_disabled_never_takes_partial_sell)
+    run("partial_enabled=True matches default",    test_exit_partial_enabled_true_matches_default_behaviour)
+    run("stats bucket by P&L sign, not label",  test_compute_stats_buckets_by_pnl_sign_not_outcome_label)
+
+    print("\n── 21. exit_ic.py — synthetic exit comparison ──")
+    run("synth entries honour stride/warmup",     test_synth_entries_respects_stride_and_warmup)
+    run("synth entries drop untradeable tail",    test_synth_entries_drop_the_untradeable_tail)
+    run("paired stats are truly paired",          test_paired_stats_is_paired_not_two_samples)
+    run("run_rule honours a max_hold override",   test_run_rule_honours_a_max_hold_override)
+    run("run_rule honours an explicit 0 max_hold", test_run_rule_honours_an_explicit_zero_max_hold)
+    run("run_cell raises on empty entries",       test_run_cell_raises_on_an_empty_entry_set)
+    run("--only H1 requires --mode spot",          test_only_h1_without_spot_mode_is_rejected)
+    run("internal errors are not swallowed",       test_main_reraises_internal_errors_instead_of_treating_them_as_fetch_failures)
+    run("incomplete grid exits nonzero",           test_main_exits_nonzero_on_an_incomplete_grid)
+    run("run_rule counts TIME_EXIT share",         test_run_rule_counts_time_exit_share)
+    run("run_rule is deterministic",              test_run_rule_is_deterministic)
+    run("tail margin sizes to longest rule",       test_tail_margin_sizes_to_the_longest_rule_not_baseline)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

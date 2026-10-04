@@ -1,0 +1,21 @@
+2026-09-22 09:46:07,071 [WARNING] binance fetch_ohlcv failed (binance GET https://api.binance.com/api/v3/exchangeInfo) — falling back to data-api.binance.vision for 1800s
+spot     BTC/USDT   2020  H2   n=  330 n_eff=   16  base=+0.2007pp cand=+0.2500pp  mean_diff=+0.0492pp  win_share=0.036  unresolved=0/0  time_exit%=27.0/27.9
+spot     ETH/USDT   2020  H2   n=  330 n_eff=   13  base=+0.0436pp cand=+0.0593pp  mean_diff=+0.0156pp  win_share=0.021  unresolved=0/0  time_exit%=24.2/25.5
+spot     BNB/USDT   2020  H2   n=  330 n_eff=   18  base=-0.0160pp cand=+0.0039pp  mean_diff=+0.0198pp  win_share=0.030  unresolved=0/0  time_exit%=27.3/30.6
+spot     XRP/USDT   2020  H2   n=  330 n_eff=   13  base=-1.1542pp cand=-1.1635pp  mean_diff=-0.0094pp  win_share=0.006  unresolved=0/0  time_exit%=23.3/23.9
+spot     LINK/USDT  2020  H2   n=  330 n_eff=   17  base=-0.3929pp cand=-0.3565pp  mean_diff=+0.0364pp  win_share=0.024  unresolved=0/0  time_exit%=27.6/29.4
+spot     BTC/USDT   2021  H2   n=  329 n_eff=    7  base=-0.6235pp cand=-0.5855pp  mean_diff=+0.0380pp  win_share=0.015  unresolved=0/0  time_exit%=26.4/27.4
+spot     ETH/USDT   2021  H2   n=  329 n_eff=   17  base=-0.2192pp cand=-0.1743pp  mean_diff=+0.0450pp  win_share=0.030  unresolved=0/0  time_exit%=26.4/28.3
+spot     BNB/USDT   2021  H2   n=  329 n_eff=   13  base=+0.0699pp cand=+0.0976pp  mean_diff=+0.0277pp  win_share=0.018  unresolved=0/0  time_exit%=29.8/30.4
+spot     XRP/USDT   2021  H2   n=  329 n_eff=   16  base=-0.3293pp cand=-0.2967pp  mean_diff=+0.0327pp  win_share=0.024  unresolved=0/0  time_exit%=28.3/31.0
+spot     LINK/USDT  2021  H2   n=  329 n_eff=    9  base=-0.6560pp cand=-0.6490pp  mean_diff=+0.0070pp  win_share=0.015  unresolved=0/0  time_exit%=25.5/26.4
+spot     BTC/USDT   2022  H2   n=  329 n_eff=    3  base=-1.1267pp cand=-1.1147pp  mean_diff=+0.0120pp  win_share=0.009  unresolved=0/0  time_exit%=22.5/22.8
+spot     ETH/USDT   2022  H2   n=  329 n_eff=    7  base=-0.9562pp cand=-0.9514pp  mean_diff=+0.0047pp  win_share=0.003  unresolved=0/0  time_exit%=24.6/25.2
+spot     BNB/USDT   2022  H2   n=  329 n_eff=    4  base=-0.8523pp cand=-0.8440pp  mean_diff=+0.0082pp  win_share=0.003  unresolved=0/0  time_exit%=30.4/30.7
+spot     XRP/USDT   2022  H2   n=  329 n_eff=    6  base=-0.8273pp cand=-0.8273pp  mean_diff=-0.0000pp  win_share=0.009  unresolved=0/0  time_exit%=25.2/25.8
+spot     LINK/USDT  2022  H2   n=  329 n_eff=    7  base=-1.4293pp cand=-1.4127pp  mean_diff=+0.0166pp  win_share=0.012  unresolved=0/0  time_exit%=23.7/24.9
+spot     BTC/USDT   2023  H2   n=  329 n_eff=   11  base=-0.3211pp cand=-0.2890pp  mean_diff=+0.0321pp  win_share=0.021  unresolved=0/0  time_exit%=21.9/22.2
+spot     ETH/USDT   2023  H2   n=  329 n_eff=    7  base=-0.6244pp cand=-0.6113pp  mean_diff=+0.0131pp  win_share=0.009  unresolved=0/0  time_exit%=20.1/20.1
+spot     BNB/USDT   2023  H2   n=  329 n_eff=    5  base=-0.5858pp cand=-0.5923pp  mean_diff=-0.0065pp  win_share=0.003  unresolved=0/0  time_exit%=24.3/24.9
+spot     XRP/USDT   2023  H2   n=  329 n_eff=    7  base=-0.4772pp cand=-0.4707pp  mean_diff=+0.0065pp  win_share=0.012  unresolved=0/0  time_exit%=26.7/28.0
+spot     LINK/USDT  2023  H2   n=  329 n_eff=    8  base=-0.5184pp cand=-0.5091pp  mean_diff=+0.0092pp  win_share=0.009  unresolved=0/0  time_exit%=25.2/25.8

@@ -308,8 +308,23 @@ def _failing_gates(signal, mode, window, last_resolved=None):
 # Forward simulation — trailing stop + partial TP
 # ---------------------------------------------------------------------------
 
-def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode):
-    """Walk forward from entry_idx, managing trailing stop and partial TP."""
+def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, exit_params=None):
+    """Walk forward from entry_idx, managing trailing stop and partial TP.
+
+    `exit_params` overrides individual exit knobs for one call. None reads
+    config exactly as before. This mirrors generate_signals()'s
+    `threshold_override` / `disabled`: alternative rules run through the REAL
+    simulator, so a candidate can never drift from what the bot actually does —
+    which a second, copied simulator would do within months, silently.
+    """
+    _ALLOWED = {"trailing_atr_factor", "trailing_post_tp1_factor",
+                "trailing_advance_min_ratio", "max_position_hours",
+                "vol_expansion_exit_mult", "partial_enabled"}
+    ep = exit_params or {}
+    unknown = set(ep) - _ALLOWED
+    if unknown:
+        raise ValueError(f"unknown exit_params key(s): {sorted(unknown)}")
+
     entry_raw = signal["entry_price"]
     sl_raw = signal["stop_loss"]
     tp1_raw = signal["take_profit"]
@@ -328,9 +343,19 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode):
     tp2 = tp2_raw if tp2_raw else None
 
     trail = sl
-    base_trail_factor = FUTURES_CONFIG.get("trailing_atr_factor", 0.9) if mode == "futures" else RISK_CONFIG.get("trailing_atr_factor", 1.0)
-    post_tp1_factor   = RISK_CONFIG.get("trailing_post_tp1_factor", 0.8)
-    min_adv_ratio     = RISK_CONFIG.get("trailing_advance_min_ratio", 0.5)
+    _default_trail = (FUTURES_CONFIG.get("trailing_atr_factor", 0.9) if mode == "futures"
+                      else RISK_CONFIG.get("trailing_atr_factor", 1.0))
+    base_trail_factor = ep.get("trailing_atr_factor", _default_trail)
+    post_tp1_factor   = ep.get("trailing_post_tp1_factor",
+                               RISK_CONFIG.get("trailing_post_tp1_factor", 0.8))
+    min_adv_ratio     = ep.get("trailing_advance_min_ratio",
+                               RISK_CONFIG.get("trailing_advance_min_ratio", 0.5))
+    # H3: does the 50/50 partial at TP1 earn its place over taking the whole
+    # position at TP2? Default True reproduces today's behaviour exactly.
+    # When False, TP1 never fires, so `post_tp1_factor` is never applied
+    # (the trail factor is keyed off `partial_closed`, which then never
+    # becomes True) — it goes inert on its own, no separate guard needed.
+    partial_enabled = ep.get("partial_enabled", True)
     partial_closed = False
     partial_pnl = 0
     # No FUNDING_EXIT in backtest — funding rate isn't available historically.
@@ -339,7 +364,17 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode):
     # reflects the TA-only path; the disclaimer in the module docstring
     # already notes that market structure exits don't apply in backtest.
 
-    for j in range(entry_idx + 1, min(entry_idx + 1 + max_hold, len(df))):
+    # +2 rather than +1: the time-exit test needs `age * mult > max_hours`, and
+    # `max_hold * mult` equals `max_hours` today — a configuration dependency
+    # (MAX_HOLD_CANDLES here vs RISK_CONFIG's max_position_hours*, asserted by
+    # test_max_hold_candles_matches_max_position_hours in test_pipelines.py),
+    # not a guarantee this module enforces on its own — so a loop ending at
+    # `max_hold` could never satisfy it. The branch was dead in both modes and
+    # every position alive at the cap fell through to an OPEN row at 0.00% —
+    # which RESOLVED excludes, so slow trades were discarded, not measured.
+    # If that dependency ever drifts, this reachability breaks silently again;
+    # see the test for what else moves with it.
+    for j in range(entry_idx + 1, min(entry_idx + 2 + max_hold, len(df))):
         c = df.iloc[j]
         high, low = c["high"], c["low"]
         atr_now = c.get("ATR_14", atr_entry)
@@ -347,9 +382,10 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode):
         # Time exit
         age = j - entry_idx
         if mode == "spot":
-            max_hours = RISK_CONFIG.get("max_position_hours_spot", 48)
+            _default_hours = RISK_CONFIG.get("max_position_hours_spot", 48)
         else:
-            max_hours = RISK_CONFIG.get("max_position_hours", 72)
+            _default_hours = RISK_CONFIG.get("max_position_hours", 72)
+        max_hours = ep.get("max_position_hours", _default_hours)
         if age * (4 if timeframe == "4h" else 1) > max_hours:
             exit_px = c["close"]
             exit_pnl = _net_pnl(stype, entry, exit_px, partial_closed, partial_pnl, mode)
@@ -358,7 +394,9 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode):
         # Vol exit — matches live: only force-close when underwater, otherwise
         # let the trail tighten the stop. Without this gate, backtest closed
         # winners on vol expansion that live now lets run.
-        if atr_entry > 0 and atr_now > atr_entry * RISK_CONFIG.get("vol_expansion_exit_mult", 2.0):
+        _vol_mult = ep.get("vol_expansion_exit_mult",
+                           RISK_CONFIG.get("vol_expansion_exit_mult", 2.0))
+        if atr_entry > 0 and atr_now > atr_entry * _vol_mult:
             if stype == "BUY":
                 gross = (c["close"] - entry) / entry * 100
             else:
@@ -377,8 +415,8 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode):
                 if new_trail > trail + min_adv:
                     trail = new_trail
 
-            # Partial TP1 (50%)
-            if not partial_closed and high >= tp1:
+            # Partial TP1 (50%) — skipped entirely when partial_enabled=False
+            if partial_enabled and not partial_closed and high >= tp1:
                 signal["_partial_taken"] = True
                 partial_pnl = (tp1 - entry) / entry * 100 - _costs(mode, 2)
                 # Mirror trading/paper.py exactly: SPOT pulls the trail to
@@ -392,9 +430,10 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode):
                     trail = max(trail, entry)
                 partial_closed = True
 
-            # TP2 after partial
-            if partial_closed and tp2 and high >= tp2:
-                exit_pnl = _net_pnl(stype, entry, tp2, True, partial_pnl, mode)
+            # TP2 — after the partial when partial_enabled; as the WHOLE
+            # position (no partial ever taken) when partial_enabled=False.
+            if tp2 and high >= tp2 and (partial_closed or not partial_enabled):
+                exit_pnl = _net_pnl(stype, entry, tp2, partial_closed, partial_pnl, mode)
                 return _make_trade(df, entry_idx, j, signal, "WIN", entry, tp2, exit_pnl)
 
             # Trailing stop hit
@@ -411,7 +450,7 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode):
                 if new_trail < trail - min_adv:
                     trail = new_trail
 
-            if not partial_closed and low <= tp1:
+            if partial_enabled and not partial_closed and low <= tp1:
                 signal["_partial_taken"] = True
                 partial_pnl = (entry - tp1) / entry * 100 - _costs(mode, 2)
                 # Mirror of the BUY path, and of trading/paper.py's SELL branch.
@@ -421,8 +460,8 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode):
                     trail = min(trail, entry)
                 partial_closed = True
 
-            if partial_closed and tp2 and low <= tp2:
-                exit_pnl = _net_pnl(stype, entry, tp2, True, partial_pnl, mode)
+            if tp2 and low <= tp2 and (partial_closed or not partial_enabled):
+                exit_pnl = _net_pnl(stype, entry, tp2, partial_closed, partial_pnl, mode)
                 return _make_trade(df, entry_idx, j, signal, "WIN", entry, tp2, exit_pnl)
 
             if high >= trail:
@@ -453,7 +492,9 @@ def _net_pnl(stype, entry, exit_px, partial_closed, partial_pnl, mode="futures")
         gross = (exit_px - entry) / entry * 100
     else:
         gross = (entry - exit_px) / entry * 100
-    gross -= _costs(mode, 1 if partial_closed else 2)
+    # 2 sides whether or not TP1 was taken — see the note in trading/paper.py::_calc_pnl.
+    # This is a mirror of that function and must charge what it charges.
+    gross -= _costs(mode, 2)
     if partial_closed:
         return partial_pnl * 0.5 + gross * 0.5
     return gross
@@ -555,8 +596,13 @@ def _htf_at(frames, ts):
 def _compute_stats(trades, start_price):
     """Return summary statistics dict."""
     closed = [t for t in trades if t["outcome"] in RESOLVED]
-    wins = [t for t in closed if t["outcome"] == "WIN"]
-    losses = [t for t in closed if t["outcome"] != "WIN"]
+    # Bucket by P&L SIGN, not outcome label. Before TIME_EXIT was reachable,
+    # every non-WIN row had pnl_pct <= 0 (LOSS only assigns when exit_pnl <= 0,
+    # VOL_EXIT only fires when gross <= 0), so `outcome != "WIN"` and
+    # `pnl_pct <= 0` were the same set. TIME_EXIT can now close with a
+    # positive P&L, which outcome-based bucketing would misfile as a loss.
+    wins = [t for t in closed if t["pnl_pct"] > 0]
+    losses = [t for t in closed if t["pnl_pct"] <= 0]
 
     total_pnl = sum(t["pnl_pct"] for t in closed)
     win_rate = len(wins) / len(closed) if closed else 0
@@ -564,9 +610,15 @@ def _compute_stats(trades, start_price):
     avg_loss = sum(t["pnl_pct"] for t in losses) / len(losses) if losses else 0
     avg_candles = sum(t["candles_held"] for t in closed) / len(closed) if closed else 0
 
+    # Guard must test the SAME expression the denominator divides by. A
+    # positive TIME_EXIT bucketed as a loss could cancel a real loss inside
+    # the sum while sum(abs(...)) stayed positive, passing the guard and then
+    # dividing by the now-zero sum() below — that path is closed by testing
+    # abs(sum(...)) instead of sum(abs(...)).
+    losses_sum = sum(t["pnl_pct"] for t in losses)
     profit_factor = (
-        sum(t["pnl_pct"] for t in wins) / abs(sum(t["pnl_pct"] for t in losses))
-        if losses and sum(abs(t["pnl_pct"]) for t in losses) > 0 else float('inf') if wins else 0
+        sum(t["pnl_pct"] for t in wins) / abs(losses_sum)
+        if losses and abs(losses_sum) > 0 else float('inf') if wins else 0
     )
 
     cum = 0; peak = 0; max_dd = 0

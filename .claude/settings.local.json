@@ -1,7 +1,19 @@
 {
   "permissions": {
     "allow": [
-      "WebSearch"
+      "WebSearch",
+      "Bash(venv/bin/python3 *)",
+      "Bash(awk -F: '$2 > 1177')",
+      "Bash(python3 *)",
+      "Bash(venv/bin/python *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(pkill -f \"run_bot.py\")",
+      "Bash(rtk ls *)",
+      "Bash(rtk wc *)",
+      "Bash(rtk read *)",
+      "Bash(rtk grep *)",
+      "Bash(rtk git *)"
     ]
   }
 }

@@ -151,6 +151,25 @@ a lower bar is the controller's intent, leaving only the `+0.5` Asia bump. This
 was shipped and reverted within one release; `test_engine_does_not_reapply_the_mode_minimum`
 guards it.
 
+## Only closed bars are scored
+
+`fetch_ohlcv_df(..., closed_only=True)` — the default — drops the bar still forming
+before any indicator is computed. The exchange serves it as the last row and
+`engine.generate_signals` scores `df.iloc[-1]`, so until 2026-10-04 the bot was scoring a
+bar **one minute old**: open, high, low and close within a few dollars, every rolling
+indicator ending on a stub, and the entry-wick gate dividing by a range of a few dollars.
+
+Measured over 1,200 candles, that changed the verdict on **13.6%** of them and the score
+by up to **3.75 of SPOT_MAX_SCORE 22.50**. It also left `backtest.py` unable to reproduce
+the live bot at all, since the backtest scores closed bars — no backtest figure produced
+before this described the system that was running.
+
+The bot runs at `:01`, one minute after a bar closes, so the newest closed bar's close is
+the live price for every purpose here and nothing needs injecting to replace it.
+
+**This landed on `develop` and belongs to the NEXT run.** The paper run started
+2026-08-30 is pinned to the version it began with.
+
 ## Backtest limitations
 
 `backtest.py` only tests technical conditions (EMA, RSI, MACD, volume, BB, HTF, divergence, OBV, StochRSI, ADX, S/R, VWAP). All market structure conditions (funding, L/S, DXY, S&P, stablecoin, BTC.D, OI, basis) score as NEUTRAL — no historical API exists for these. Results are therefore **conservative** compared to live trading.
