@@ -20,6 +20,49 @@ from signals.market_data import exchange
 
 logger = logging.getLogger(__name__)
 
+# Bar durations in ms. Explicit rather than parsed, so an unrecognised timeframe raises
+# instead of being guessed at — a wrong duration drops the wrong row, or none, silently.
+_TF_MS = {
+    "1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000, "30m": 1_800_000,
+    "1h": 3_600_000, "2h": 7_200_000, "4h": 14_400_000, "6h": 21_600_000,
+    "8h": 28_800_000, "12h": 43_200_000, "1d": 86_400_000, "1w": 604_800_000,
+}
+
+
+def drop_unclosed(df, timeframe, now_ms=None):
+    """Remove the bar that is still forming, so the engine never scores a partial one.
+
+    The exchange serves the current, incomplete bar as the last row and
+    `engine.generate_signals` scores `df.iloc[-1]`. The bot runs at :01, one minute after
+    a bar closes — so the row being scored was a bar ONE MINUTE OLD, with open, high, low
+    and close within a few dollars of each other. Every rolling indicator ended on that
+    stub, and the entry-wick gate divided by a range of a few dollars, measuring the first
+    minute's noise rather than a rejection.
+
+    Measured over 1,200 candles: scoring it rather than the bar that closed changes the
+    verdict on 13.6% of them, and the score by up to 3.75 of SPOT_MAX_SCORE 22.50. It also
+    left `backtest.py` structurally unable to reproduce the live bot, since the backtest
+    scores closed bars — so no backtest figure described the system that was running.
+    See docs/superpowers/specs/2026-09-24-live-vs-backtest.md.
+
+    Running at :01 means the newest CLOSED bar is one minute old, so its close is the live
+    price for every purpose here; nothing needs to be injected to replace it.
+
+    A frame of one row is returned untouched: the engine indexes iloc[-1] and iloc[-2],
+    and handing it an empty frame turns a stale-data problem into a crash.
+    """
+    if timeframe not in _TF_MS:
+        raise ValueError(f"unknown timeframe {timeframe!r}; known: {sorted(_TF_MS)}")
+    if df is None or len(df) < 2:
+        return df
+    tf_ms = _TF_MS[timeframe]
+    if now_ms is None:
+        now_ms = int(pd.Timestamp.now(tz="UTC").timestamp() * 1000)
+    last_open_ms = int(df.index[-1].value // 1_000_000)
+    if now_ms < last_open_ms + tf_ms:
+        return df.iloc[:-1]
+    return df
+
 
 def _validate_ohlcv(df, timeframe):
     """Validate fetched OHLCV data. Returns True if usable."""
@@ -104,11 +147,16 @@ def _fetch_ohlcv_range(symbol, timeframe, since_ms, until_ms=None):
 
 
 def fetch_ohlcv_df(symbol='BTC/USDT', timeframe='1h', limit=500, vwap_period=24,
-                   since=None, until=None):
+                   since=None, until=None, closed_only=True):
     """Fetch OHLCV and attach every indicator column the engine reads.
 
     Pass *since* / *until* (epoch ms) for an explicit historical span; otherwise
     the most recent *limit* candles are returned.
+
+    *closed_only* (the default) drops the bar still forming before any indicator is
+    computed — see `drop_unclosed`. It defaults on because every caller wants it: the live
+    paths must not score a one-minute-old stub, and `backtest.py` and `scripts/` are
+    already written around closed bars. Pass False only to inspect the live partial bar.
     """
     if since is not None:
         bars = _fetch_ohlcv_range(symbol, timeframe, since, until)
@@ -125,6 +173,11 @@ def fetch_ohlcv_df(symbol='BTC/USDT', timeframe='1h', limit=500, vwap_period=24,
         raise ValueError(f"OHLCV validation failed for {symbol} {timeframe}")
     if since is not None and len(df) < 10:
         raise ValueError(f"Only {len(df)} candles for {symbol} {timeframe} in that span")
+
+    # Before the indicators, not after: the whole point is that no rolling window ends on
+    # a partial bar.
+    if closed_only:
+        df = drop_unclosed(df, timeframe)
 
     df['EMA_200'] = calculate_ema(df['close'], 200)
     df['RSI_14'] = calculate_rsi(df['close'])

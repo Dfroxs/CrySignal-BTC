@@ -4,6 +4,47 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-04 — fix: the engine was scoring a bar that had not closed
+
+Completes the four items queued for the next run. The running bot is untouched — it
+tracks `main`, this is on `develop`, and the live run stays pinned.
+
+### Fixed
+- **`fetch_ohlcv_df` now drops the forming bar before computing any indicator**
+  (`closed_only=True`, the default; `drop_unclosed()` is the pure, tested helper). The
+  exchange serves the current incomplete bar as the last row and the engine scores
+  `df.iloc[-1]`. Running at `:01`, that bar was **one minute old** — open, high, low and
+  close within a few dollars, every rolling window ending on a stub, and the entry-wick
+  gate dividing by a range of a few dollars, measuring the first minute's noise rather
+  than a rejection.
+
+  Measured first, over 1,200 candles on BTC/ETH/SOL: it changes the verdict on **13.6%**
+  and the score by up to **3.75 of SPOT_MAX_SCORE 22.50**. The mean is negative, so the
+  old behaviour made the system quieter — consistent with how rarely the live run fires.
+
+  The default is on because every caller wants it: the live paths must not score a stub,
+  and `backtest.py` and `scripts/` were already written around closed bars. **This is the
+  change that makes backtest and live comparable for the first time.**
+
+  Running at `:01` means the newest closed bar is one minute old, so its close is the
+  live price for every purpose here — nothing needed injecting to replace it.
+
+### Notes
+- **This is a strategy change, not a bug fix in the usual sense**, and it was put to the
+  owner with the measurement before being made. It belongs to the next run; the manifest
+  for that run should record it.
+- The three preceding items — the 1.5-side cost defect, `contributions` on `cycle_log`,
+  and the `reasons[:10]` truncation — are also on `develop` awaiting that run.
+
+### Tests
+- 128 → **133**. The helper is pinned on the exact close instant (a bar is closed when
+  its period elapses, not a tick later — an off-by-one there would silently discard the
+  freshest complete bar every cycle), on a one-row frame (the engine indexes `iloc[-2]`,
+  so an empty frame turns stale data into a crash), and on an unknown timeframe raising
+  rather than guessing a duration.
+
+---
+
 ## 2026-09-25 — fix: a partial exit was charged 1.5 round-trip sides, not 2
 
 Two changes for the **next** paper run. The running bot is untouched: it tracks `main`,

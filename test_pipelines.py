@@ -2017,6 +2017,88 @@ def test_an_existing_cycle_log_gains_the_contributions_column():
 
 
 
+# ── 25. Only closed bars reach the engine ────────────────────────────────────
+
+def _bars(n, tf_ms, last_open_ms):
+    import numpy as np
+    import pandas as pd
+    idx = [last_open_ms - (n - 1 - k) * tf_ms for k in range(n)]
+    close = np.arange(100.0, 100.0 + n)
+    return pd.DataFrame(
+        {"open": close, "high": close * 1.001, "low": close * 0.999,
+         "close": close, "volume": np.full(n, 10.0)},
+        index=pd.to_datetime(idx, unit="ms"))
+
+
+def test_an_unclosed_last_bar_is_dropped():
+    """The exchange serves the bar currently forming as the last row, and the engine
+    scores df.iloc[-1]. Spot runs at :01, so that bar was ONE MINUTE OLD: open, high, low
+    and close within a few dollars, every rolling indicator ending on a stub, and the
+    entry-wick gate dividing by a range of a few dollars.
+
+    Measured over 1,200 candles, scoring it instead of the bar that closed changes the
+    verdict on 13.6% of them and the score by up to 3.75 of SPOT_MAX_SCORE 22.50. It also
+    made backtest.py structurally unable to reproduce the live bot, because the backtest
+    scores closed bars. See docs/superpowers/specs/2026-09-24-live-vs-backtest.md.
+    """
+    from signals.ohlcv import drop_unclosed
+    tf = 4 * 3600 * 1000
+    last_open = 1_700_000_000_000 // tf * tf
+    df = _bars(10, tf, last_open)
+    now = last_open + 60_000                      # one minute into the last bar
+    out = drop_unclosed(df, "4h", now)
+    assert len(out) == len(df) - 1, f"{len(out)} rows kept of {len(df)}"
+    assert out.index[-1] == df.index[-2]
+
+
+def test_a_bar_that_has_closed_is_kept():
+    """Run at :01 the previous bar has closed one minute ago — it is the newest complete
+    information there is and must survive."""
+    from signals.ohlcv import drop_unclosed
+    tf = 4 * 3600 * 1000
+    last_open = 1_700_000_000_000 // tf * tf
+    df = _bars(10, tf, last_open)
+    now = last_open + tf + 60_000                 # one minute after the last bar closed
+    assert len(drop_unclosed(df, "4h", now)) == len(df)
+
+
+def test_dropping_is_exact_at_the_close_instant():
+    """A bar is closed the moment its period elapses, not a tick later — an off-by-one
+    here silently discards the freshest complete bar on every single cycle."""
+    from signals.ohlcv import drop_unclosed
+    tf = 60 * 60 * 1000
+    last_open = 1_700_000_000_000 // tf * tf
+    df = _bars(5, tf, last_open)
+    assert len(drop_unclosed(df, "1h", last_open + tf - 1)) == len(df) - 1
+    assert len(drop_unclosed(df, "1h", last_open + tf)) == len(df)
+
+
+def test_an_empty_or_single_row_frame_is_returned_unharmed():
+    """Never return an empty frame to the engine, which indexes iloc[-1] and iloc[-2]."""
+    import pandas as pd
+    from signals.ohlcv import drop_unclosed
+    tf = 60 * 60 * 1000
+    last_open = 1_700_000_000_000 // tf * tf
+    empty = pd.DataFrame()
+    assert drop_unclosed(empty, "1h", last_open).empty
+    one = _bars(1, tf, last_open)
+    assert len(drop_unclosed(one, "1h", last_open + 60_000)) == 1
+
+
+def test_an_unknown_timeframe_raises_rather_than_guessing():
+    """Guessing a duration would drop the wrong row, or none, without saying so."""
+    from signals.ohlcv import drop_unclosed
+    tf = 60 * 60 * 1000
+    df = _bars(5, tf, 1_700_000_000_000 // tf * tf)
+    try:
+        drop_unclosed(df, "7m", 1_700_000_000_000)
+    except ValueError as e:
+        assert "7m" in str(e), e
+    else:
+        raise AssertionError("an unknown timeframe was accepted")
+
+
+
 # ── 20. Exit simulator ───────────────────────────────────────────────────────
 
 def _exit_fixture(closes, highs=None, lows=None, atr=100.0):
@@ -2647,6 +2729,13 @@ if __name__ == "__main__":
     run("contributions are stored",               test_cycle_log_stores_the_per_condition_contributions)
     run("absent contributions store NULL",        test_contributions_survive_a_cycle_that_produced_none)
     run("existing database gains the column",     test_an_existing_cycle_log_gains_the_contributions_column)
+
+    print("\n── 25. Closed bars only ──")
+    run("unclosed last bar is dropped",           test_an_unclosed_last_bar_is_dropped)
+    run("a closed bar is kept",                   test_a_bar_that_has_closed_is_kept)
+    run("exact at the close instant",             test_dropping_is_exact_at_the_close_instant)
+    run("empty/single frame unharmed",            test_an_empty_or_single_row_frame_is_returned_unharmed)
+    run("unknown timeframe raises",               test_an_unknown_timeframe_raises_rather_than_guessing)
     run("rejected arm partitions the ungated",    test_split_by_gates_partitions_the_ungated_arm)
     run("a stray gated entry is rejected",        test_split_by_gates_rejects_a_gated_entry_that_is_not_in_the_ungated_arm)
 
