@@ -42,7 +42,7 @@ VARIANTS = {
 _PLACEHOLDER = {"funding": 0.0, "ls": 1.0, "basis": 0.0}
 
 _KEEP = ("type", "strength", "buy_score", "sell_score", "confidence", "entry_price",
-         "stop_loss", "take_profit", "tp2", "atr", "_threshold")
+         "stop_loss", "take_profit", "tp2", "atr", "_threshold", "support_resistance")
 
 
 def relative_bias(value, history, direction, z=Z_BAND, min_n=MIN_HISTORY):

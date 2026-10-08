@@ -2769,6 +2769,41 @@ def test_attach_variants_never_raises_into_the_cycle():
                       history_fn=lambda **_: _ms_history())
     assert set(sig["_variants"]) == {"base", *v.VARIANTS}
 
+def test_compact_variant_carries_what_the_gates_read():
+    """sr_first reads support_resistance; without it a replayed variant would skip a
+    gate the live bot applies."""
+    from signals.variants import compact
+    c = compact({"type": "BUY", "strength": 6.0, "support_resistance": {"resistance": 1.0},
+                 "_regime": {"regime": "TRENDING", "trend_dir": "BULLISH", "adx": 30}})
+    assert c["support_resistance"] == {"resistance": 1.0}, c
+    assert c["_regime"] == {"regime": "TRENDING", "trend_dir": "BULLISH"}, c
+
+def test_variant_books_read_both_timestamp_forms():
+    """cycle_log stores naive UTC ('2026-08-30 07:01:02'); other paths write '+00:00'.
+    Both must land on the same naive UTC instant."""
+    import pandas as pd
+    from scripts.variant_books import utc_naive
+    a, b = utc_naive("2026-10-10 08:01:02"), utc_naive("2026-10-10T08:01:02+00:00")
+    assert a == b == pd.Timestamp("2026-10-10 08:01:02"), (a, b)
+    assert a.tzinfo is None
+
+def test_variant_books_map_each_cycle_to_the_bar_it_scored():
+    """The bot runs at :01 and scores the bar that closed at :00, which OPENED an hour
+    (futures) or four hours (spot) earlier. A book must enter on that bar, not the next."""
+    import pandas as pd
+    from scripts.variant_books import signals_for_book
+    idx = pd.date_range("2026-10-10 00:00", periods=10, freq="1h")
+    rows = [("2026-10-10T03:01:02+00:00", '{"base": {"type": "BUY", "strength": 6}, '
+                                         '"rel_ic_dir": {"type": "HOLD"}}'),
+            ("2026-10-10T05:01:02+00:00", '{"rel_ic_dir": {"type": "SELL", "strength": 7}}'),
+            ("2026-10-10T06:01:02+00:00", None),
+            ("2026-10-10 08:01:02", '{"base": {"type": "SELL", "strength": 6}}')]   # as cycle_log stores it
+    base = signals_for_book(rows, idx, "base", "1h")
+    assert [(i, s["type"]) for i, s in base] == [(2, "BUY"), (7, "SELL")], base
+    ic = signals_for_book(rows, idx, "rel_ic_dir", "1h")
+    assert [(i, s["type"]) for i, s in ic] == [(4, "SELL")], "HOLD rows are not signals"
+    assert ic[0][1]["mode"] == "futures"
+
 def test_synth_entries_respects_stride_and_warmup():
     from scripts.exit_ic import synth_entries
     df = _exit_fixture([1000] * 260)
@@ -3240,6 +3275,9 @@ if __name__ == "__main__":
     run("market history skips placeholders",      test_market_history_reads_the_trailing_week_without_placeholders)
     run("log_cycle stores variants",              test_log_cycle_stores_variants_as_json)
     run("attach_variants never raises",           test_attach_variants_never_raises_into_the_cycle)
+    run("compact carries gate inputs",            test_compact_variant_carries_what_the_gates_read)
+    run("books enter on the bar scored",          test_variant_books_map_each_cycle_to_the_bar_it_scored)
+    run("books read both timestamp forms",        test_variant_books_read_both_timestamp_forms)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
