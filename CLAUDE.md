@@ -8,26 +8,47 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > traps that have already cost a session time. Nothing here supersedes its one rule:
 > **change nothing while a run is live.**
 
-## Development is stopped. The bot runs to collect data, not to be improved.
+## Goal: collect data, then improve toward real profit
 
-A cross-market search (2026-08-30) tested all 22 scoring conditions across 29
-cells — 8 assets, 7 years. Two candidates were pre-registered and both were
-rejected by their own criteria. **No component's predictive power survived a
-change of market or period.** See CHANGELOG "STEP 1 CLOSED".
+**Reset by the owner on 2026-10-09.** Until then this section read "development is
+stopped". The bot is still paper-only, and its job is now two things: **yield trade
+data**, and be **iteratively improved until it makes real profit**. A paper run that
+opens nothing tests nothing. Run 1 opened 3 spot and 0 futures positions in 35 days,
+and run 2 opened none. That is the anomaly to fix, not a safe state. Virtual losses cost
+nothing; missing data costs the run.
 
-**Do not retune weights, thresholds or gates.** Every value in `config.py` is
-now known to rest on 2–8 closed trades drawn from mutually blocking sequences,
-and retuning against noise is what produced them. If a future idea needs
-testing, pre-register it and test it on untouched data — `scripts/condition_ic.py
---matrix --only` exists for exactly that.
+**What is already known, and must not be forgotten while improving:**
 
-**What the running bot is for now:** `backtest.py` must score funding, L/S,
-open interest, basis, taker ratio, gold, VIX and the news overlay as NEUTRAL,
-because no free historical API serves them — 7.5 of the 26.5-point futures
-ceiling, permanently untestable against history. The live bot fetches all of it
-every cycle and `cycle_log` persists 37 fields hourly. A year of that is ~8,760
-observations of data no backtest here could ever use, and is worth more than
-the strategy that generated it.
+- STEP 1 (2026-08-30) tested all 22 scoring conditions across 8 assets and 7 years.
+  **No component's predictive power survived a change of market or period.** See
+  CHANGELOG "STEP 1 CLOSED".
+- The assembled entry is **no better than random entry**, and the sign flips with the
+  period (`docs/superpowers/specs/2026-09-24-entry-results.md`).
+- Confidence tiers do not order outcomes (`2026-10-04-deadzone-results.md`).
+- The Phase 3 gate stack admits ~3% of engine BUYs. At that rate **no single gate can be
+  judged on its own trade count** (`2026-10-09-reentry-age-results.md`).
+- Every value in `config.py` rests on 2–8 closed trades drawn from mutually blocking
+  sequences.
+
+So the route to profit is probably **not** retuning existing weights, thresholds or
+gates. That has been tried, and it produced the noise-fitted values above.
+
+**How to improve without fooling ourselves.** This discipline is what makes a profit
+claim real; it is not an obstacle to profit:
+
+1. **Pre-register** a change, with its pass/fail criteria, before any figure exists.
+2. Test it **against a count-matched random baseline**, on data not used to design it
+   (`scripts/entry_ic.py`, `condition_ic.py --matrix --only`, `reentry_ic.py`).
+3. Changes that exist to make the paper run **yield data** (e.g. ending a gate lockout)
+   may ship as recorded **design decisions** without a profit claim. Write them up as
+   such, never as test results.
+
+**Most promising source of edge:** the data only the live bot sees. `backtest.py` must
+score funding, L/S, open interest, basis, taker ratio, gold, VIX and the news overlay as
+NEUTRAL, because no free historical API serves them. That is 7.5 of the 26.5-point
+futures ceiling, never tested. The live bot fetches all of it every cycle, and
+`cycle_log` persists 37 fields hourly. Testing those fields against forward returns, as
+the data accumulates, is the first edge search this project has never been able to run.
 
 `v2.9.2` runs unattended on a VPS (`~/playground/CrySignal-BTC`, systemd unit
 `spotsignal`). Land changes on `develop`; the server tracks `main` and is
