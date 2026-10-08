@@ -4,6 +4,27 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — feat: scripts/live_ic.py (run 3 H-L / H-V1) and variant books
+
+For **run 3**, on `develop`. Instruments only, no change to the bot's behaviour.
+
+### Added
+- **`scripts/live_ic.py`** scores `2026-10-09-run3-prereg.md` H-L (basis_pct and
+  ls_ratio IC vs the forward 24h return) and H-V1 (each variant's net score against
+  base's, paired). Per hourly futures cycle, with a 24h moving-block bootstrap, the
+  500-observation power guard and the discard-condition health check. It also prints a
+  descriptive IC table for every field: the weekly edge scan. It reads databases from
+  before the `variants` column as all-NULL.
+- **`scripts/variant_books.py`**: offline paper book per logged variant, plus a
+  random-long baseline (H-V2).
+- Suite 158 → 167.
+
+On the run 1+2 snapshot it reproduces the exploratory scan (basis +0.135, L/S +0.260)
+and flags the data as unusable for H-V. That data is where the hypotheses came from and
+it is not a result.
+
+---
+
 ## 2026-10-09 — feat: live score variants, logged and never traded
 
 For **run 3**, on `develop`.

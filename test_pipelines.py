@@ -2804,6 +2804,92 @@ def test_variant_books_map_each_cycle_to_the_bar_it_scored():
     assert [(i, s["type"]) for i, s in ic] == [(4, "SELL")], "HOLD rows are not signals"
     assert ic[0][1]["mode"] == "futures"
 
+def test_live_ic_verdict_follows_the_preregistration():
+    """2026-10-09-run3-prereg.md: PASS = estimate > 0 and CI above 0; FAIL = CI below 0;
+    otherwise INCONCLUSIVE; fewer than 500 observations is INCONCLUSIVE whatever else."""
+    from scripts.live_ic import verdict
+    assert verdict(0.10, 0.02, 0.18, 700) == "PASS"
+    assert verdict(-0.10, -0.18, -0.02, 700) == "FAIL"
+    assert verdict(0.10, -0.01, 0.20, 700) == "INCONCLUSIVE"
+    assert verdict(0.30, 0.20, 0.40, 499) == "INCONCLUSIVE", "power guard"
+
+def test_live_ic_block_bootstrap_separates_signal_from_noise():
+    import numpy as np
+    from scripts.live_ic import block_ic
+    rng = np.random.default_rng(5)
+    y = rng.normal(size=720)
+    ic, lo, hi, n = block_ic(y + rng.normal(0, 0.5, 720), y)
+    assert n == 720 and ic > 0.8 and lo > 0.7, (ic, lo, hi)
+    ic, lo, hi, n = block_ic(rng.normal(size=720), y)
+    assert lo < 0 < hi, f"pure noise must straddle 0: {(ic, lo, hi)}"
+
+def test_live_ic_paired_difference_resamples_jointly():
+    """IC(variant) − IC(base) on the SAME resampled cycles, so a better variant shows a
+    positive difference even when both ICs are individually noisy."""
+    import numpy as np
+    from scripts.live_ic import paired_ic_diff
+    rng = np.random.default_rng(9)
+    y = rng.normal(size=720)
+    good, base = y + rng.normal(0, 1.0, 720), rng.normal(size=720)
+    d, lo, hi, n = paired_ic_diff(good, base, y)
+    assert d > 0 and lo > 0, (d, lo, hi)
+    d2, lo2, hi2, _ = paired_ic_diff(base, base, y)
+    assert d2 == 0 and lo2 == 0 and hi2 == 0, "a book against itself differs by nothing"
+
+def test_live_ic_load_drops_placeholders_and_respects_gaps():
+    """Fetch failures (0 / 1.0 / 0) become NaN per field; a missing hour must make the
+    24h-forward return NaN rather than silently pairing with the wrong price."""
+    import json, math
+    h, saved, path = _temp_history_db()
+    try:
+        c = h._conn()
+        for i in range(60):
+            if i == 30:
+                continue                                    # one missing hour
+            v = json.dumps({"base": {"buy_score": 5.0, "sell_score": 1.0},
+                            "rel_ic_dir": {"buy_score": 6.0, "sell_score": 1.0}})
+            c.execute("INSERT INTO cycle_log (timestamp,mode,type,price,funding_rate,ls_ratio,"
+                      "basis_pct,variants) VALUES (?, 'futures','HOLD',?,?,?,?,?)",
+                      (f"2026-11-{1 + i // 24:02d} {i % 24:02d}:01:02", 80000 + i,
+                       0.0 if i == 5 else 0.004, 1.0 if i == 6 else 1.2, -0.04, v))
+        c.commit()
+        from scripts.live_ic import load_cycles
+        df = load_cycles(path, start=None)
+        assert len(df) == 60, len(df)                       # gap kept as an empty hour
+        assert math.isnan(df["funding_rate"].iloc[5]) and math.isnan(df["ls_ratio"].iloc[6])
+        assert df["net_base"].iloc[0] == 4.0 and df["net_rel_ic_dir"].iloc[0] == 5.0
+        assert math.isnan(df["fwd_24h"].iloc[6]), "06h + 24h lands on the missing hour"
+        assert abs(df["fwd_24h"].iloc[0] - (80024 / 80000 - 1)) < 1e-12
+    finally:
+        _restore_history_db(h, saved, path)
+
+def test_live_ic_reads_a_database_from_before_the_variants_column():
+    """A run-1/2 database has no `variants` column. It must read as all-NULL, not crash."""
+    import os, sqlite3, tempfile
+    from scripts.live_ic import FIELDS, load_cycles
+    fd, path = tempfile.mkstemp(suffix=".db"); os.close(fd)
+    try:
+        c = sqlite3.connect(path)
+        c.execute(f"CREATE TABLE cycle_log (timestamp TEXT, mode TEXT, price REAL, "
+                  f"{', '.join(f + ' REAL' for f in FIELDS)})")
+        c.execute("INSERT INTO cycle_log (timestamp, mode, price, basis_pct) "
+                  "VALUES ('2026-09-01 00:01:02', 'futures', 80000, -0.04)")
+        c.commit(); c.close()
+        df = load_cycles(path)
+        assert len(df) == 1 and df["net_base"].isna().all(), df
+    finally:
+        os.unlink(path)
+
+def test_live_ic_health_reports_the_discard_conditions():
+    """The prereg discards the run above 5% NULL variants or 10% funding placeholders."""
+    import numpy as np, pandas as pd
+    from scripts.live_ic import health
+    df = pd.DataFrame({"price": [1.0] * 100, "net_base": [1.0] * 94 + [np.nan] * 6,
+                       "funding_rate": [0.01] * 89 + [np.nan] * 11})
+    hl = health(df)
+    assert hl["variants_null_share"] == 0.06 and hl["funding_placeholder_share"] == 0.11
+    assert hl["discard"] is True, hl
+
 def test_synth_entries_respects_stride_and_warmup():
     from scripts.exit_ic import synth_entries
     df = _exit_fixture([1000] * 260)
@@ -3278,6 +3364,14 @@ if __name__ == "__main__":
     run("compact carries gate inputs",            test_compact_variant_carries_what_the_gates_read)
     run("books enter on the bar scored",          test_variant_books_map_each_cycle_to_the_bar_it_scored)
     run("books read both timestamp forms",        test_variant_books_read_both_timestamp_forms)
+
+    print("\n── 30. live_ic.py — run 3 H-L / H-V1 ──")
+    run("verdict follows the prereg",             test_live_ic_verdict_follows_the_preregistration)
+    run("block bootstrap separates noise",        test_live_ic_block_bootstrap_separates_signal_from_noise)
+    run("paired difference is joint",             test_live_ic_paired_difference_resamples_jointly)
+    run("load drops placeholders, keeps gaps",    test_live_ic_load_drops_placeholders_and_respects_gaps)
+    run("health reports discard conditions",      test_live_ic_health_reports_the_discard_conditions)
+    run("reads a pre-variants database",          test_live_ic_reads_a_database_from_before_the_variants_column)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
