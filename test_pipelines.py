@@ -2597,6 +2597,18 @@ def test_reentry_ic_only_win_or_loss_becomes_the_anchor():
     a = simulate_sequence(idx, sigs, gate, sim, max_age_hours=None, stale_after_hours=168)
     assert a["taken"] == [0.5, 1.0], f"no WIN/LOSS anchor yet, so nothing may block: {a}"
 
+def test_reentry_ic_keeps_every_trade_record():
+    """Diagnosis needs the trades, not just their mean: every taken and every shadow
+    trade comes back whole, index-aligned with the P&L lists."""
+    from scripts.reentry_ic import simulate_sequence
+    idx, gate, sim = _reentry_seq_fixture(
+        {0: ("WIN", 2.0, 1), 100: ("LOSS", -1.5, 2), 103: ("TIME_EXIT", 0.2, 1)})
+    sigs = [(0, _sig(100.0)), (100, _sig(120.0)), (103, _sig(90.0))]
+    a = simulate_sequence(idx, sigs, gate, sim, max_age_hours=None, stale_after_hours=168)
+    assert [t["pnl_pct"] for t in a["trades"]] == a["taken"] == [2.0, 0.2], a
+    assert [t["pnl_pct"] for t in a["stale_trades"]] == a["stale_rejected"] == [-1.5], a
+    assert a["trades"][0]["outcome"] == "WIN" and a["trades"][0]["i"] == 0, a["trades"]
+
 def test_reentry_ic_open_rows_are_not_pnl():
     """An OPEN row (frame ran out) is not a resolved trade and must not enter the mean."""
     from scripts.reentry_ic import simulate_sequence
@@ -3065,6 +3077,7 @@ if __name__ == "__main__":
     run("counterfactuals do not overlap",         test_reentry_ic_counterfactuals_do_not_overlap)
     run("only WIN/LOSS becomes the anchor",       test_reentry_ic_only_win_or_loss_becomes_the_anchor)
     run("OPEN rows are not P&L",                  test_reentry_ic_open_rows_are_not_pnl)
+    run("every trade record is kept",             test_reentry_ic_keeps_every_trade_record)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

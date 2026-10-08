@@ -84,7 +84,7 @@ def simulate_sequence(index, signals, gate_fn, sim_fn, max_age_hours,
     Returns taken P&Ls, unresolved count, and — when `stale_after_hours` is given —
     the shadow P&Ls of signals blocked by re-entry alone on an anchor older than it.
     """
-    taken, stale_rejected = [], []
+    taken, stale_rejected, trades, stale_trades = [], [], [], []
     unresolved = 0
     open_until = cooldown_until = cf_open_until = -1
     last_resolved = {}
@@ -102,6 +102,7 @@ def simulate_sequence(index, signals, gate_fn, sim_fn, max_age_hours,
                     cf_open_until = i + shadow["candles_held"]
                     if shadow["outcome"] in RESOLVED:
                         stale_rejected.append(float(shadow["pnl_pct"]))
+                        stale_trades.append({**shadow, "i": i})
             continue
         trade = sim_fn(i, sig)
         if not trade:
@@ -110,12 +111,14 @@ def simulate_sequence(index, signals, gate_fn, sim_fn, max_age_hours,
         open_until, cooldown_until = exit_idx, exit_idx + cooldown_n
         if trade["outcome"] in RESOLVED:
             taken.append(float(trade["pnl_pct"]))
+            trades.append({**trade, "i": i})
         else:
             unresolved += 1
         if trade["outcome"] in ("WIN", "LOSS"):
             last_resolved[sig["type"]] = (sig["entry_price"], sig.get("strength", 0),
                                           index[min(exit_idx, len(index) - 1)])
-    return {"taken": taken, "stale_rejected": stale_rejected, "unresolved": unresolved}
+    return {"taken": taken, "stale_rejected": stale_rejected, "unresolved": unresolved,
+            "trades": trades, "stale_trades": stale_trades}
 
 
 def diff_ci(a, b, seed=7, n_boot=2000):
@@ -136,6 +139,8 @@ def main() -> int:
     ap.add_argument("--end", default=None)
     ap.add_argument("--max-age", type=float, default=168.0, help="hours (default 168 = 7 days)")
     ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument("--trades-out", type=Path, default=None,
+                    help="also write every trade record (both arms + shadows) as JSON lines")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
@@ -143,7 +148,7 @@ def main() -> int:
 
     max_hold = MAX_HOLD_CANDLES["4h"]
     pooled = {"kept": [], "stale_rejected": [], "aged": []}
-    per_symbol = {}
+    per_symbol, records = {}, []
     for base in [s.strip() for s in args.symbols.split(",") if s.strip()]:
         df = load_symbol(base, args.cache, args.end)
         frames = build_htf(df)
@@ -164,6 +169,9 @@ def main() -> int:
         pooled["kept"].extend(a["taken"])
         pooled["stale_rejected"].extend(a["stale_rejected"])
         pooled["aged"].extend(b["taken"])
+        for arm, rows in (("unlimited", a["trades"]), ("stale_shadow", a["stale_trades"]),
+                          ("aged", b["trades"])):
+            records.extend({**t, "symbol": base, "arm": arm} for t in rows)
         per_symbol[base] = {
             "span": [str(df.index[start].date()), str(df.index[-1].date())],
             "engine_buys": len(sigs),
@@ -196,6 +204,13 @@ def main() -> int:
     print(f"breadth (stale_rejected n≥5): kept > stale_rejected on "
           f"{len(breadth)}/{len(eligible)} symbols")
     print("=" * 72)
+
+    if args.trades_out:
+        args.trades_out.parent.mkdir(parents=True, exist_ok=True)
+        with args.trades_out.open("w") as fh:
+            for r in records:
+                fh.write(json.dumps(r, default=str) + "\n")
+        print(f"{len(records)} trade records → {args.trades_out}")
 
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
