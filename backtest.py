@@ -176,7 +176,7 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
             cooldown_until[signal["type"]] = exit_idx + cooldown_n
             if result["outcome"] in ("WIN", "LOSS"):
                 last_resolved[signal["type"]] = (
-                    signal["entry_price"], signal.get("strength", 0),
+                    signal["entry_price"], signal.get("strength", 0), df.index[exit_idx],
                 )
 
     if not trades:
@@ -197,7 +197,10 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
 # Entry gate simulation
 # ---------------------------------------------------------------------------
 
-def _failing_gates(signal, mode, window, last_resolved=None):
+_FROM_CONFIG = object()   # sentinel: read RISK_CONFIG, so the replay applies what live applies
+
+def _failing_gates(signal, mode, window, last_resolved=None,
+                   reentry_max_age_hours=_FROM_CONFIG):
     """Every gate that rejects this signal — not just the first.
 
     Live only needs "does anything block this", but attribution needs all of
@@ -289,9 +292,15 @@ def _failing_gates(signal, mode, window, last_resolved=None):
 
     # Re-entry quality — live gate 0a: after a resolved WIN/LOSS in this
     # direction, require a better price, a confidence upgrade, or ≥ +0.3 strength.
+    # An anchor older than `reentry_max_age_hours` is ignored, as live ignores it.
+    if reentry_max_age_hours is _FROM_CONFIG:
+        reentry_max_age_hours = RISK_CONFIG.get("pyramid", {}).get("reentry_max_age_hours")
     prev = (last_resolved or {}).get(stype)
+    if prev and reentry_max_age_hours is not None and len(prev) > 2:
+        if window.index[-1] - prev[2] > pd.Timedelta(hours=reentry_max_age_hours):
+            prev = None
     if prev:
-        prev_entry, prev_strength = prev
+        prev_entry, prev_strength = prev[0], prev[1]
         improved = (stype == "BUY" and entry_px <= prev_entry) or \
                    (stype == "SELL" and entry_px >= prev_entry)
         if not improved:

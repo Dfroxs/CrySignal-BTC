@@ -915,6 +915,92 @@ def test_failing_gates_reports_every_gate_not_just_the_first():
     assert len(gates) >= 3, f"confluence should fail too, got {gates}"
     assert len(gates) == len(set(gates)), f"a gate must not be counted twice: {gates}"
 
+def _reentry_window(n=40, last_ts="2026-10-07 04:00"):
+    import pandas as pd
+    w = _gate_window(n=n)
+    w.index = pd.date_range(end=last_ts, periods=n, freq="4h")
+    return w
+
+def test_backtest_reentry_anchor_expires_after_max_age():
+    """The re-entry anchor had no age limit: a 09-12 WIN at $77,361 blocked every
+    spot BUY for weeks once BTC sat at $84k. With a limit set, an anchor older
+    than it is ignored; a fresh one still blocks; None keeps the old behaviour."""
+    import pandas as pd
+    from backtest import _failing_gates
+    w = _reentry_window()
+    sig = _gate_signal()
+    sig.update(entry_price=84_150.0, strength=5.75, _threshold=4.55,
+               stop_loss=83_550.0, take_profit=85_650.0)
+    now = w.index[-1]
+    stale = {"BUY": (77_361.0, 5.5, now - pd.Timedelta(days=22))}
+    fresh = {"BUY": (77_361.0, 5.5, now - pd.Timedelta(days=2))}
+    assert "reentry_first" in _failing_gates(sig, "spot", w, stale, reentry_max_age_hours=None), \
+        "None must keep the unlimited anchor"
+    assert "reentry_first" not in _failing_gates(sig, "spot", w, stale, reentry_max_age_hours=168), \
+        "an anchor 22 days old must be ignored under a 7-day limit"
+    assert "reentry_first" in _failing_gates(sig, "spot", w, fresh, reentry_max_age_hours=168), \
+        "an anchor 2 days old must still block"
+
+def test_backtest_reentry_age_default_reads_config():
+    """Without an explicit argument the backtest must apply what live applies."""
+    import pandas as pd
+    from backtest import _failing_gates
+    from config import RISK_CONFIG
+    w = _reentry_window()
+    sig = _gate_signal()
+    sig.update(entry_price=84_150.0, strength=5.75, _threshold=4.55,
+               stop_loss=83_550.0, take_profit=85_650.0)
+    stale = {"BUY": (77_361.0, 5.5, w.index[-1] - pd.Timedelta(days=22))}
+    pyr = RISK_CONFIG["pyramid"]
+    saved = pyr.get("reentry_max_age_hours")
+    try:
+        pyr["reentry_max_age_hours"] = 168
+        assert "reentry_first" not in _failing_gates(sig, "spot", w, stale)
+        pyr["reentry_max_age_hours"] = None
+        assert "reentry_first" in _failing_gates(sig, "spot", w, stale)
+    finally:
+        pyr["reentry_max_age_hours"] = saved
+
+def test_live_reentry_anchor_expires_after_max_age():
+    """run_bot._check_reentry_quality reads the anchor from paper_positions. The
+    10-07 case: entry $84,150 at 5.75 against a WIN at $77,361 / 5.5 — blocked
+    for want of 0.05 with no limit, allowed once the anchor has aged out."""
+    import os
+    import tempfile
+    from datetime import datetime
+    import trading.history as h
+    from run_bot import _check_reentry_quality
+    saved_path, saved_db = h.SIGNAL_HISTORY_DB, h.DB
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        h.SIGNAL_HISTORY_DB, h.DB = path, None
+        c = h._conn()
+        sid = c.execute("INSERT INTO signals (timestamp,type,entry_price,strength) "
+                        "VALUES ('2026-09-12T12:01:03+00:00','BUY',77360.77,5.5)").lastrowid
+        c.execute("INSERT INTO paper_positions (signal_id,type,entry_price,stop_loss,take_profit,"
+                  "opened_at,closed_at,outcome,pnl_pct,mode) VALUES (?, 'BUY',77360.77,75862.7,"
+                  "80118.3,'2026-09-12T12:01:03+00:00','2026-09-15T00:31:00+00:00','WIN',0.554,'spot')",
+                  (sid,))
+        c.commit()
+        sig = {"type": "BUY", "entry_price": 84_150.0, "strength": 5.75,
+               "confidence": "NORMAL", "_threshold": 4.55}
+        now = datetime.fromisoformat("2026-10-07T04:01:00+00:00")
+        assert _check_reentry_quality(sig, "spot", max_age_hours=None, now=now), \
+            "None must keep the unlimited anchor"
+        assert _check_reentry_quality(sig, "spot", max_age_hours=168, now=now) is None, \
+            "a 22-day-old anchor must be ignored under a 7-day limit"
+        soon = datetime.fromisoformat("2026-09-16T00:00:00+00:00")
+        assert _check_reentry_quality(sig, "spot", max_age_hours=168, now=soon), \
+            "a 1-day-old anchor must still block"
+    finally:
+        try:
+            h.DB.close()
+        except Exception:
+            pass
+        h.SIGNAL_HISTORY_DB, h.DB = saved_path, saved_db
+        os.unlink(path)
+
 
 def test_backtest_cost_model_matches_live():
     """backtest._net_pnl must agree with trading/paper.py::_calc_pnl — the old
@@ -2780,6 +2866,9 @@ if __name__ == "__main__":
     print("\n── 12. Backtest fidelity & risk accounting ──")
     run("wick gate = 24h in both modes",          test_wick_gate_measures_24_hours_in_both_modes)
     run("gate attribution lists all gates",       test_failing_gates_reports_every_gate_not_just_the_first)
+    run("backtest re-entry anchor ages out",      test_backtest_reentry_anchor_expires_after_max_age)
+    run("backtest re-entry age reads config",     test_backtest_reentry_age_default_reads_config)
+    run("live re-entry anchor ages out",          test_live_reentry_anchor_expires_after_max_age)
     run("backtest costs match live",              test_backtest_cost_model_matches_live)
     run("drawdown is peak-to-trough",             test_drawdown_is_peak_to_trough)
     run("HTF ignores the forming bar",            test_htf_at_ignores_the_still_forming_bar)

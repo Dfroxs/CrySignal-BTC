@@ -60,6 +60,9 @@ RISK_CONFIG = {
         "psychology_buffer_pct":   0.15,       # % distance considered "near" psychology level
         "sr_entry_risk_atr":       1.0,        # flag if entry within N× ATR of resistance (BUY)
         "fakeout_wick_ratio":      0.60,       # (hi24-close)/(hi24-lo24) > this → rejection wick
+        # Re-entry anchor age limit in hours; None = no limit (run 1/2 behaviour).
+        # Set only by a pre-registered result — 2026-10-09-reentry-age-prereg.md.
+        "reentry_max_age_hours":   None,
     },
 }
 

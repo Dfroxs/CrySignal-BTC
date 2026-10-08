@@ -74,18 +74,27 @@ def _section(title):
 
 atexit.register(close_db)
 
+from signals.market_data import CONFIDENCE_LEVEL as _CONFIDENCE_LEVEL  # noqa: E402
 from signals.market_data import confidence_at_least as _confidence_at_least  # noqa: E402
 from signals.market_data import update_spot_threshold_state, update_threshold_state  # noqa: E402
 _last_atr_spot = 0  # cached for mid-cycle vol-exit checks (4H scale)
 _last_atr_fut  = 0  # cached for mid-cycle vol-exit checks (1H scale)
 
 
-def _check_reentry_quality(signal, mode):
+_FROM_CONFIG = object()   # sentinel: read RISK_CONFIG["pyramid"]["reentry_max_age_hours"]
+
+
+def _check_reentry_quality(signal, mode, max_age_hours=_FROM_CONFIG, now=None):
     """TA-driven re-entry guard: skip if price is worse and confidence didn't improve.
 
     Compared against the last RESOLVED WIN/LOSS in the same direction (not the
     most recent close of any kind) — a quick FLIP or VOL_EXIT isn't a meaningful
     benchmark for whether the current re-entry has improved.
+
+    `max_age_hours` (None = no limit) ignores an anchor closed longer ago than
+    that. Without one, a single WIN at $77,361 on 2026-09-12 blocked every spot
+    BUY for weeks once price had moved to $84k — see
+    docs/superpowers/specs/2026-10-09-no-positions-diagnosis.md.
 
     Allows re-entry on any of:
       - better entry price (lower for BUY, higher for SELL), or
@@ -99,7 +108,7 @@ def _check_reentry_quality(signal, mode):
     from signals.market_data import get_signal_confidence
     c = _conn()
     row = c.execute(
-        """SELECT p.entry_price, p.type, s.strength
+        """SELECT p.entry_price, p.type, s.strength, p.closed_at
            FROM paper_positions p
            LEFT JOIN signals s ON p.signal_id = s.id
            WHERE p.outcome IN ('WIN','LOSS')
@@ -110,6 +119,16 @@ def _check_reentry_quality(signal, mode):
     ).fetchone()
     if not row:
         return None  # no resolved history in this direction → allow
+
+    if max_age_hours is _FROM_CONFIG:
+        max_age_hours = RISK_CONFIG.get("pyramid", {}).get("reentry_max_age_hours")
+    if max_age_hours is not None and row["closed_at"]:
+        closed = datetime.fromisoformat(row["closed_at"])
+        if closed.tzinfo is None:
+            closed = closed.replace(tzinfo=UTC)
+        age_h = ((now or datetime.now(UTC)) - closed).total_seconds() / 3600
+        if age_h > max_age_hours:
+            return None  # anchor has aged out → allow
 
     last_entry = row["entry_price"]
     last_strength = row["strength"] or 0

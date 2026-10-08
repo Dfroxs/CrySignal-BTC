@@ -4,6 +4,31 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — fix: a NameError waiting in the re-entry guard; anchor age limit (off)
+
+For **run 3**, on `develop`. Run 2 is pinned and untouched.
+
+### Fixed
+- **`run_bot._check_reentry_quality` referenced `_CONFIDENCE_LEVEL`, which no longer
+  existed.** The 2026-10-04 refactor (`3906f7b`) moved the comparator to
+  `market_data` and left this one reference behind. On `develop`, every re-entry check
+  where price had not improved would have raised `NameError` and killed Phase 3 for that
+  cycle — in run 2's data, that is every spot signal since 2026-09-19. `main` and the
+  running bot are unaffected; it would have shipped with run 3. Now imported as
+  `market_data.CONFIDENCE_LEVEL`. Found by the age-limit test below, which exercises that
+  line; nothing tested it before.
+
+### Added
+- **`RISK_CONFIG["pyramid"]["reentry_max_age_hours"]`, default `None` — no behaviour
+  change.** The re-entry anchor is the last WIN/LOSS in that direction and never ages:
+  one WIN at $77,361 on 2026-09-12 blocked all 11 spot signals from 09-19 to 10-07 as BTC
+  sat at $84k (`docs/superpowers/specs/2026-10-09-no-positions-diagnosis.md`). With a
+  value set, an anchor closed longer ago than that is ignored. Live and `backtest.py`
+  read the same key; `_failing_gates` stores the anchor's exit time to apply it.
+  The value stays `None` unless `2026-10-09-reentry-age-prereg.md` passes.
+
+---
+
 ## 2026-10-04 — fix: two correctness defects the dead-zone experiment exposed
 
 Both for a **future** run. Paper run 2 started 2026-10-04 07:37 UTC and is pinned; these
