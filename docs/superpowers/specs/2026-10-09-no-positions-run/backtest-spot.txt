@@ -1,0 +1,67 @@
+2026-10-09 02:55:00,737 [INFO] Fetching spot 4h from 2026-08-30 to 2026-10-09 ...
+2026-10-09 02:55:00,749 [WARNING] binance fetch_ohlcv failed (binance GET https://api.binance.com/api/v3/exchangeInfo) — falling back to data-api.binance.vision for 1800s
+2026-10-09 02:55:07,846 [INFO] HTF 1d: 290 bars (2025-12-23 → 2026-10-08)
+2026-10-09 02:55:07,974 [INFO] HTF 1w: 256 bars (2021-11-15 → 2026-10-05)
+
+   ⚗️  Active set: 0 conditions disabled — 
+
+
+======================================================================
+                           📊 BACKTEST RESULTS                         
+======================================================================
+
+   Period:           2026-08-30 → 2026-10-08
+   Start Price:      $78,144.68
+
+   Total Signals:    2
+   Closed Trades:    2
+   Open (max hold):  0
+
+   Wins:             1
+   Losses:           1
+   Win Rate:         50.0%
+   Avg Win:          +2.59%
+   Avg Loss:         -2.57%
+   Avg Hold:         4 candles
+
+   Total P&L:        +0.02%
+   Profit Factor:    1.01
+   Max Drawdown:     2.57%
+   By Confidence:    NORMAL: 1, STRONG: 1
+
+   (Market structure data not available historically — conservative estimate)
+
+   Recent trades:
+   🟢 BUY   | $ 77,948.39 →        WIN (+2.59%) |   1c | 6.5 · STRONG
+   🔴 BUY   | $ 79,324.75 →       LOSS (-2.57%) |   7c | 7.0 · NORMAL
+======================================================================
+
+
+======================================================================
+                      🚦 ENTRY GATE COUNTERFACTUAL                     
+======================================================================
+
+   gate                 blocked  only   won    net P&L  per trade  verdict
+   --------------------------------------------------------------------------
+   trend_confluence           3     0     3      8.71%     2.905%  redundant
+   regime_counter             1     0     1      3.72%     3.719%  redundant
+   reentry_first              3     0     1     -1.66%    -0.553%  redundant
+   fakeout_first              1     0     1      1.38%     1.375%  redundant
+   confidence_first           6     1     3      0.30%     0.051%  COSTS money
+
+   blocked counts every gate that would have caught the trade, so the
+   column sums past the 7 distinct blocked signals; 'only' does not.
+
+                 trades     total   per trade
+   ------------------------------------------
+   Taken              2     0.02%      0.009%
+   Blocked            7     4.02%      0.575%
+   Ungated            9     4.04%      0.449%
+
+   ⚠️  Taken trades are WORSE per trade than blocked ones (0.009% vs 0.575%).
+      The gates reduced total loss by cutting COUNT, not by selecting
+      better — the same effect a random filter of this severity would have.
+
+   ⚠️  The gates net-removed a POSITIVE +4.02% — as a set they cost more than they saved
+======================================================================
+
