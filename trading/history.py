@@ -165,6 +165,9 @@ def _migrate_cycle_log():
         # on the total — where the 3.50 of SPOT_MAX_SCORE no replay can see swamps any
         # smaller drift. See docs/superpowers/specs/2026-09-24-live-vs-backtest.md.
         ("contributions", "TEXT"),
+        # Score variants (signals/variants.py) as JSON — logged, never traded. NULL when
+        # none were scored, which is every row before run 3.
+        ("variants",      "TEXT"),
     ]
     for col, coltype in cols:
         try:
@@ -415,6 +418,9 @@ def log_cycle(signal, df, market_structure, htf, mode):
         {k: [round(float(v[0]), 4), round(float(v[1]), 4)] for k, v in _contrib.items()}
     ) if _contrib else None
 
+    _variants = signal.get("_variants")
+    variants_json = json.dumps(_variants, default=float) if _variants else None
+
     # Open positions count for this mode
     open_count = len(get_open_positions(mode))
 
@@ -460,6 +466,7 @@ def log_cycle(signal, df, market_structure, htf, mode):
         htf_json,
         " | ".join(reasons_clean),
         contributions_json,
+        variants_json,
         open_count,
     )
     c = _conn()
@@ -470,11 +477,34 @@ def log_cycle(signal, df, market_structure, htf, mode):
             obv_slope, bb_upper, bb_lower, rsi_div, funding_rate, ls_ratio, dxy,
             dxy_change, sp500, sp500_change, btc_dom, stablecoin_b, oi_change,
             basis_pct, taker_ratio, gold, gold_change, vix, vix_change,
-            fear_greed, news_sentiment, htf_data, reasons, contributions, open_positions)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            fear_greed, news_sentiment, htf_data, reasons, contributions, variants,
+            open_positions)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         row,
     )
     c.commit()
+
+
+def get_market_history(hours=168):
+    """Trailing funding / L/S / basis readings for signals/variants.py.
+
+    Read from FUTURES rows only — they are hourly, and spot rows repeat the same market
+    data every 4h. A fetch failure logs 0 / 1.0 / 0, and those placeholders are dropped
+    per field: a z-score against them would measure outages, not the market.
+    """
+    rows = _conn().execute(
+        "SELECT funding_rate, ls_ratio, basis_pct FROM cycle_log "
+        "WHERE mode='futures' ORDER BY timestamp DESC LIMIT ?", (hours,)
+    ).fetchall()
+    out = {"funding_rate": [], "ls_ratio": [], "basis_pct": []}
+    for fr, ls, basis in rows:
+        if fr not in (None, 0.0):
+            out["funding_rate"].append(fr)
+        if ls not in (None, 1.0, 0.0):
+            out["ls_ratio"].append(ls)
+        if basis not in (None, 0.0):
+            out["basis_pct"].append(basis)
+    return out
 
 
 def update_signal_outcome(signal_id, outcome, closed_at=None):

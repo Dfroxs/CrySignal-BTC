@@ -2625,6 +2625,150 @@ def test_reentry_ic_open_rows_are_not_pnl():
     assert a["taken"] == [] and a["unresolved"] == 1, a
 
 
+def _ms_fixture(rate_pct=0.004, ratio=1.2, basis=-0.04):
+    return {"funding": {"rate_pct": rate_pct, "bias": "NEUTRAL",
+                        "basis_pct": basis, "basis_bias": "NEUTRAL"},
+            "long_short": {"ratio": ratio, "bias": "NEUTRAL"}}
+
+def _ms_history(n=168):
+    """Funding, L/S and basis around their run-2 means, sd ~0.002 / 0.1 / 0.02."""
+    import numpy as np
+    rng = np.random.default_rng(11)
+    return {"funding_rate": list(0.004 + rng.normal(0, 0.002, n)),
+            "ls_ratio": list(1.2 + rng.normal(0, 0.1, n)),
+            "basis_pct": list(-0.04 + rng.normal(0, 0.02, n))}
+
+def test_relative_bias_reads_the_value_against_its_own_history():
+    """The absolute bands never fired in run 2 (basis 0/949 h, L/S 8/949, funding 0).
+    A z-score against the trailing week does: >+1 and <-1 sd, signed by direction."""
+    from signals.variants import relative_bias
+    h = [0.0, 1.0, -1.0, 2.0, -2.0] * 20          # mean 0, sd ~1.41
+    assert relative_bias(2.0, h, direction=+1) == "BULLISH"
+    assert relative_bias(-2.0, h, direction=+1) == "BEARISH"
+    assert relative_bias(0.5, h, direction=+1) == "NEUTRAL"
+    assert relative_bias(2.0, h, direction=-1) == "BEARISH", "contrarian flips the sign"
+
+def test_relative_bias_refuses_thin_or_missing_data():
+    """Fewer than 48 hours of history, or no current value, scores nothing."""
+    from signals.variants import relative_bias
+    assert relative_bias(5.0, [0.0, 1.0] * 20, direction=+1) == "NEUTRAL"
+    assert relative_bias(None, [0.0, 1.0] * 60, direction=+1) == "NEUTRAL"
+
+def test_apply_variant_rewrites_biases_without_touching_the_input():
+    """A variant is the SAME engine on rewritten biases. The live market_structure the
+    real signal was scored on must come out unchanged."""
+    import copy
+    from signals.variants import VARIANTS, apply_variant
+    ms = _ms_fixture(ratio=1.6, basis=0.02)              # both far above their week
+    before = copy.deepcopy(ms)
+    out = apply_variant(ms, _ms_history(), VARIANTS["rel_ic_dir"])
+    assert ms == before, "the input market_structure was mutated"
+    assert out["long_short"]["bias"] == "BULLISH", out     # momentum: high L/S bullish
+    assert out["funding"]["basis_bias"] == "BULLISH", out
+    eng = apply_variant(ms, _ms_history(), VARIANTS["rel_engine_dir"])
+    assert eng["long_short"]["bias"] == "BEARISH", "engine semantics: longs crowded"
+
+def test_apply_variant_leaves_a_failed_fetch_neutral():
+    """A Binance outage returns rate 0 / ratio 1.0 / basis 0 placeholders. A z-score of
+    a placeholder is not a reading, so the variant must not score it."""
+    from signals.variants import VARIANTS, apply_variant
+    ms = _ms_fixture(rate_pct=0.0, ratio=1.0, basis=0.0)
+    out = apply_variant(ms, _ms_history(), VARIANTS["rel_ic_dir"])
+    assert out["funding"]["bias"] == "NEUTRAL" and out["funding"]["basis_bias"] == "NEUTRAL"
+    assert out["long_short"]["bias"] == "NEUTRAL"
+
+def test_score_variants_never_changes_the_real_signal():
+    """Variants are logged, never traded: scoring them must leave the main signal
+    byte-identical, and every variant (plus 'base') must come back."""
+    import copy
+    from signals.engine import generate_signals
+    from signals.indicators import detect_support_resistance
+    from signals.variants import VARIANTS, score_variants
+    df = _synthetic_df()
+    sr = detect_support_resistance(df)
+    ms = _ms_fixture(ratio=1.6, basis=0.02)
+    main = generate_signals(df, None, ms, sr, mode="futures", threshold_override=5.2)
+    snapshot = copy.deepcopy({k: v for k, v in main.items() if k != "_regime"})
+    out = score_variants(df, None, ms, sr, "futures", 5.2, None, _ms_history(), base=main)
+    assert {k: v for k, v in main.items() if k != "_regime"} == snapshot
+    assert set(out) == {"base", *VARIANTS}, out.keys()
+    for name, v in out.items():
+        for key in ("type", "strength", "confidence", "entry_price", "stop_loss",
+                    "take_profit", "_threshold"):
+            assert key in v, f"{name} lacks {key}"
+
+def _temp_history_db():
+    import os, tempfile
+    import trading.history as h
+    saved = (h.SIGNAL_HISTORY_DB, h.DB)
+    fd, path = tempfile.mkstemp(suffix=".db"); os.close(fd)
+    h.SIGNAL_HISTORY_DB, h.DB = path, None
+    return h, saved, path
+
+def _restore_history_db(h, saved, path):
+    import os
+    try:
+        h.DB.close()
+    except Exception:
+        pass
+    h.SIGNAL_HISTORY_DB, h.DB = saved
+    os.unlink(path)
+
+def test_market_history_reads_the_trailing_week_without_placeholders():
+    """Hourly futures rows feed both modes. A fetch failure logs 0 / 1.0 / 0 — those
+    are not readings and must not drag the mean toward zero."""
+    h, saved, path = _temp_history_db()
+    try:
+        c = h._conn()
+        for i in range(200):
+            rate = 0.0 if i % 50 == 0 else 0.004
+            c.execute("INSERT INTO cycle_log (timestamp,mode,type,price,funding_rate,ls_ratio,"
+                      "basis_pct) VALUES (?, 'futures','HOLD',80000,?,?,?)",
+                      (f"2026-10-0{1 + i // 100}T{i % 24:02d}:{i % 60:02d}:00+00:00",
+                       rate, 1.0 if i % 50 == 0 else 1.25, -0.04))
+        c.execute("INSERT INTO cycle_log (timestamp,mode,type,price,funding_rate,ls_ratio,"
+                  "basis_pct) VALUES ('2026-10-09T00:00:00+00:00','spot','HOLD',80000,9,9,9)")
+        c.commit()
+        hist = h.get_market_history(hours=168)
+        assert len(hist["ls_ratio"]) <= 168, len(hist["ls_ratio"])
+        assert 0.0 not in hist["funding_rate"] and 1.0 not in hist["ls_ratio"], hist
+        assert 9 not in hist["basis_pct"], "spot rows must not feed the history"
+    finally:
+        _restore_history_db(h, saved, path)
+
+def test_log_cycle_stores_variants_as_json():
+    """`variants` is NULL when none were scored and JSON when they were."""
+    import json
+    h, saved, path = _temp_history_db()
+    try:
+        df = _synthetic_df()
+        from signals.engine import generate_signals
+        sig = generate_signals(df, None, None, None, mode="futures", threshold_override=5.2)
+        h.log_cycle(sig, df, None, None, "futures")
+        sig2 = dict(sig, _variants={"rel_ic_dir": {"type": "BUY", "strength": 6.0}})
+        h.log_cycle(sig2, df, None, None, "futures")
+        rows = h._conn().execute("SELECT variants FROM cycle_log ORDER BY id").fetchall()
+        assert rows[0][0] is None, rows[0][0]
+        assert json.loads(rows[1][0])["rel_ic_dir"]["strength"] == 6.0
+    finally:
+        _restore_history_db(h, saved, path)
+
+def test_attach_variants_never_raises_into_the_cycle():
+    """A broken history read must leave the real signal unchanged and simply record no
+    variants — the cycle is worth more than the experiment."""
+    from signals import variants as v
+    from signals.engine import generate_signals
+    df = _synthetic_df()
+    sig = generate_signals(df, None, _ms_fixture(), None, mode="futures", threshold_override=5.2)
+    before = sig["strength"]
+    def boom(**_):
+        raise RuntimeError("db gone")
+    v.attach_variants(sig, df, None, _ms_fixture(), None, "futures", 5.2, None, history_fn=boom)
+    assert sig["strength"] == before and "_variants" not in sig, sig.get("_variants")
+    v.attach_variants(sig, df, None, _ms_fixture(), None, "futures", 5.2, None,
+                      history_fn=lambda **_: _ms_history())
+    assert set(sig["_variants"]) == {"base", *v.VARIANTS}
+
 def test_synth_entries_respects_stride_and_warmup():
     from scripts.exit_ic import synth_entries
     df = _exit_fixture([1000] * 260)
@@ -3086,6 +3230,16 @@ if __name__ == "__main__":
     run("only WIN/LOSS becomes the anchor",       test_reentry_ic_only_win_or_loss_becomes_the_anchor)
     run("OPEN rows are not P&L",                  test_reentry_ic_open_rows_are_not_pnl)
     run("every trade record is kept",             test_reentry_ic_keeps_every_trade_record)
+
+    print("\n── 29. Live score variants ──")
+    run("relative bias reads its own history",   test_relative_bias_reads_the_value_against_its_own_history)
+    run("relative bias refuses thin data",        test_relative_bias_refuses_thin_or_missing_data)
+    run("variant leaves input untouched",         test_apply_variant_rewrites_biases_without_touching_the_input)
+    run("failed fetch stays neutral",             test_apply_variant_leaves_a_failed_fetch_neutral)
+    run("variants never change the real signal",  test_score_variants_never_changes_the_real_signal)
+    run("market history skips placeholders",      test_market_history_reads_the_trailing_week_without_placeholders)
+    run("log_cycle stores variants",              test_log_cycle_stores_variants_as_json)
+    run("attach_variants never raises",           test_attach_variants_never_raises_into_the_cycle)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

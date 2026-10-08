@@ -10,6 +10,7 @@ from signals.ohlcv import fetch_ohlcv_df
 from signals.htf import get_htf_trend
 from signals.sentiment import get_combined_sentiment
 from signals.engine import generate_signals, integrate_news_with_signal
+from signals.variants import attach_variants
 from signals.indicators import detect_support_resistance
 from signals.market_data import (
     fetch_btc_dominance,
@@ -88,6 +89,9 @@ def analyze_futures_signal(symbol='BTC/USDT', include_news=True, display=False):
         # actually had to clear. Overwriting it with the raw adaptive base made
         # sizing (_compute_confidence) and run_bot._check_reentry_quality
         # measure strength against a different number than the engine gated on.
+        # Variants are scored on the same inputs and logged, never traded —
+        # signals/variants.py. They cannot raise into this cycle.
+        attach_variants(signal, df, htf, market_structure, sr, 'futures', threshold, news_data)
         log_cycle(signal, df, market_structure, htf, 'futures')
         # ATR percentile for dynamic leverage
         from signals.indicators import compute_atr_percentile

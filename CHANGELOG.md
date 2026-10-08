@@ -4,6 +4,33 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — feat: live score variants, logged and never traded
+
+For **run 3**, on `develop`.
+
+### Found
+- **The futures-only market-structure conditions almost never score.** In run 2's 92
+  futures cycles: funding 0, L/S 0, basis 0, stablecoin 0, BTC.D 1, OI 4. Their
+  absolute bands (basis ±0.10%, L/S < 0.8 / > 2.0, funding ±0.01%) lie outside
+  everything the market printed in 40 days (basis −0.083…+0.011%, L/S 0.77…1.86). About 7
+  of the 26.5-point futures ceiling cannot be earned, while the threshold is still derived
+  from all 26.5. That is a structural reason futures scores cluster at 1.0–1.17× and
+  never reach the 1.2× open bar.
+
+### Added
+- **`signals/variants.py`.** Each cycle re-scores the SAME engine with funding, L/S and
+  basis biases read against their own trailing 168h (z-score ±1) instead of absolute
+  bands, through the same news overlay. Two variants: `rel_engine_dir` (the engine's own
+  semantics) and `rel_ic_dir` (direction from the 40-day live IC sign). On run 1+2 data
+  the relative biases would be active 29–62% of hours, against ~0%.
+- `cycle_log.variants` (JSON, NULL before run 3); `history.get_market_history()` reads
+  the trailing futures rows and drops fetch-failure placeholders (0 / 1.0 / 0).
+- Wired into `signals/futures.py` and `signals/spot.py` just before `log_cycle`.
+  `attach_variants` cannot raise into a cycle. The real signal is untouched (tested).
+  Suite 150 → 158.
+
+---
+
 ## 2026-10-09 — design decision: re-entry anchor ages out after 7 days
 
 For **run 3**, on `develop`.
