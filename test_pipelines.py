@@ -2292,6 +2292,65 @@ def test_the_controller_records_an_open_and_ignores_a_fire_that_did_not():
             os.unlink(path)
 
 
+def _controller_at(state, hours_since=None):
+    """Write `state` to a temp file and return the futures-style adaptive threshold for
+    base 5.2, with an empty positions DB so the win-rate arm reads None."""
+    import json, os, tempfile
+    from datetime import UTC, datetime, timedelta
+    from signals.market_data import _get_adaptive_threshold
+    h, saved, dbpath = _temp_history_db()
+    fd, path = tempfile.mkstemp(suffix=".json"); os.close(fd)
+    try:
+        now = datetime.now(UTC)
+        if hours_since is not None:
+            state = dict(state, since=(now - timedelta(hours=hours_since)).isoformat())
+        json.dump(state, open(path, "w"))
+        return _get_adaptive_threshold(5.2, 4.0, 8.0, path, "UNSET_THR_OVERRIDE_FOR_TEST")
+    finally:
+        os.unlink(path)
+        _restore_history_db(h, saved, dbpath)
+
+def _recent(n, hours_ago=1):
+    from datetime import UTC, datetime, timedelta
+    return [(datetime.now(UTC) - timedelta(hours=hours_ago, minutes=i)).isoformat()
+            for i in range(n)]
+
+def test_controller_ignores_a_state_file_that_counted_fires():
+    """Run 2's threshold_state.json holds FIRED-signal timestamps. Read as opens they
+    would raise the bar on run 3's first day: the bug the switch to opens was meant to
+    remove, back through the state file."""
+    assert _controller_at({"signals": _recent(9)}) == 5.2, \
+        "9 fires from the old format were counted as 9 opens"
+
+def test_controller_lowers_after_a_quiet_window_even_with_no_open_ever():
+    """The lower-the-bar branch required a recorded event, so a mode that had never
+    opened anything (futures, for two runs) could never be lowered at all."""
+    assert _controller_at({"version": 2, "signals": []}, hours_since=100) == 4.95
+
+def test_controller_does_not_lower_on_a_cold_start():
+    """Less than one full window of observation is not evidence of a quiet market."""
+    assert _controller_at({"version": 2, "signals": []}, hours_since=10) == 5.2
+
+def test_controller_update_starts_observing_and_drops_the_old_format():
+    import json, os, tempfile
+    from signals.market_data import _update_threshold_state
+    fd, path = tempfile.mkstemp(suffix=".json"); os.close(fd); os.unlink(path)
+    try:
+        _update_threshold_state(False, path)
+        st = json.load(open(path))
+        assert st["version"] == 2 and st["since"] and st["signals"] == [], st
+        json.dump({"signals": _recent(5)}, open(path, "w"))          # old format
+        _update_threshold_state(False, path)
+        st = json.load(open(path))
+        assert st["version"] == 2 and st["signals"] == [], "old fires must be dropped"
+        since = st["since"]
+        _update_threshold_state(True, path)
+        st = json.load(open(path))
+        assert len(st["signals"]) == 1 and st["since"] == since, "since must not move"
+    finally:
+        if os.path.exists(path):
+            os.unlink(path)
+
 def test_the_analysis_functions_no_longer_update_the_controller():
     """They run in Phase 2 and cannot know whether Phase 3 opened anything. Leaving the
     call there is what made the controller count fires in the first place."""
@@ -3312,6 +3371,10 @@ if __name__ == "__main__":
 
     print("\n── 27. Controller counts opens ──")
     run("records opens, ignores bare fires",      test_the_controller_records_an_open_and_ignores_a_fire_that_did_not)
+    run("old fires-format state is ignored",      test_controller_ignores_a_state_file_that_counted_fires)
+    run("lowers after quiet window, no opens",    test_controller_lowers_after_a_quiet_window_even_with_no_open_ever)
+    run("no lowering on cold start",              test_controller_does_not_lower_on_a_cold_start)
+    run("update starts observing, drops old",     test_controller_update_starts_observing_and_drops_the_old_format)
     run("analysis no longer updates it",          test_the_analysis_functions_no_longer_update_the_controller)
     run("every open marks the cycle",             test_every_position_open_marks_the_cycle_as_opened)
     run("rejected arm partitions the ungated",    test_split_by_gates_partitions_the_ungated_arm)

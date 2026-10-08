@@ -630,9 +630,10 @@ def _get_adaptive_threshold(base, t_min, t_max, state_file, env_var):
     if override > 0:
         return override
 
-    state = load_cache(state_file)
+    state = _load_threshold_state(state_file) or {}
     now = datetime.now(UTC)
     all_ts = state.get("signals", [])
+    since = state.get("since")
 
     mode = "spot" if "spot" in state_file else "futures"
     wr_72h = _get_recent_win_rate(mode, hours=72)
@@ -653,8 +654,11 @@ def _get_adaptive_threshold(base, t_min, t_max, state_file, env_var):
         # Many signals: raise threshold. Raise more if win rate is poor.
         step = 0.75 if (wr_72h is not None and wr_72h < 0.35) else 0.5
         base = min(base + step, t_max)
-    elif len(recent_72h) == 0 and len(all_ts) > 0:
-        # No recent signals: lower threshold. Lower more if win rate is good.
+    elif len(recent_72h) == 0 and since and since < cutoff_72h:
+        # No opens in a full window of observation: lower the bar. It used to require a
+        # recorded event (`len(all_ts) > 0`), so a mode that had never opened anything —
+        # futures, for two whole runs — could never be lowered at all.
+        # Lower more if win rate is good.
         step = 0.5 if (wr_72h is not None and wr_72h >= 0.6) else 0.25
         base = max(base - step, t_min)
     return base
@@ -676,13 +680,32 @@ def _update_threshold_state(opened, state_file):
     Callers must therefore be downstream of Phase 3 — `signals/spot.py` and
     `signals/futures.py` run in Phase 2 and cannot know, which is how this started.
     """
-    if not opened:
+    now = datetime.now(UTC)
+    state = _load_threshold_state(state_file)
+    if state is None:
+        # Missing, or the old format whose timestamps are FIRES: start observing now.
+        state = {"version": _THRESHOLD_STATE_VERSION, "since": now.isoformat(), "signals": []}
+    elif not opened:
         return
+    if opened:
+        state["signals"].append(now.isoformat())
+    cutoff = (now - timedelta(hours=ADAPTIVE_WINDOW_HOURS * 2)).isoformat()
+    state["signals"] = [ts for ts in state["signals"] if ts > cutoff]
+    save_cache(state_file, state)
+
+
+_THRESHOLD_STATE_VERSION = 2
+
+
+def _load_threshold_state(state_file):
+    """The controller's state, or None when missing or written by the fires-counting
+    version (no `version` key). Those timestamps are signals that FIRED; read as opens
+    they would raise the bar on a run's first day."""
     state = load_cache(state_file)
-    signals = state.get("signals", [])
-    signals.append(datetime.now(UTC).isoformat())
-    cutoff = (datetime.now(UTC) - timedelta(hours=ADAPTIVE_WINDOW_HOURS * 2)).isoformat()
-    save_cache(state_file, {"signals": [ts for ts in signals if ts > cutoff]})
+    if state.get("version") != _THRESHOLD_STATE_VERSION:
+        return None
+    state.setdefault("signals", [])
+    return state
 
 
 def get_adaptive_threshold():

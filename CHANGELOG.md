@@ -4,6 +4,26 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — fix: the adaptive controller could never lower a mode that never opened
+
+For **run 3**, on `develop`. Found while reviewing `develop` before promoting it.
+
+### Fixed
+- **The lower-the-bar branch required a recorded event** (`len(all_ts) > 0`). Once the
+  controller counts opens instead of fires (2026-10-04), a mode that has never opened a
+  position (futures, across runs 1 and 2) has no events, so its threshold could never
+  come down. The 10-04 entry's expectation that counting opens would lower the futures
+  bar held only by accident, through stale timestamps left in the state file. The state
+  now records `since`, when observation began, and the bar is lowered after a full 72h
+  window with no opens.
+- **The state file from runs 1/2 holds FIRED-signal timestamps.** Read as opens, they
+  would have raised the bar on run 3's first day. The state is now versioned
+  (`version: 2`). An unversioned file is discarded and observation restarts.
+- Same base ± step arithmetic, and still no ratchet. No threshold, step or window
+  moved. Suite 167 → 171.
+
+---
+
 ## 2026-10-09 — feat: scripts/live_ic.py (run 3 H-L / H-V1) and variant books
 
 For **run 3**, on `develop`. Instruments only, no change to the bot's behaviour.
