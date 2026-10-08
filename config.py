@@ -61,8 +61,10 @@ RISK_CONFIG = {
         "sr_entry_risk_atr":       1.0,        # flag if entry within N× ATR of resistance (BUY)
         "fakeout_wick_ratio":      0.60,       # (hi24-close)/(hi24-lo24) > this → rejection wick
         # Re-entry anchor age limit in hours; None = no limit (run 1/2 behaviour).
-        # Set only by a pre-registered result — 2026-10-09-reentry-age-prereg.md.
-        "reentry_max_age_hours":   None,
+        # 168 is a DESIGN DECISION (owner, 2026-10-09) so the paper run yields trades:
+        # a 09-12 anchor locked spot out for 3 weeks. Not a test result — the
+        # pre-registered test was INCONCLUSIVE (2026-10-09-reentry-age-results.md).
+        "reentry_max_age_hours":   168,
     },
 }
 

@@ -4,6 +4,22 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — design decision: re-entry anchor ages out after 7 days
+
+For **run 3**, on `develop`.
+
+### Changed
+- **`RISK_CONFIG["pyramid"]["reentry_max_age_hours"]`: `None` → `168`.** A design
+  decision by the owner so the paper run yields trades. It is **not** a test result: the
+  pre-registered test (`2026-10-09-reentry-age-results.md`) was INCONCLUSIVE by its
+  power guard (kept n = 54). In run 2 a single 09-12 anchor at $77,361 blocked every
+  spot signal for three weeks. Descriptively, on the test data both settings lose, and
+  168h trades ~3× as often. The paper run's goal is now data plus iterative improvement
+  (CLAUDE.md, 2026-10-09). Pinned by `test_reentry_age_limit_is_on_for_run_3`.
+  `backtest.py` reads the same key, so its default replay now applies the limit too.
+
+---
+
 ## 2026-10-09 — fix: a NameError waiting in the re-entry guard; anchor age limit (off)
 
 For **run 3**, on `develop`. Run 2 is pinned and untouched.

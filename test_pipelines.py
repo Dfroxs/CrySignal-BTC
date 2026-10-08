@@ -961,6 +961,13 @@ def test_backtest_reentry_age_default_reads_config():
     finally:
         pyr["reentry_max_age_hours"] = saved
 
+def test_reentry_age_limit_is_on_for_run_3():
+    """Design decision 2026-10-09 (owner): the anchor ages out after 7 days so the paper
+    run yields trades. Not a test result — 2026-10-09-reentry-age-results.md was
+    INCONCLUSIVE. Pinned so it cannot silently revert to None."""
+    from config import RISK_CONFIG
+    assert RISK_CONFIG["pyramid"]["reentry_max_age_hours"] == 168
+
 def test_live_reentry_anchor_expires_after_max_age():
     """run_bot._check_reentry_quality reads the anchor from paper_positions. The
     10-07 case: entry $84,150 at 5.75 against a WIN at $77,361 / 5.5 — blocked
@@ -2950,6 +2957,7 @@ if __name__ == "__main__":
     run("backtest re-entry anchor ages out",      test_backtest_reentry_anchor_expires_after_max_age)
     run("backtest re-entry age reads config",     test_backtest_reentry_age_default_reads_config)
     run("live re-entry anchor ages out",          test_live_reentry_anchor_expires_after_max_age)
+    run("re-entry age limit on for run 3",        test_reentry_age_limit_is_on_for_run_3)
     run("backtest costs match live",              test_backtest_cost_model_matches_live)
     run("drawdown is peak-to-trough",             test_drawdown_is_peak_to_trough)
     run("HTF ignores the forming bar",            test_htf_at_ignores_the_still_forming_bar)
