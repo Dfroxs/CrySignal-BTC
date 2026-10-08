@@ -2537,6 +2537,75 @@ def test_compute_stats_buckets_by_pnl_sign_not_outcome_label():
     assert zero_stats["profit_factor"] == "∞", zero_stats["profit_factor"]
 
 
+def _reentry_seq_fixture(outcomes):
+    """Index + fake gate/sim for scripts.reentry_ic.simulate_sequence.
+
+    The gate fails 're-entry' exactly as the real one does in the case that matters:
+    an anchor exists, it has not aged out, and the new entry is at a worse price.
+    `outcomes` maps candle index -> (outcome, pnl, candles_held).
+    """
+    import pandas as pd
+    idx = pd.date_range("2026-01-01", periods=400, freq="4h")
+
+    def gate(sig, i, last_resolved, max_age_hours):
+        prev = last_resolved.get("BUY")
+        if prev is None:
+            return []
+        if max_age_hours is not None and idx[i] - prev[2] > pd.Timedelta(hours=max_age_hours):
+            return []
+        return ["reentry_first"] if sig["entry_price"] > prev[0] else []
+
+    def sim(i, sig):
+        o, p, h = outcomes[i]
+        return {"outcome": o, "pnl_pct": p, "candles_held": h}
+
+    return idx, gate, sim
+
+def _sig(px):
+    return {"type": "BUY", "entry_price": px, "strength": 5.0}
+
+def test_reentry_ic_arms_differ_only_on_stale_anchors():
+    """A fresh anchor blocks in both arms; a stale one blocks only the unlimited arm,
+    and that block is what the unlimited arm reports as stale_rejected."""
+    from scripts.reentry_ic import simulate_sequence
+    idx, gate, sim = _reentry_seq_fixture(
+        {0: ("WIN", 2.0, 1), 5: ("LOSS", -1.0, 1), 100: ("WIN", 3.0, 2)})
+    sigs = [(0, _sig(100.0)), (5, _sig(110.0)), (100, _sig(120.0))]
+    a = simulate_sequence(idx, sigs, gate, sim, max_age_hours=None, stale_after_hours=168)
+    b = simulate_sequence(idx, sigs, gate, sim, max_age_hours=168, stale_after_hours=168)
+    assert a["taken"] == [2.0], a
+    assert a["stale_rejected"] == [3.0], a
+    assert b["taken"] == [2.0, 3.0], b
+    assert b["stale_rejected"] == [], b
+
+def test_reentry_ic_counterfactuals_do_not_overlap():
+    """One shadow position at a time, as backtest.py's cf_open_until does — a setup that
+    re-fires every candle must not be counted once per candle."""
+    from scripts.reentry_ic import simulate_sequence
+    idx, gate, sim = _reentry_seq_fixture(
+        {0: ("WIN", 2.0, 1), 100: ("WIN", 3.0, 5), 101: ("WIN", 4.0, 5), 110: ("LOSS", -1.0, 1)})
+    sigs = [(0, _sig(100.0)), (100, _sig(120.0)), (101, _sig(121.0)), (110, _sig(122.0))]
+    a = simulate_sequence(idx, sigs, gate, sim, max_age_hours=None, stale_after_hours=168)
+    assert a["stale_rejected"] == [3.0, -1.0], a
+
+def test_reentry_ic_only_win_or_loss_becomes_the_anchor():
+    """Live anchors on outcome IN ('WIN','LOSS'); a TIME_EXIT must not reset it."""
+    from scripts.reentry_ic import simulate_sequence
+    idx, gate, sim = _reentry_seq_fixture(
+        {0: ("TIME_EXIT", 0.5, 1), 5: ("WIN", 1.0, 1)})
+    sigs = [(0, _sig(100.0)), (5, _sig(110.0))]
+    a = simulate_sequence(idx, sigs, gate, sim, max_age_hours=None, stale_after_hours=168)
+    assert a["taken"] == [0.5, 1.0], f"no WIN/LOSS anchor yet, so nothing may block: {a}"
+
+def test_reentry_ic_open_rows_are_not_pnl():
+    """An OPEN row (frame ran out) is not a resolved trade and must not enter the mean."""
+    from scripts.reentry_ic import simulate_sequence
+    idx, gate, sim = _reentry_seq_fixture({0: ("OPEN", 0.0, 3)})
+    a = simulate_sequence(idx, [(0, _sig(100.0))], gate, sim,
+                          max_age_hours=None, stale_after_hours=168)
+    assert a["taken"] == [] and a["unresolved"] == 1, a
+
+
 def test_synth_entries_respects_stride_and_warmup():
     from scripts.exit_ic import synth_entries
     df = _exit_fixture([1000] * 260)
@@ -2990,6 +3059,12 @@ if __name__ == "__main__":
     run("run_rule counts TIME_EXIT share",         test_run_rule_counts_time_exit_share)
     run("run_rule is deterministic",              test_run_rule_is_deterministic)
     run("tail margin sizes to longest rule",       test_tail_margin_sizes_to_the_longest_rule_not_baseline)
+
+    print("\n── 28. reentry_ic.py — anchor age experiment ──")
+    run("arms differ only on stale anchors",      test_reentry_ic_arms_differ_only_on_stale_anchors)
+    run("counterfactuals do not overlap",         test_reentry_ic_counterfactuals_do_not_overlap)
+    run("only WIN/LOSS becomes the anchor",       test_reentry_ic_only_win_or_loss_becomes_the_anchor)
+    run("OPEN rows are not P&L",                  test_reentry_ic_open_rows_are_not_pnl)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
