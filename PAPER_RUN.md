@@ -14,19 +14,18 @@ Both bots, one command, exits non-zero if anything needs attention. Expect
 `>>> semua bersih <<<`. If something is flagged, the line names it; the rest of this
 document explains the context.
 
-**What was still unproven when this was written (2026-10-04 ~09:00 UTC), in the order it
-will become visible:**
+**Checkpoints, as of 2026-10-08 19:50 UTC** (both bots checked; `morning_check.sh` clean):
 
-1. **allocbot crossing a UTC midnight on its own.** Every daily decision so far was
-   triggered by a start or a restart. The 00:00 UTC rollover on 2026-10-05 is its first
-   unprompted one. `keputusan harian terjadi` in the check should be ≥ 1.
-2. **Run 2 completing a full day.** It started 07:37 UTC on 2026-10-04, so its first
-   complete day closes 2026-10-05. `contributions kosong` must stay 0.
-3. **Two of run 2's four fixes have not been seen in production yet** — both have tests
-   that fail against the old code, but that is lab evidence, not field evidence:
-   - `_net_pnl`'s cost fix needs a trade that hits TP1.
-   - The veto-reason fix needs a cycle where a gate actually fires (look for `⛔` in
-     `cycle_log.reasons`).
+1. ✅ **nakhoda-alloc crosses a UTC midnight on its own.** Unprompted rebalances at
+   ~00:01–00:02 UTC on 10-05, 10-06, 10-07 and 10-08, none triggered by a restart.
+2. ✅ **spotsignal run 2 completes full days.** 136 cycles since 07:37 UTC 2026-10-04,
+   `contributions` NULL on **0** of them.
+3. ✅ **spotsignal veto-reason fix — seen in production.** `⛔` survives in `reasons` on
+   35 futures and 12 spot cycles of run 2 (run 1: 3 of 201 vetoed cycles).
+4. ⏳ **spotsignal `_net_pnl` cost fix — still unproven in the field.** Run 2 has opened
+   **no positions yet**; the 3 rows in `paper_positions` all predate it. When the first
+   run-2 trade hits TP1, check that `pnl_pct` reflects a full round trip on both halves.
+   **This is the only checkpoint left open.**
 
 **Waiting on `develop`, for run 3 — do not deploy into run 2:**
 `notifier/telegram.py`, `run_bot.py`, `signals/market_data.py`, `signals/spot.py`,
@@ -34,10 +33,12 @@ will become visible:**
 instead of fires. See `docs/superpowers/specs/2026-10-04-deadzone-results.md` for why,
 and note that neither is a route to profit: that experiment's H1 failed.
 
-**allocbot's demo gate:** started 2026-09-24 04:17 UTC, two weeks lands ~2026-10-08. Read
-`../Nakhoda/docs/OOS-FINDING-2026-09-08.md` before treating a pass as permission to trade
-real money — the rule failed out of domain and its timing is indistinguishable from
-matched random entry outside crypto.
+**allocbot's demo gate: two weeks elapsed 2026-10-08 04:17 UTC, clean** — zero `ERROR` /
+`Traceback` in its journal since 2026-09-24, no missed daily decision. (2026-10-01's
+rebalance was held ~20 min for a Tankan event and then ran — designed behaviour.) Read
+`../Nakhoda/docs/OOS-FINDING-2026-09-08.md` before treating this pass as permission to
+trade real money — the rule failed out of domain and its timing is indistinguishable from
+matched random entry outside crypto. The pass proves the plumbing, not the edge.
 
 ---
 
@@ -150,11 +151,9 @@ loudly. Keeps 30 days. Pull one to the Mac occasionally.
 
 ## Open items
 
-1. **Verify run 2's first cycles actually carry the fixes.** As of 07:48 UTC on 2026-10-04
-   this was still pending — the restart was at 07:37 and the first full cycle falls at
-   08:01. Two things to confirm:
-   `SELECT contributions FROM cycle_log ORDER BY id DESC LIMIT 1;` must be JSON, not NULL
-   (every row from run 1 is NULL), and a vetoed cycle's `reasons` must contain `⛔`.
+1. ~~Verify run 2's first cycles actually carry the fixes~~ — **done 2026-10-08.**
+   `contributions` is JSON on every run-2 cycle, and vetoed cycles carry `⛔`. Only the
+   TP1 cost fix remains, and it waits on a trade (see the checkpoints at the top).
 2. ~~`PermitRootLogin yes`~~ — **done 2026-10-04.** Set to `no` and sshd restarted.
    Access is unaffected: both operator and tooling log in as `dmonk`.
 3. ~~The reboot test~~ — **done 2026-10-04, and it passed.** First real reboot since the
@@ -174,9 +173,11 @@ loudly. Keeps 30 days. Pull one to the Mac occasionally.
    `NRestarts` reset. That was a deliberate reboot with clean automatic recovery, not a
    fault, and no error was logged either side of it. Judge the two-week requirement on
    errors and missed daily decisions, not on one process's uptime.
-4. **`nakhoda-alloc`'s demo clock.** Nakhoda's CLAUDE.md requires **two weeks clean** before
-   real money is considered. Started 2026-09-24 04:17 UTC, zero errors and zero restarts as
-   of 2026-10-04. But read `Nakhoda/docs/OOS-FINDING-2026-09-08.md` first: the rule passed a
+4. **`nakhoda-alloc`'s demo clock — two weeks clean as of 2026-10-08.** Nakhoda's
+   CLAUDE.md requires **two weeks clean** before real money is considered. Started
+   2026-09-24 04:17 UTC; zero errors and no missed daily decision through 2026-10-08. The
+   10-08 rebalance cut it from 10 sleeves to 5 (Donchian exits in a falling market, equity
+   27,940 USDT virtual) — normal, not a fault. But read `Nakhoda/docs/OOS-FINDING-2026-09-08.md` first: the rule passed a
    locked crypto holdout and then **failed out of domain** — edge −2.2%/yr, breadth 2/22,
    and timing indistinguishable from matched random entry. Passing the demo gate proves the
    plumbing, not the edge.
