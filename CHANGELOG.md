@@ -4,6 +4,23 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — fix: shadow prompt crashed on real (numpy) signals; outages sent as null
+
+### Fixed
+- **The 09:15 context fix broke the shadow agents on real signals.**
+  `price_above_ema200` / `price_above_vwap` compared numpy floats and produced
+  `numpy.bool_`, which `json.dumps` refuses. The prompt is built outside the per-provider
+  guard, so on the first real BUY/SELL the background thread would have died and
+  recorded nothing. Every test and live probe had used Python floats. The owner's
+  question "what data is sent to the agents?" exposed it. Both flags are now `bool()`,
+  and a test builds the prompt from numpy values. No signal fired in between
+  (production shadow tables 0 / 0), so nothing was lost.
+- **A Binance futures outage was shown to the agents as a calm market.** The
+  placeholders (funding 0, L/S 1.0, basis 0, OI 0, taker 1.0) went out as numbers. They
+  now go out as `null`, the same rule `signals/variants.py` applies. Suite 265 → 267.
+
+---
+
 ## 2026-10-09 — fix: shadow agents could misread levels against price
 
 A live probe on the VPS: price 2% above EMA200, and Claude answered "harga di bawah

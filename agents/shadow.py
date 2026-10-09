@@ -86,6 +86,11 @@ def _num(v):
     return round(f, 6) if math.isfinite(f) else None
 
 
+def _real(v, placeholder):
+    """None when `v` is the value a failed fetch leaves behind, else `v`."""
+    return None if v is None or v == placeholder else v
+
+
 def _label(v):
     return v if isinstance(v, str) and v in _LABELS else None
 
@@ -113,17 +118,22 @@ def build_context(signal):
         # `ema200_pct` backwards ("price below EMA200" with price 2% above it).
         "price": {"close": _num(last.get("close")), "rsi": _num(last.get("rsi")),
                   "ema200_vs_price_pct": pct(last.get("ema200")),
-                  "price_above_ema200": (e > last["ema200"]) if e and _num(last.get("ema200")) else None,
+                  # bool(): numpy comparisons give numpy.bool_, which json.dumps refuses.
+                  "price_above_ema200": bool(e > last["ema200"]) if e and _num(last.get("ema200")) else None,
                   "vwap_vs_price_pct": pct(last.get("vwap")),
-                  "price_above_vwap": (e > last["vwap"]) if e and _num(last.get("vwap")) else None,
+                  "price_above_vwap": bool(e > last["vwap"]) if e and _num(last.get("vwap")) else None,
                   "atr_pct": _num(last["atr"] / e * 100) if e and _num(last.get("atr")) else None,
                   "high24_vs_price_pct": pct(last.get("hi24")), "low24_vs_price_pct": pct(last.get("lo24")),
                   "mfi": _num(last.get("mfi")), "cmf": _num(last.get("cmf"))},
         "htf": {k: _label(v) for k, v in (s.get("_htf") or {}).items()
                 if k in ("4h", "1d", "1w") and _label(v)},
-        "market": {"funding_rate_pct": g("funding", "rate_pct"), "basis_pct": g("funding", "basis_pct"),
-                   "ls_ratio": g("long_short", "ratio"), "oi_change_pct": g("open_interest", "change_pct"),
-                   "taker_ratio": g("taker", "ratio"), "dxy_change_pct": g("dxy", "change_pct"),
+        # A failed Binance futures fetch leaves 0 / 1.0 placeholders: sent as numbers they
+        # read as a calm market, so they go out as null (missing), as variants treat them.
+        "market": {"funding_rate_pct": _real(g("funding", "rate_pct"), 0.0),
+                   "basis_pct": _real(g("funding", "basis_pct"), 0.0),
+                   "ls_ratio": _real(g("long_short", "ratio"), 1.0),
+                   "oi_change_pct": _real(g("open_interest", "change_pct"), 0.0),
+                   "taker_ratio": _real(g("taker", "ratio"), 1.0), "dxy_change_pct": g("dxy", "change_pct"),
                    "sp500_change_pct": g("sp500", "change_pct"), "vix_change_pct": g("vix", "change_pct")},
         "contributions": {k: [_num(v[0]), _num(v[1])] for k, v in (s.get("_contributions") or {}).items()},
         "exit_rules": rules,

@@ -3751,6 +3751,40 @@ def test_shadow_context_cannot_be_misread_about_levels_vs_price():
     for prompt in (SYSTEM, EXIT_SYSTEM):
         assert "_vs_price_pct" in prompt and "below the current price" in prompt, prompt
 
+def test_shadow_prompt_builds_from_numpy_values_like_a_real_signal():
+    """Real signals carry numpy floats. `price_above_ema200` came out as numpy.bool_,
+    json.dumps refused it, and the prompt never got built: the background thread would
+    die and record nothing. Every test used Python floats, so none saw it."""
+    import json
+    import numpy as np
+    from types import SimpleNamespace as NS
+    from agents.exit_shadow import build_exit_context
+    from agents.shadow import build_context, opinions_for
+    sig = _shadow_signal("BUY", "futures")
+    sig["entry_price"] = np.float64(82000.0)
+    sig["_last"] = {k: np.float64(v) for k, v in sig["_last"].items()}
+    json.dumps(build_context(sig))                                  # must not raise
+    json.dumps(build_exit_context(_open_position(), np.float64(81000.0), sig))
+    ok = lambda *a, provider=None, **k: NS(text='{"verdict": "AGREE", "confidence": 50, "reason": "r"}',
+                                           provider=provider, model="m", input_tokens=1, output_tokens=1)
+    recs = opinions_for(sig, providers=("anthropic",), ask_fn=ok)
+    assert recs[0]["verdict"] == "AGREE" and recs[0]["error"] is None, recs
+
+def test_shadow_context_sends_failed_fetches_as_missing_not_as_numbers():
+    """A Binance futures outage leaves funding 0 / L/S 1.0 / basis 0 / OI 0 / taker 1.0
+    placeholders. Sent as numbers, the agents judge an outage as a calm market."""
+    from agents.shadow import build_context
+    sig = _shadow_signal("BUY", "futures")
+    sig["_market"] = {"funding": {"rate_pct": 0.0, "basis_pct": 0.0}, "long_short": {"ratio": 1.0},
+                      "open_interest": {"change_pct": 0.0}, "taker": {"ratio": 1.0},
+                      "dxy": {"change_pct": -0.06}}
+    m = build_context(sig)["market"]
+    for k in ("funding_rate_pct", "basis_pct", "ls_ratio", "oi_change_pct", "taker_ratio"):
+        assert m[k] is None, (k, m[k])
+    assert m["dxy_change_pct"] == -0.06, "real readings must pass through"
+    real = build_context(_shadow_signal("BUY", "futures"))["market"]
+    assert real["ls_ratio"] == 1.31 and real["funding_rate_pct"] == 0.004
+
 def test_synth_entries_respects_stride_and_warmup():
     from scripts.exit_ic import synth_entries
     df = _exit_fixture([1000] * 260)
@@ -5110,6 +5144,8 @@ if __name__ == "__main__":
     run("waits long enough for thinking model",   test_shadow_waits_long_enough_for_a_thinking_model)
     run("context states the real exit rules",     test_shadow_context_states_the_exit_the_bot_will_actually_use)
     run("levels vs price cannot be misread",      test_shadow_context_cannot_be_misread_about_levels_vs_price)
+    run("prompt builds from numpy values",       test_shadow_prompt_builds_from_numpy_values_like_a_real_signal)
+    run("failed fetch sent as missing",          test_shadow_context_sends_failed_fetches_as_missing_not_as_numbers)
     run("prompt asks about the managed trade",    test_shadow_prompt_asks_about_the_managed_trade_not_a_fixed_24h)
     run("record stores the judged levels",        test_shadow_record_stores_the_levels_it_was_judged_on)
     run("old shadow table gains level columns",   test_shadow_table_gains_level_columns_on_an_old_database)
