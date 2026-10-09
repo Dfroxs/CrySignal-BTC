@@ -1,0 +1,26 @@
+H-F  BNBUSDT perp 1h  2025-01-01 00:00:00 → 2026-08-29 23:00:00  hours=57424
+missing: mark 0.00%  index 0.00%  perp 0.00%
+
+H-F  Spearman IC of z168(field) vs forward 24h log return, 95% block CI (168h)
+  basis_pct     IC=-0.0600  [-0.1069, -0.0161]  n=14520  years agree 2/2  → FAIL  (OPPOSES the engine)
+      per year: 2025:-0.081  2026:-0.026
+  funding_rate  IC=-0.0293  [-0.0767, +0.0176]  n=14520  years agree 1/2  → FAIL  (agrees with the engine)
+      per year: 2025:-0.071  2026:+0.015
+  taker_ratio   IC=-0.0013  [-0.0152, +0.0138]  n=14520  years agree 2/2  → FAIL  (OPPOSES the engine)
+      per year: 2025:-0.001  2026:-0.002
+
+descriptive (never a criterion)
+  basis_pct     z-IC 4h -0.0385  12h -0.0579  raw-IC 24h -0.0118
+      fwd 24h mean % by z quintile (low→high): [0.164, 0.0593, 0.0183, -0.0873, -0.1718]
+  funding_rate  z-IC 4h -0.0277  12h -0.0256  raw-IC 24h -0.0105
+      fwd 24h mean % by z quintile (low→high): [-0.1533, 0.3082, 0.1263, -0.1037, -0.1995]
+  taker_ratio   z-IC 4h -0.0296  12h -0.0029  raw-IC 24h -0.0024
+      fwd 24h mean % by z quintile (low→high): [-0.0174, 0.0409, -0.0002, -0.0415, -0.0003]
+
+  z-score correlation (Spearman):
+                z_basis_pct  z_funding_rate  z_taker_ratio
+z_basis_pct           1.000           0.350          0.011
+z_funding_rate        0.350           1.000         -0.003
+z_taker_ratio         0.011          -0.003          1.000
+
+written → docs/superpowers/specs/2026-10-09-hist-futures-ic-alts-run/BNBUSDT/recent.json

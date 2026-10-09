@@ -4,6 +4,128 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — research: H-F2/H-F3 — basis/funding in five other perps: INCONCLUSIVE
+
+Pre-registered (`6ed4d46`) before any non-BTC data was fetched. ETH, SOL, BNB, XRP and
+DOGE perps, 2020 → 2026-08.
+
+- **H-F2 (full window):** basis CI below 0 in 3/5, funding in 2/5. PASS needed ≥ 4, so
+  both are **INCONCLUSIVE**. No interval is above 0.
+- **H-F3 (2025–26):** basis negative in 3/5, funding in 4/5 but with only 1 CI below 0.
+  Both **INCONCLUSIVE**.
+- Together with BTC, the effect is real but weak and patchy: clearest in majors, absent
+  in SOL, |IC| 0.01–0.06. **The run-4 z-score condition is not licensed.** Supported
+  without an edge claim: stop scoring a high basis as BULLISH, and neutralise it in
+  run 4.
+- `hist_futures_ic.py` gains `--recent` (90% CI, 2025-01 →) and starts each symbol at
+  its listing hour. BTC output is unchanged. Results:
+  `docs/superpowers/specs/2026-10-09-hist-futures-ic-alts-results.md`.
+
+---
+
+## 2026-10-09 — design decision: futures opens from WEAK (the 1.0–1.2× dead zone)
+
+**Not a test result.** Owner decision, so run 3 yields futures trades. Futures opened 0
+positions in runs 1, 2 and 3 so far. In the 7 days before this, 12 of 15 futures blocks
+were `confidence_first`.
+
+- `FUTURES_CONFIG["entry"]["min_confidence"]`: `NORMAL` → **`WEAK`**. It covers first
+  entries and flips. Spot keeps NORMAL, and pyramiding keeps STRONG.
+- Evidence it does not throw away selection: `2026-10-04-deadzone-results.md`. Tiers do
+  not order P&L in either window, and the dead zone (−0.56pp) was no worse than NORMAL
+  (−0.79pp). H1 found no profit in the dead zone either, so this buys data, not edge.
+- `backtest._failing_gates` hard-coded `NORMAL`. It now reads the same per-mode minimum
+  Phase 3 reads, so replays keep mirroring live.
+- Verified on an isolated worktree with a copy of the VPS database (Telegram and LLM
+  keys removed). A futures BUY forced into the band (5.35 vs threshold 4.95, WEAK)
+  passed `confidence_first`, reached the remaining gates, and with them satisfied
+  opened #4 at $82,658 with the ×2 exit geometry. Suite 269 → 270.
+- Scoring effect on run 3 (to record at restart): H-L and H-V1 are per-cycle and
+  unaffected. H-B is offline at a fixed threshold. H-V2's fidelity check must apply the
+  WEAK minimum to futures from the restart onward. The adaptive controller now sees
+  futures opens, so the futures threshold may rise.
+
+---
+
+## 2026-10-09 — tooling: project Claude skills `backtest-expert` and `residual-edge-analyzer`
+
+Two skills from `tradermonty/claude-trading-skills` (MIT, commit `eab8d5c`) are now in
+`.claude/skills/`. Upstream content is copied unchanged. Each `SKILL.md` ends with a
+"SpotSignal notes" section that ties it to this repo's discipline: pre-registration, the
+count-matched random baseline, the ~12–15 fires/year ceiling and the threshold-sweep trap.
+
+- **backtest-expert**: stress-test and bias methodology, plus a stdlib evaluator. Its
+  verdict has no baseline, so the notes say to use it as a checklist, never as a pass.
+- **residual-edge-analyzer**: regresses a dated return stream on declared baselines (BTC
+  buy-and-hold, a matched random book), with HAC errors and rolling stability. It answers
+  whether the paper book is more than BTC beta.
+- Both scripts were read in full before install. Neither makes network calls, needs keys,
+  or places orders. The other ~70 skills were rejected, one line each with the reason in
+  `.claude/skills/README.md`: equity-only, built for discretionary human journals, need an
+  FMP key, or are unvalidated regime heuristics.
+- No bot code, config or run is touched.
+
+---
+
+## 2026-10-09 — research: H-F — basis and funding predict BTC 24h (bearish when high); taker does not
+
+Pre-registered (`4271d44`) before any data was fetched. Binance does serve years of mark,
+index, funding and taker-buy history, contrary to the backtest note, so three of the
+"live-only" fields were testable on 2020-01 → 2026-08 (58,392 hours) without waiting
+for run 3.
+
+- **basis_pct PASS, sign opposite to the engine**: z168 IC −0.048 [−0.072, −0.026],
+  5/7 years. The engine scores a high basis as bullish.
+- **funding_rate PASS**: IC −0.056 [−0.085, −0.030], 6/7 years. Contrarian, as the
+  engine reads it, but its absolute bands rarely fire.
+- **taker_ratio FAIL**: IC +0.002.
+- **Caveat that matters**: both passing fields flipped or faded in 2025–2026, and the
+  quintile spread is about one round trip's cost. This licenses designing a z-score
+  condition {funding −1, basis −1} for run 4, tested on post-2026-08-29 data. It is not
+  an edge yet. Neither live variant uses that sign set.
+- Added `scripts/fetch_futures_history.py` and `scripts/hist_futures_ic.py`. The CSVs
+  are gitignored and verified by `sha256.txt`.
+- Results: `docs/superpowers/specs/2026-10-09-hist-futures-ic-results.md`.
+
+---
+
+## 2026-10-09 — feat: Q&A bot gets project knowledge, chat memory and engine reasons; Sonnet 5.5
+
+The owner reported that the Q&A bot did not understand context. It had none: a 12-line
+system prompt, a facts snapshot with every engine reason line dropped except the ⛔ veto,
+no memory of the previous question, and no view of a message the owner replied to.
+Follow-ups like "kenapa?" arrived with no referent, and "why HOLD?" could only be answered
+with `strength < threshold`.
+
+### Added
+- **`agents/qa_knowledge.md`**: how the bot works, in Indonesian. Covers the pipeline,
+  threshold and confidence (including the 1.0–1.2× dead zone), what every gate name
+  means, exits, what STEP 1 found, the run-3 lock and how to read each FAKTA field.
+  It is appended to the system prompt, which stays fixed text and is never built from
+  input.
+- **Engine reason lines** for the newest 3 cycles per mode (16 lines, 160 chars each),
+  plus `buy`, `sell`, `price` and `gap` (threshold − strength) on all 24 recent cycles.
+  News/RSS headlines never reach `reasons`. Contributions, variants and verdicts stay out
+  until 2026-11-08, and the tripwire is unchanged.
+- **Chat memory**: the last 6 exchanges within 60 minutes (`data/qa_history.json`,
+  gitignored) are quoted as RIWAYAT.
+- **Reply context**: when the owner replies to a bot message, its text is quoted as
+  PESAN YANG DIBALAS. Quoted data has `<<<`/`>>>` neutralised so it cannot close its own
+  quote.
+
+### Changed
+- `QA_LLM_MODEL` default: `claude-haiku-4-5` → **`claude-sonnet-5-5`** (owner, 2026-10-09).
+  It goes through the existing non-Haiku path (effort low, server-side fallback). Its
+  price ($2/$10) is added to `PRICES_USD_PER_MTOK`. The shadow agents' model is untouched.
+- The answer limit was relaxed from 150 words to "usually under 200, longer when asked".
+- Live check on a copy of the VPS database with a follow-up question: Sonnet named the
+  0.2-point gap, the reason lines on each side, and the `confidence_first` /
+  `fakeout_first` blocks, and used the previous exchange. 11.4k input tokens, about
+  $0.03 per question.
+- Suite 267 → 269.
+
+---
+
 ## 2026-10-09 — fix: shadow prompt crashed on real (numpy) signals; outages sent as null
 
 ### Fixed

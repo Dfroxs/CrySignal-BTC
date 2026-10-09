@@ -1,0 +1,114 @@
+{
+ "health": {
+  "hours": 58392,
+  "mark_missing": 0.0,
+  "index_missing": 0.0,
+  "perp_missing": 0.0,
+  "discard": false
+ },
+ "H-F": {
+  "basis_pct": {
+   "ic": 0.0011762541169093382,
+   "ci95": [
+    -0.032883429516475736,
+    0.027201660432480092
+   ],
+   "n": 14520,
+   "per_year": {
+    "2025": 0.00319131615944913,
+    "2026": -0.00033148031095720133
+   },
+   "years_agree": 1,
+   "verdict": "FAIL",
+   "engine_sign": 1,
+   "sign_vs_engine": "agrees with"
+  },
+  "funding_rate": {
+   "ic": -0.020912781824921414,
+   "ci95": [
+    -0.07266128960378969,
+    0.021841899009284092
+   ],
+   "n": 14520,
+   "per_year": {
+    "2025": -0.01912487617019728,
+    "2026": -0.0211425728013331
+   },
+   "years_agree": 2,
+   "verdict": "FAIL",
+   "engine_sign": -1,
+   "sign_vs_engine": "agrees with"
+  },
+  "taker_ratio": {
+   "ic": -0.009711442909478505,
+   "ci95": [
+    -0.022109044384589,
+    0.002920172218556053
+   ],
+   "n": 14520,
+   "per_year": {
+    "2025": -0.014834747471571607,
+    "2026": -0.0013381494996066471
+   },
+   "years_agree": 2,
+   "verdict": "FAIL",
+   "engine_sign": 1,
+   "sign_vs_engine": "OPPOSES"
+  }
+ },
+ "descriptive": {
+  "basis_pct": {
+   "z_ic_4h": 0.00237958036001281,
+   "z_ic_12h": 0.007023317036449577,
+   "raw_ic_24h": -0.009561063913912675,
+   "quintile_mean_fwd24_pct": [
+    -0.0743,
+    -0.0505,
+    -0.04,
+    -0.0508,
+    -0.0452
+   ]
+  },
+  "funding_rate": {
+   "z_ic_4h": -0.017156732930565292,
+   "z_ic_12h": -0.01897736378597757,
+   "raw_ic_24h": -0.03008192161168521,
+   "quintile_mean_fwd24_pct": [
+    0.0054,
+    0.1449,
+    -0.2918,
+    0.0088,
+    -0.1283
+   ]
+  },
+  "taker_ratio": {
+   "z_ic_4h": -0.002525840809851701,
+   "z_ic_12h": 0.0011375603961564812,
+   "raw_ic_24h": -0.013384652316812018,
+   "quintile_mean_fwd24_pct": [
+    0.0077,
+    -0.1045,
+    -0.0458,
+    -0.1231,
+    0.005
+   ]
+  },
+  "z_corr_spearman": {
+   "z_basis_pct": {
+    "z_basis_pct": 1.0,
+    "z_funding_rate": 0.246,
+    "z_taker_ratio": 0.035
+   },
+   "z_funding_rate": {
+    "z_basis_pct": 0.246,
+    "z_funding_rate": 1.0,
+    "z_taker_ratio": -0.004
+   },
+   "z_taker_ratio": {
+    "z_basis_pct": 0.035,
+    "z_funding_rate": -0.004,
+    "z_taker_ratio": 1.0
+   }
+  }
+ }
+}

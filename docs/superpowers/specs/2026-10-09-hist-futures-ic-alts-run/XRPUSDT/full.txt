@@ -1,0 +1,26 @@
+H-F  XRPUSDT perp 1h  2020-01-06 08:00:00 → 2026-08-29 23:00:00  hours=58264
+missing: mark 0.00%  index 0.00%  perp 0.00%
+
+H-F  Spearman IC of z168(field) vs forward 24h log return, 95% block CI (168h)
+  basis_pct     IC=-0.0448  [-0.0663, -0.0239]  n=58121  years agree 6/7  → PASS  (OPPOSES the engine)
+      per year: 2020:-0.035  2021:-0.040  2022:-0.086  2023:-0.059  2024:-0.017  2025:-0.068  2026:+0.016
+  funding_rate  IC=-0.0401  [-0.0669, -0.0134]  n=57553  years agree 6/7  → PASS  (agrees with the engine)
+      per year: 2020:-0.003  2021:-0.028  2022:-0.098  2023:-0.013  2024:-0.015  2025:-0.098  2026:+0.018
+  taker_ratio   IC=-0.0059  [-0.0144, +0.0031]  n=58121  years agree 4/7  → FAIL  (OPPOSES the engine)
+      per year: 2020:-0.019  2021:+0.003  2022:+0.006  2023:-0.006  2024:-0.007  2025:-0.029  2026:+0.015
+
+descriptive (never a criterion)
+  basis_pct     z-IC 4h -0.0192  12h -0.0293  raw-IC 24h -0.0055
+      fwd 24h mean % by z quintile (low→high): [0.1344, 0.0708, 0.0971, 0.1087, -0.0244]
+  funding_rate  z-IC 4h -0.0125  12h -0.0315  raw-IC 24h -0.0065
+      fwd 24h mean % by z quintile (low→high): [-0.0103, 0.1774, 0.0643, 0.1432, 0.0361]
+  taker_ratio   z-IC 4h -0.0153  12h -0.0046  raw-IC 24h -0.0085
+      fwd 24h mean % by z quintile (low→high): [-0.0106, 0.1311, 0.1414, 0.0926, 0.0321]
+
+  z-score correlation (Spearman):
+                z_basis_pct  z_funding_rate  z_taker_ratio
+z_basis_pct           1.000           0.330          0.013
+z_funding_rate        0.330           1.000         -0.028
+z_taker_ratio         0.013          -0.028          1.000
+
+written → docs/superpowers/specs/2026-10-09-hist-futures-ic-alts-run/XRPUSDT/full.json

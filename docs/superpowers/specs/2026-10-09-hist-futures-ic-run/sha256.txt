@@ -1,0 +1,4 @@
+ab0a13118888df5d6004445cee4b1d55d4e7b148ac63ccdee02f8b2b7d0f5e0d  docs/superpowers/specs/2026-10-09-hist-futures-ic-run/funding.csv
+6d00d3b5138ea2021b7079ea461b976afc0a7135648bee6fe075abea6faabb1b  docs/superpowers/specs/2026-10-09-hist-futures-ic-run/index_1h.csv
+75c8c0c610f6b9c8e0a424c67331c82a0347b5e368fe2b8288baf14244886244  docs/superpowers/specs/2026-10-09-hist-futures-ic-run/mark_1h.csv
+c0113801e8c18bb62c4027efbfd40cf1e5dda1a25b748de8123f98bd461c7d4d  docs/superpowers/specs/2026-10-09-hist-futures-ic-run/perp_1h.csv

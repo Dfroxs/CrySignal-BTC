@@ -31,6 +31,7 @@ PRICES_USD_PER_MTOK = {
     "claude-opus-5-5": (4.00, 20.00),
     "claude-haiku-4-5": (1.00, 5.00),
     "claude-haiku-4-5-20251001": (1.00, 5.00),   # the snapshot id the API may report back
+    "claude-sonnet-5-5": (2.00, 10.00),           # the Q&A bot's default (QA_LLM_MODEL)
     "deepseek-v4-pro": (1.32, 3.96),
 }
 

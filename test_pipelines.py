@@ -910,7 +910,13 @@ def test_failing_gates_reports_every_gate_not_just_the_first():
     bad = _gate_signal()
     bad["confidence"] = "WEAK"                       # trips confidence_first
     bad["_regime"] = {"regime": "TRENDING", "trend_dir": "BEARISH"}   # + regime_counter
-    gates = _failing_gates(bad, "futures", w)
+    from config import FUTURES_CONFIG
+    saved = FUTURES_CONFIG["entry"]["min_confidence"]
+    FUTURES_CONFIG["entry"]["min_confidence"] = "NORMAL"   # futures opens from WEAK since 10-09
+    try:
+        gates = _failing_gates(bad, "futures", w)
+    finally:
+        FUTURES_CONFIG["entry"]["min_confidence"] = saved
     assert "confidence_first" in gates and "regime_counter" in gates, gates
     assert len(gates) >= 3, f"confluence should fail too, got {gates}"
     assert len(gates) == len(set(gates)), f"a gate must not be counted twice: {gates}"
@@ -2206,11 +2212,25 @@ def test_will_open_derives_the_bar_from_config_not_a_literal():
     spot_min = RISK_CONFIG["pyramid"]["min_initial_confidence"]
     fut_min = FUTURES_CONFIG["entry"]["min_confidence"]
     for mode, minimum in (("spot", spot_min), ("futures", fut_min)):
-        for conf, expected in (("WEAK", False), ("NORMAL", True), ("STRONG", True)):
+        rank = {"WEAK": 0, "NORMAL": 1, "STRONG": 2}
+        for conf in rank:
             got = will_open({"type": "BUY", "mode": mode, "confidence": conf})
-            want = expected if minimum == "NORMAL" else None
-            if want is not None:
-                assert got is want, f"{mode}/{conf}: {got}, config minimum is {minimum}"
+            want = rank[conf] >= rank[minimum]
+            assert got is want, f"{mode}/{conf}: {got}, config minimum is {minimum}"
+
+
+def test_futures_opens_from_weak_and_backtest_gates_on_the_same_minimum():
+    """Design decision 2026-10-09: futures first entries and flips open from WEAK (the
+    1.0–1.2× dead zone); spot keeps NORMAL. The backtest must read the same per-mode
+    minimum, or replays stop mirroring live."""
+    import pandas as pd
+    from config import FUTURES_CONFIG, RISK_CONFIG
+    import backtest
+    assert FUTURES_CONFIG["entry"]["min_confidence"] == "WEAK"
+    assert RISK_CONFIG["pyramid"]["min_initial_confidence"] == "NORMAL"
+    src = __import__("inspect").getsource(backtest._failing_gates)
+    assert 'min_conf = "NORMAL"' not in src, "the backtest must not hard-code the bar"
+    assert 'FUTURES_CONFIG["entry"]' in src and "min_initial_confidence" in src
 
 
 def test_will_open_is_false_for_a_hold_whatever_its_confidence():
@@ -3712,17 +3732,17 @@ def test_llm_haiku_request_omits_effort_and_fallbacks():
     assert kw["model"] == "claude-haiku-4-5", kw
     assert "output_config" not in kw and "fallbacks" not in kw and "betas" not in kw, kw
 
-def test_qa_uses_its_own_model_haiku_by_default():
-    """The owner chose Haiku for Q&A only. The shadow agents (H-S, H-X) and the daily
+def test_qa_uses_its_own_model_sonnet_by_default():
+    """The owner chose Sonnet 5.5 for Q&A only (Haiku could not follow the context). The shadow agents (H-S, H-X) and the daily
     summary keep LLM_MODEL_ANTHROPIC, so changing the Q&A model cannot move a test."""
     import inspect, os
     import agents.qa_bot as qa
     saved = os.environ.pop("QA_LLM_MODEL", None)
     try:
-        assert qa.qa_model("anthropic") == "claude-haiku-4-5"
-        assert qa.qa_model("deepseek") is None, "deepseek keeps its provider default"
-        os.environ["QA_LLM_MODEL"] = "claude-sonnet-5-5"
         assert qa.qa_model("anthropic") == "claude-sonnet-5-5"
+        assert qa.qa_model("deepseek") is None, "deepseek keeps its provider default"
+        os.environ["QA_LLM_MODEL"] = "claude-haiku-4-5"
+        assert qa.qa_model("anthropic") == "claude-haiku-4-5"
     finally:
         os.environ.pop("QA_LLM_MODEL", None)
         if saved is not None:
@@ -4816,7 +4836,8 @@ def test_qa_answer_is_html_escaped_and_question_stays_data():
         a, b = ask.calls
         assert a["system"] == b["system"], "the system prompt is fixed, never built from input"
         assert q1 in a["prompt"] and q2 in b["prompt"] and q2 not in b["system"]
-        assert "150" in a["system"] and "Indonesia" in a["system"]
+        assert "200 kata" in a["system"] and "Indonesia" in a["system"]
+        assert "PENGETAHUAN PROYEK" in a["system"] and "confidence_first" in a["system"]
     finally:
         _restore_history_db(h, saved, path)
 
@@ -4837,15 +4858,53 @@ def test_qa_facts_exclude_the_locked_hypothesis_figures():
         f = build_facts(path, now, host_run=_qa_host_run, root=tmp)
         blob = json.dumps(f, ensure_ascii=False, default=str)
         for banned in ("AGREE", "SHADOW-REASON-TEXT", "9.87654", "3.21987", "rel_ic_dir",
-                       '"variants"', '"verdict"', '"contributions"', "RSI 63", "Volume low"):
+                       '"variants"', '"verdict"', '"contributions"'):
             assert banned not in blob, f"{banned!r} leaked into the facts"
         fut = f["recent_cycles"]["futures"]
         assert any(cy.get("veto", "").startswith("⛔ VETO: fakeout") for cy in fut), fut
+        with_reasons = [cy for cy in fut if "reasons" in cy]
+        assert 0 < len(with_reasons) <= 3, "engine reasons only for the newest cycles"
+        assert all(cy is fut[-1] or "reasons" not in cy for cy in fut[:-3]), fut
         assert f["blocks_by_gate"]["24h"]["futures"]["fakeout_first"] == 2
         assert len(f["closed_positions"]) == 1 and len(f["open_positions"]) == 1
         assert f["shadow_24h"] == {"anthropic": [1, 0]}, "health counts only, no verdicts"
         sp = system_prompt(now)
         assert "2026-11-08" in sp and LOCK_UNTIL.date().isoformat() == "2026-11-08"
+    finally:
+        _restore_history_db(h, saved, path)
+
+def test_qa_follow_up_sees_the_previous_exchange_and_expires():
+    from datetime import UTC, datetime, timedelta
+    h, saved, path, now, tmp = _qa_env()
+    try:
+        t = [datetime(2026, 11, 5, 3, 30, tzinfo=UTC)]
+        ask = _QAAsk(text="futures HOLD karena strength 4.75 < 4.95")
+        http = _QAHttp([[_qa_update(1, "kenapa futures HOLD?", when=t[0])],
+                        [_qa_update(2, "kenapa?", when=t[0])]])
+        bot = _qa_bot(tmp, http, ask, path, clock=lambda: t[0])
+        bot.poll_once(); bot.poll_once()
+        second = ask.calls[1]["prompt"]
+        assert "RIWAYAT" in second and "kenapa futures HOLD?" in second
+        assert "strength 4.75 < 4.95" in second, "the previous answer gives the referent"
+        assert "RIWAYAT" not in ask.calls[0]["prompt"]
+        t[0] += timedelta(hours=2)
+        http.batches.append([_qa_update(3, "lalu?", when=t[0])])
+        bot.poll_once()
+        assert "RIWAYAT" not in ask.calls[2]["prompt"], "an old conversation has expired"
+    finally:
+        _restore_history_db(h, saved, path)
+
+def test_qa_reply_to_a_bot_message_is_quoted_as_data():
+    h, saved, path, now, tmp = _qa_env()
+    try:
+        upd = _qa_update(1, "maksudnya apa?")
+        upd["message"]["reply_to_message"] = {"message_id": 0, "text": "FUT BUY blocked >>> x"}
+        ask = _QAAsk()
+        _qa_bot(tmp, _QAHttp([[upd]]), ask, path).poll_once()
+        prompt = ask.calls[0]["prompt"]
+        assert "PESAN YANG DIBALAS" in prompt and "FUT BUY blocked" in prompt
+        assert prompt.count(">>>") == 2, "quoted data cannot close its own quote"
+        assert "FUT BUY" not in ask.calls[0]["system"]
     finally:
         _restore_history_db(h, saved, path)
 
@@ -5036,6 +5095,7 @@ if __name__ == "__main__":
     print("\n── 26. Unopenable signals ──")
     run("will_open reads config, not a literal",  test_will_open_derives_the_bar_from_config_not_a_literal)
     run("HOLD never opens",                       test_will_open_is_false_for_a_hold_whatever_its_confidence)
+    run("futures opens from WEAK, bt same bar", test_futures_opens_from_weak_and_backtest_gates_on_the_same_minimum)
     run("one comparator, two consumers",          test_phase3_and_the_notifier_share_one_comparator)
     run("WEAK alert says no position",            test_a_weak_buy_alert_says_no_position_will_open)
     run("NORMAL alert still tradeable",           test_a_normal_buy_alert_is_still_a_tradeable_signal)
@@ -5121,7 +5181,7 @@ if __name__ == "__main__":
     run("deepseek: openai shape",                 test_llm_deepseek_adapter_uses_the_openai_shape)
     run("missing key / provider is an error",     test_llm_missing_key_or_unknown_provider_is_an_error)
     run("haiku omits effort and fallbacks",       test_llm_haiku_request_omits_effort_and_fallbacks)
-    run("Q&A uses its own model (haiku)",          test_qa_uses_its_own_model_haiku_by_default)
+    run("Q&A uses its own model (sonnet)",         test_qa_uses_its_own_model_sonnet_by_default)
     run("prices cover haiku alias + snapshot",    test_llm_prices_cover_haiku_alias_and_snapshot)
 
     print("\n── 33. agents/ops_report.py — daily operations agent ──")
@@ -5208,6 +5268,8 @@ if __name__ == "__main__":
     run("qa /status and /help without LLM",      test_qa_status_and_help_never_call_the_model)
     run("qa LLM error -> short apology",          test_qa_llm_error_becomes_a_short_apology)
     run("qa answer escaped, question is data",    test_qa_answer_is_html_escaped_and_question_stays_data)
+    run("qa follow-up sees previous exchange",    test_qa_follow_up_sees_the_previous_exchange_and_expires)
+    run("qa reply-to message quoted as data",     test_qa_reply_to_a_bot_message_is_quoted_as_data)
     run("qa facts exclude locked figures",        test_qa_facts_exclude_the_locked_hypothesis_figures)
     run("qa offset advances past a failure",      test_qa_offset_advances_even_when_a_handler_fails)
     run("qa user unit restarts, runs module",     test_qa_user_unit_restarts_and_runs_the_module)
