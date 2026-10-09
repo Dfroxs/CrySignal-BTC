@@ -4,6 +4,23 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — research: H-CT — counter-trend veto: INCONCLUSIVE (under-powered); the veto stays
+
+Pre-registered (`c70edf7`). The instrument `scripts/veto_ic.py` was committed (`dc27a21`)
+before the scored run. BTC perp 1h, 2021 → 2026-08, through the live futures exit.
+
+- **SELL in a 1D-bullish trend (why futures never shorts):** 73 vetoed shorts in
+  2021–24 at −0.535pp against random −0.132pp, and 24 in 2025–26 at −0.199pp against
+  −0.122pp. Both are under the power guard, so INCONCLUSIVE, but every point estimate
+  says they are worse than random and lose money. 74 of 97 would also fail
+  `regime_counter`/`trend_confluence`.
+- **BUY in a 1D-bearish trend:** PASS in 2025–26 (+1.14pp, n=32), but −1.12pp in
+  2021–24. The sign flips, so it is not passed.
+- **The veto stays.** Opening counter-trend shorts for data is not recommended.
+- Results: `docs/superpowers/specs/2026-10-09-counter-trend-results.md`.
+
+---
+
 ## 2026-10-09 — research: H-F2/H-F3 — basis/funding in five other perps: INCONCLUSIVE
 
 Pre-registered (`6ed4d46`) before any non-BTC data was fetched. ETH, SOL, BNB, XRP and
