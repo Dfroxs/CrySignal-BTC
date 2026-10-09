@@ -37,6 +37,13 @@ Shadow tables held 0 / 0 rows right before the restart.
 **H-S and H-X count only opinions with `timestamp >= 2026-10-09T09:17:00Z`**, which
 supersedes the 06:16 and 07:16 cut-offs (prereg amendment).
 
+**Restart 2026-10-09 09:27 UTC at `1ca9aef`.** The 09:15 context fix would have crashed
+the shadow agents on the first real signal (`numpy.bool_` is not JSON-serialisable), and
+outage placeholders are now sent to the agents as null. No BUY/SELL fired between
+09:16 and 09:27, and the shadow tables were 0 / 0, so nothing was lost. A VPS probe with
+numpy values recorded all four opinions. **H-S and H-X count opinions with
+`timestamp >= 2026-10-09T09:28:00Z`.**
+
 ---
 
 ## New session? Do this first
