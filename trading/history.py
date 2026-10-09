@@ -136,6 +136,29 @@ def _init_tables():
             signal_id    INTEGER REFERENCES signals(id)
         );
 
+        -- Shadow LLM opinions on fired signals (agents/shadow.py). Never traded.
+        CREATE TABLE IF NOT EXISTS shadow_opinions (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp          TEXT    NOT NULL,
+            mode               TEXT,
+            signal_type        TEXT,
+            strength           REAL,
+            threshold          REAL,
+            confidence         TEXT,
+            entry_price        REAL,
+            signal_id          INTEGER REFERENCES signals(id),
+            provider           TEXT    NOT NULL,
+            model              TEXT,
+            verdict            TEXT,
+            opinion_confidence INTEGER,
+            reason             TEXT,
+            error              TEXT,
+            latency_ms         INTEGER,
+            input_tokens       INTEGER,
+            output_tokens      INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_shadow_signal ON shadow_opinions(signal_id);
+
         CREATE INDEX IF NOT EXISTS idx_blocks_gate ON signal_blocks(gate);
         CREATE INDEX IF NOT EXISTS idx_blocks_mode_gate ON signal_blocks(mode, gate);
     """)
@@ -514,6 +537,21 @@ def update_signal_outcome(signal_id, outcome, closed_at=None):
         "UPDATE signals SET outcome=?, closed_at=? WHERE id=?",
         (outcome, closed_at or datetime.now(UTC).isoformat(), signal_id),
     )
+    c.commit()
+
+
+_SHADOW_COLS = ("timestamp", "mode", "signal_type", "strength", "threshold", "confidence",
+                "entry_price", "signal_id", "provider", "model", "verdict",
+                "opinion_confidence", "reason", "error", "latency_ms", "input_tokens",
+                "output_tokens")
+
+
+def log_shadow_opinion(rec):
+    """Store one agents/shadow.py record. Shadow opinions never feed back into trading."""
+    c = _conn()
+    c.execute(f"INSERT INTO shadow_opinions ({', '.join(_SHADOW_COLS)}) "
+              f"VALUES ({', '.join('?' * len(_SHADOW_COLS))})",
+              tuple(rec.get(k) for k in _SHADOW_COLS))
     c.commit()
 
 

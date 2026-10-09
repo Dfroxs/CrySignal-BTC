@@ -913,6 +913,14 @@ def run_cycle():
     except Exception as e:  # noqa: BLE001 — a cache write must not kill the cycle
         logger.warning("threshold state update failed: %s", e)
 
+    # Shadow agents — Claude and DeepSeek judge each fired signal; logged, never traded
+    # (agents/shadow.py). Bounded by its own timeout and unable to raise into the cycle.
+    try:
+        from agents.shadow import run_shadow
+        run_shadow(spot_signal, futures_signal)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("shadow agents skipped: %s", e)
+
     # Phase 4 — notifications (defensive: a Telegram hiccup should never
     # crash the cycle loop. The send helpers already catch HTTP errors, but
     # a malformed signal could still raise during formatting.)

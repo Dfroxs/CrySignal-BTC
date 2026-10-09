@@ -82,6 +82,11 @@ def collect_db_facts(db_path, now):
                              "GROUP BY gate ORDER BY COUNT(*) DESC", d24))
     f["thresholds"] = dict(q("SELECT mode, threshold FROM cycle_log c WHERE id = "
                              "(SELECT MAX(id) FROM cycle_log WHERE mode = c.mode)"))
+    tables = {r[0] for r in q("SELECT name FROM sqlite_master WHERE type='table'")}
+    f["shadow_24h"] = ({p: [n, e or 0] for p, n, e in q(
+        f"SELECT provider, COUNT(*), SUM(error IS NOT NULL) FROM shadow_opinions "
+        f"WHERE {since} GROUP BY provider ORDER BY provider", d24)}
+        if "shadow_opinions" in tables else {})
     con.close()
     return f
 
@@ -142,6 +147,9 @@ def anomalies(f):
         out.append("allocbot tidak membuat keputusan harian")
     if f.get("backup_latest") != f"db-{f.get('today')}.db":
         out.append(f"backup hari ini tidak ada (terbaru: {f.get('backup_latest')})")
+    for prov, (n, errs) in (f.get("shadow_24h") or {}).items():
+        if n and errs == n:
+            out.append(f"agent shadow {prov} gagal di semua {n} panggilan — key/saldo?")
     if f.get("opened_7d") == 0:
         out.append("tidak ada posisi baru dalam 7 hari — data trade tidak bertambah")
     return out
@@ -182,6 +190,8 @@ def render(f, anoms, summary=None, source=None):
     top = list((f.get("blocks_24h") or {}).items())[:3]
     if top:
         lines.append("gerbang teratas: " + ", ".join(f"{e(g)} {n}" for g, n in top))
+    for prov, (n, errs) in (f.get("shadow_24h") or {}).items():
+        lines.append(f"shadow {e(prov)}: {n} pendapat, {errs} gagal")
     if f.get("thresholds"):
         lines.append("threshold: " + ", ".join(f"{e(m)} {t}" for m, t in f["thresholds"].items()))
     if summary:

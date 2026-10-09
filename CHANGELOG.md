@@ -4,6 +4,31 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — feat: shadow agents (Claude + DeepSeek), logged and never traded
+
+For **run 3**, on `develop`.
+
+### Added
+- **`agents/shadow.py`**: for every non-HOLD, non-cached signal, Claude
+  (`claude-opus-5-5`) and DeepSeek (`deepseek-v4-pro`) are asked in parallel, under
+  one 45s timeout, whether the trade is likely profitable over 24h. The answer is
+  AGREE/DISAGREE plus confidence and a short reason, stored per provider in the new
+  `shadow_opinions` table. **No gate reads it, and no position depends on it.** The
+  models see numbers and whitelisted labels only. Engine reasons and news are not sent,
+  because they can carry outside text into the prompt. A failing or hanging provider is
+  recorded as an error and costs the cycle nothing. Configured by `SHADOW_PROVIDERS`.
+- Called from `run_bot.run_cycle` after Phase 3, inside its own guard.
+- **`scripts/shadow_eval.py`** scores the new run-3 prereg addendum H-S: per provider,
+  the forward 24h return of AGREE signals minus DISAGREE signals, in the signal's
+  direction, with a 20-per-group power guard.
+- `agents/ops_report.py` reports opinions per provider and flags a provider that failed
+  every call in 24h (key or balance).
+- Isolated cycle check: a forced futures signal reached both providers, both were
+  recorded as `API_KEY is not set` (no keys on the Mac), the cycle completed in 12s, and
+  the ops report flagged both. Suite 185 → 194.
+
+---
+
 ## 2026-10-09 — feat: daily operations agent (agents/ops_report.py)
 
 For **run 3**, on `develop`. Never touches trading.
