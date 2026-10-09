@@ -1,0 +1,12 @@
+# started 2026-10-09T07:54:56Z at 234cf87
+WARNING:signals.market_data:binance fetch_ohlcv failed (binance GET https://api.binance.com/api/v3/exchangeInfo) — falling back to data-api.binance.vision for 1800s
+BTC futures 1h 2022-01-01 → 2025-10-08   kept n=25 mean=+0.497pp   all blocked n=265 mean=-0.071pp
+
+fakeout_first     only-blocked n=  1 mean=-1.415   kept−only=— —  → INCONCLUSIVE
+regime_counter    only-blocked n=  5 mean=+0.451   kept−only=— —  → INCONCLUSIVE
+trend_confluence  only-blocked n=  0 mean=—   kept−only=— —  → INCONCLUSIVE
+psy_sl_first      only-blocked n=  0 mean=—   kept−only=— —  → INCONCLUSIVE
+sr_first          only-blocked n=  5 mean=-0.980   kept−only=— —  → INCONCLUSIVE
+
+written → docs/superpowers/specs/2026-10-09-futures-gates-run/result.json
+# finished 2026-10-09T08:34:53Z

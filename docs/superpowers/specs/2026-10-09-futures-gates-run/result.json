@@ -1,0 +1,66 @@
+{
+ "gates": {
+  "fakeout_first": {
+   "n_only": 1,
+   "mean_only": -1.415,
+   "n_kept": 25,
+   "mean_kept": 0.4972,
+   "diff": null,
+   "ci": null,
+   "verdict": "INCONCLUSIVE"
+  },
+  "regime_counter": {
+   "n_only": 5,
+   "mean_only": 0.4509999999999999,
+   "n_kept": 25,
+   "mean_kept": 0.4972,
+   "diff": null,
+   "ci": null,
+   "verdict": "INCONCLUSIVE"
+  },
+  "trend_confluence": {
+   "n_only": 0,
+   "mean_only": null,
+   "n_kept": 25,
+   "mean_kept": 0.4972,
+   "diff": null,
+   "ci": null,
+   "verdict": "INCONCLUSIVE"
+  },
+  "psy_sl_first": {
+   "n_only": 0,
+   "mean_only": null,
+   "n_kept": 25,
+   "mean_kept": 0.4972,
+   "diff": null,
+   "ci": null,
+   "verdict": "INCONCLUSIVE"
+  },
+  "sr_first": {
+   "n_only": 5,
+   "mean_only": -0.9802,
+   "n_kept": 25,
+   "mean_kept": 0.4972,
+   "diff": null,
+   "ci": null,
+   "verdict": "INCONCLUSIVE"
+  }
+ },
+ "kept_n": 25,
+ "kept_mean": 0.4972,
+ "blocked_n": 265,
+ "blocked_mean": -0.07126037735849057,
+ "config": {
+  "start": "2022-01-01",
+  "end": "2025-10-08",
+  "out": "docs/superpowers/specs/2026-10-09-futures-gates-run/result.json",
+  "tested": [
+   "fakeout_first",
+   "regime_counter",
+   "trend_confluence",
+   "psy_sl_first",
+   "sr_first"
+  ],
+  "min_only": 20
+ }
+}

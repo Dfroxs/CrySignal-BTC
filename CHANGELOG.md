@@ -4,6 +4,18 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — docs: futures gates test — INCONCLUSIVE, no gate removed
+
+`2026-10-09-futures-gates-results.md`. All five gates are INCONCLUSIVE by the power
+guard: the gates overlap so completely that only 11 of 265 blocked signals had a single
+tested gate as their sole reason. The "only-blocked" design cannot resolve this stack,
+and a joint/ordered removal test would have to be pre-registered separately.
+Descriptive: on 2022-01 → 2025-10 the stack separates correctly (kept +0.497pp, n=25,
+vs blocked −0.071pp, n=265), so the 2025–26 "gates hurt" lead did not replicate.
+`disabled_gates` stays empty.
+
+---
+
 ## 2026-10-09 — feat: futures entry gates can be disabled by config (empty: no change)
 
 On `develop`, ready for the futures-gates prereg result. `FUTURES_CONFIG["entry"]
