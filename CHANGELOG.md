@@ -4,6 +4,29 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — fix: shadow agents judge the trade the bot will actually run
+
+For **run 3**, on `develop`. Raised by the owner: "untung 24 jam itu untuk spot atau
+futures?"
+
+### Changed
+- **The question.** The agents were asked whether a trade would be profitable "over
+  the next 24 hours" after ~0.2% costs. That fits neither mode: both exit on stops,
+  targets and trailing stops within a 72h cap. Futures levels are widened ×2 at open, so
+  the agents saw levels the bot never uses. Spot is long-only and costs ~0.30%. The
+  prompt now carries an `exit_rules` block per mode (`agents/shadow.exit_terms`, read from
+  the same config and helpers the bot uses) and asks whether *that managed trade* closes
+  at a net profit.
+- **What is stored.** `shadow_opinions` now records the stop, target(s) and ATR each
+  opinion was judged on. `_migrate_shadow_opinions` adds the columns to a table that
+  predates them, and creates its index only after they exist.
+- **How H-S is scored.** `scripts/shadow_eval.py` replays each opinion's trade through
+  `backtest._simulate_forward` with the bot's exits. That is the primary metric. The
+  24h signed return is now descriptive. The run-3 prereg carries a dated amendment, and
+  only opinions recorded after this deploy count. Suite 211 → 216.
+
+---
+
 ## 2026-10-09 — fix: shadow timeout 45 s → 90 s for a thinking DeepSeek
 
 `deepseek-v4-pro` thinks by default. One opinion measured on the Mac took 31.7 s and

@@ -146,6 +146,10 @@ def _init_tables():
             threshold          REAL,
             confidence         TEXT,
             entry_price        REAL,
+            stop_loss          REAL,
+            take_profit        REAL,
+            tp2                REAL,
+            atr                REAL,
             signal_id          INTEGER REFERENCES signals(id),
             provider           TEXT    NOT NULL,
             model              TEXT,
@@ -157,7 +161,6 @@ def _init_tables():
             input_tokens       INTEGER,
             output_tokens      INTEGER
         );
-        CREATE INDEX IF NOT EXISTS idx_shadow_signal ON shadow_opinions(signal_id);
 
         CREATE INDEX IF NOT EXISTS idx_blocks_gate ON signal_blocks(gate);
         CREATE INDEX IF NOT EXISTS idx_blocks_mode_gate ON signal_blocks(mode, gate);
@@ -165,6 +168,7 @@ def _init_tables():
     c.commit()
     _migrate_paper_positions()
     _migrate_cycle_log()
+    _migrate_shadow_opinions()
 
 
 def _migrate_cycle_log():
@@ -200,6 +204,28 @@ def _migrate_cycle_log():
     c.commit()
 
 
+def _migrate_shadow_opinions():
+    """shadow_opinions gained the levels each opinion was judged on (2026-10-09), so H-S
+    can score the trade the bot would have run. The index is created HERE, after the
+    columns exist: on a table that predates `signal_id`, creating it in the schema script
+    would fail before any migration ran."""
+    c = _conn()
+    for col, coltype in (("stop_loss", "REAL"), ("take_profit", "REAL"), ("tp2", "REAL"),
+                         ("atr", "REAL"), ("mode", "TEXT"), ("signal_type", "TEXT"),
+                         ("strength", "REAL"), ("threshold", "REAL"), ("confidence", "TEXT"),
+                         ("entry_price", "REAL"), ("signal_id", "INTEGER"), ("model", "TEXT"),
+                         ("opinion_confidence", "INTEGER"), ("reason", "TEXT"), ("error", "TEXT"),
+                         ("latency_ms", "INTEGER"), ("input_tokens", "INTEGER"),
+                         ("output_tokens", "INTEGER")):
+        try:
+            c.execute(f"ALTER TABLE shadow_opinions ADD COLUMN {col} {coltype}")
+        except Exception:
+            pass  # column already exists
+    c.commit()
+    c.execute("CREATE INDEX IF NOT EXISTS idx_shadow_signal ON shadow_opinions(signal_id)")
+    c.commit()
+
+
 def _migrate_paper_positions():
     """Add trailing-stop / partial-TP columns to existing paper_positions rows."""
     c = _conn()
@@ -221,6 +247,7 @@ def _migrate_paper_positions():
         except Exception:
             pass  # column already exists
     c.commit()
+
 
     # Back-fill tp1 = take_profit for existing open positions that lack it
     c.execute("""
@@ -541,7 +568,8 @@ def update_signal_outcome(signal_id, outcome, closed_at=None):
 
 
 _SHADOW_COLS = ("timestamp", "mode", "signal_type", "strength", "threshold", "confidence",
-                "entry_price", "signal_id", "provider", "model", "verdict",
+                "entry_price", "stop_loss", "take_profit", "tp2", "atr",
+                "signal_id", "provider", "model", "verdict",
                 "opinion_confidence", "reason", "error", "latency_ms", "input_tokens",
                 "output_tokens")
 

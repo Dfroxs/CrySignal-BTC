@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Score the shadow agents: run-3 pre-registration § H-S.
 
-For each stored opinion without an error: the forward 24h return in the SIGNAL's
-direction, from its entry price to the futures cycle price 24h later (from cycle_log,
-so no network is needed). Per provider: mean(AGREE) − mean(DISAGREE), with a 90%
-bootstrap interval. An agent earns attention only if the signals it agrees with do
-better than the ones it rejects.
+PRIMARY (amended 2026-10-09, before any shadow opinion existed): the trade the bot
+would have run. Each opinion's signal is replayed through `backtest._simulate_forward`,
+the bot's own exits per mode (spot 4h, futures 1h, the stored stop/target levels it was
+judged on, trailing, hold cap, costs), entered on the bar the bot scored. Per provider:
+mean(AGREE) − mean(DISAGREE) of that net P&L, with a 90% bootstrap interval.
+
+DESCRIPTIVE: the signed 24h return from cycle_log, as originally registered. It no
+longer decides anything: neither mode closes trades on a 24h clock.
 
     ./venv/bin/python scripts/shadow_eval.py --db data/server.db --start <run-3 started_at>
 """
@@ -45,13 +48,36 @@ def signed_forward(ops, prices, horizon_h=24):
     return out
 
 
-def evaluate(df):
+TF = {"futures": "1h", "spot": "4h"}
+BAR = {"1h": pd.Timedelta(hours=1), "4h": pd.Timedelta(hours=4)}
+
+
+def trade_outcomes(ops, frames, sim_fn):
+    """Net P&L of each opinion's trade under the bot's exits; NaN when it cannot be
+    replayed (no frame for the mode, bar missing, or still open at the data's end)."""
+    from backtest import MAX_HOLD_CANDLES, RESOLVED
+    out = []
+    for row in ops.itertuples(index=False):
+        tf = TF.get(row.mode)
+        df = frames.get(row.mode)
+        bar = pd.Timestamp(row.ts).floor(tf) - BAR[tf] if tf else None
+        if df is None or bar not in df.index:
+            out.append(float("nan"))
+            continue
+        sig = {"type": row.signal_type, "entry_price": row.entry_price,
+               "stop_loss": row.stop_loss, "take_profit": row.take_profit, "atr": row.atr}
+        t = sim_fn(df, int(df.index.get_loc(bar)), sig, MAX_HOLD_CANDLES[tf], tf, row.mode)
+        out.append(float(t["pnl_pct"]) if t and t["outcome"] in RESOLVED else float("nan"))
+    return out
+
+
+def evaluate(df, col="fwd"):
     """{provider: stats} from a frame with provider, verdict, fwd."""
     res = {}
     rng = np.random.default_rng(SEED)
-    for prov, g in df.dropna(subset=["fwd"]).groupby("provider"):
-        a = g.loc[g.verdict == "AGREE", "fwd"].to_numpy()
-        d = g.loc[g.verdict == "DISAGREE", "fwd"].to_numpy()
+    for prov, g in df.dropna(subset=[col]).groupby("provider"):
+        a = g.loc[g.verdict == "AGREE", col].to_numpy()
+        d = g.loc[g.verdict == "DISAGREE", col].to_numpy()
         r = {"n_agree": len(a), "n_disagree": len(d),
              "mean_agree": float(a.mean()) if len(a) else None,
              "mean_disagree": float(d.mean()) if len(d) else None}
@@ -75,23 +101,41 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
     con = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
-    q = "SELECT timestamp, provider, model, verdict, signal_type, entry_price, error FROM shadow_opinions"
+    q = ("SELECT timestamp, provider, model, verdict, mode, signal_type, entry_price, "
+         "stop_loss, take_profit, atr, error FROM shadow_opinions")
     ops = pd.read_sql(q + (" WHERE timestamp >= ?" if args.start else ""), con,
                       params=[args.start] if args.start else [])
     errors = ops["error"].notna().groupby(ops["provider"]).sum().to_dict()
     ops = ops[ops["error"].isna()].copy()
     ops["ts"] = pd.to_datetime(ops["timestamp"].str.replace("T", " ").str[:19])
     ops["fwd"] = signed_forward(ops, _hourly_prices(con))
-    res = evaluate(ops)
+    from backtest import _simulate_forward
+    from signals.ohlcv import fetch_ohlcv_df
+    frames = {}
+    if len(ops):
+        since = int((ops["ts"].min() - pd.Timedelta(days=12)).timestamp() * 1000)
+        for mode, tf in TF.items():
+            if (ops["mode"] == mode).any():
+                frames[mode] = fetch_ohlcv_df("BTC/USDT", tf, since=since,
+                                              vwap_period=24 if tf == "1h" else 6)
+    ops["pnl"] = trade_outcomes(ops, frames, _simulate_forward)
+    res = evaluate(ops, "pnl")
+    desc = evaluate(ops, "fwd")
     print(f"{args.db}  opinions={len(ops)}  errors by provider={errors}\n")
+    print("PRIMARY — simulated trade under the bot's exits")
     for prov, r in res.items():
         ci = f"[{r['ci'][0]:+.3f}, {r['ci'][1]:+.3f}]" if r["ci"] else "—"
         diff = f"{r['diff']:+.3f}" if r["diff"] is not None else "—"
         print(f"{prov:10s} AGREE n={r['n_agree']} mean={r['mean_agree']}  "
               f"DISAGREE n={r['n_disagree']} mean={r['mean_disagree']}  "
               f"diff={diff} {ci}  → {r['verdict']}")
+    print("\ndescriptive — signed 24h return (never a criterion)")
+    for prov, r in desc.items():
+        print(f"{prov:10s} AGREE n={r['n_agree']} mean={r['mean_agree']}  "
+              f"DISAGREE n={r['n_disagree']} mean={r['mean_disagree']}")
     if args.out:
-        args.out.write_text(json.dumps({"results": res, "errors": errors}, indent=1, default=str))
+        args.out.write_text(json.dumps({"results": res, "descriptive_24h": desc,
+                                        "errors": errors}, indent=1, default=str))
     return 0
 
 

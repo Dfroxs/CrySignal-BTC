@@ -3329,6 +3329,79 @@ def test_shadow_waits_long_enough_for_a_thinking_model():
     assert shadow.TIMEOUT_S >= 90, shadow.TIMEOUT_S
     assert llm.TIMEOUT_S > shadow.TIMEOUT_S, (llm.TIMEOUT_S, shadow.TIMEOUT_S)
 
+def test_shadow_context_states_the_exit_the_bot_will_actually_use():
+    """The agents were asked about 24h, which matches neither mode: both hold up to 72h
+    under stop/target/trailing exits, futures stops are widened ×2 at open, spot is
+    long-only and costs more. They must judge the trade the bot will actually run."""
+    from agents.shadow import build_context
+    from backtest import _costs
+    from config import FUTURES_CONFIG, RISK_CONFIG
+    fut = build_context(_shadow_signal("SELL", "futures"))
+    engine_stop = (82900.0 - 82000.0) / 82000.0 * 100
+    assert abs(fut["signal"]["stop_pct_from_entry"] - engine_stop * FUTURES_CONFIG["stop_distance_mult"]) < 1e-6
+    r = fut["exit_rules"]
+    assert r["max_hold_hours"] == RISK_CONFIG["max_position_hours"] and r["long_only"] is False
+    assert r["trailing_atr_mult"] == FUTURES_CONFIG["trailing_atr_factor"]
+    assert abs(r["round_trip_cost_pct"] - _costs("futures", 2)) < 1e-9
+    spot = build_context(dict(_shadow_signal("BUY", "spot"), stop_loss=81100.0, take_profit=84250.0))
+    rs = spot["exit_rules"]
+    assert rs["long_only"] is True and rs["trailing_atr_mult"] == RISK_CONFIG["trailing_atr_factor"]
+    assert rs["max_hold_hours"] == RISK_CONFIG["max_position_hours_spot"]
+    assert abs(rs["round_trip_cost_pct"] - _costs("spot", 2)) < 1e-9
+    assert abs(spot["signal"]["stop_pct_from_entry"] - (81100.0 - 82000.0) / 82000.0 * 100) < 1e-6
+
+def test_shadow_prompt_asks_about_the_managed_trade_not_a_fixed_24h():
+    from agents.shadow import SYSTEM
+    assert "24 hours" not in SYSTEM and "exit_rules" in SYSTEM, SYSTEM
+
+def test_shadow_record_stores_the_levels_it_was_judged_on():
+    from agents.shadow import _base_record
+    rec = _base_record(_shadow_signal("SELL", "futures"), "anthropic")
+    assert rec["stop_loss"] == 83800.0 and rec["take_profit"] == 77500.0, rec
+    assert rec["atr"] == 410.0
+
+def test_shadow_table_gains_level_columns_on_an_old_database():
+    """The VPS created shadow_opinions before these columns existed."""
+    import os, sqlite3, tempfile
+    import trading.history as h
+    fd, path = tempfile.mkstemp(suffix=".db"); os.close(fd)
+    saved = (h.SIGNAL_HISTORY_DB, h.DB)
+    try:
+        c = sqlite3.connect(path)
+        c.execute("CREATE TABLE shadow_opinions (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                  "timestamp TEXT NOT NULL, provider TEXT NOT NULL, verdict TEXT)")
+        c.commit(); c.close()
+        h.SIGNAL_HISTORY_DB, h.DB = path, None
+        cols = {r[1] for r in h._conn().execute("PRAGMA table_info(shadow_opinions)")}
+        assert {"stop_loss", "take_profit", "atr", "mode", "error"} <= cols, cols
+        h.log_shadow_opinion({"timestamp": "t", "provider": "p", "stop_loss": 1.0})
+    finally:
+        try:
+            h.DB.close()
+        except Exception:
+            pass
+        h.SIGNAL_HISTORY_DB, h.DB = saved
+        os.unlink(path)
+
+def test_shadow_eval_scores_the_trade_the_bot_would_have_run():
+    """Primary H-S metric: the simulated trade under the bot's own exits, entered on the
+    bar the bot scored (it runs one minute after that bar closes)."""
+    import pandas as pd
+    from scripts.shadow_eval import trade_outcomes
+    idx = pd.date_range("2026-11-01 00:00", periods=10, freq="1h")
+    frames = {"futures": pd.DataFrame({"close": range(10)}, index=idx)}
+    ops = pd.DataFrame({"ts": pd.to_datetime(["2026-11-01 05:01:30", "2026-11-01 05:01:30"]),
+                        "mode": ["futures", "spot"], "signal_type": ["SELL", "BUY"],
+                        "entry_price": [100.0, 100.0], "stop_loss": [102.0, 99.0],
+                        "take_profit": [95.0, 102.5], "atr": [1.0, 1.0]})
+    seen = []
+    def sim(df, i, sig, hold, tf, mode):
+        seen.append((i, sig["type"], sig["stop_loss"], tf, mode))
+        return {"outcome": "WIN", "pnl_pct": 1.5}
+    out = trade_outcomes(ops, frames, sim)
+    assert seen == [(4, "SELL", 102.0, "1h", "futures")], seen
+    assert out[0] == 1.5 and out[1] != out[1], "no frame for spot → NaN"
+
 def test_synth_entries_respects_stride_and_warmup():
     from scripts.exit_ic import synth_entries
     df = _exit_fixture([1000] * 260)
@@ -4065,6 +4138,11 @@ if __name__ == "__main__":
     run("skips HOLD/cached, never raises",        test_shadow_skips_holds_and_cached_replays_and_never_raises)
     run("run_bot calls it inside a guard",        test_run_bot_calls_the_shadow_agents_inside_a_guard)
     run("waits long enough for thinking model",   test_shadow_waits_long_enough_for_a_thinking_model)
+    run("context states the real exit rules",     test_shadow_context_states_the_exit_the_bot_will_actually_use)
+    run("prompt asks about the managed trade",    test_shadow_prompt_asks_about_the_managed_trade_not_a_fixed_24h)
+    run("record stores the judged levels",        test_shadow_record_stores_the_levels_it_was_judged_on)
+    run("old shadow table gains level columns",   test_shadow_table_gains_level_columns_on_an_old_database)
+    run("eval scores the simulated trade",        test_shadow_eval_scores_the_trade_the_bot_would_have_run)
     run("eval signs forward return by side",      test_shadow_eval_signs_the_forward_return_by_direction)
     run("eval verdict follows the prereg",        test_shadow_eval_verdict_follows_the_preregistration)
 

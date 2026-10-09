@@ -1,8 +1,9 @@
 """Shadow opinions: Claude and DeepSeek judge each fired signal. Logged, never traded.
 
 For every non-HOLD signal the bot produces, each configured provider is asked, in
-parallel and under one timeout, whether it expects the trade in the signal's direction
-to be profitable over the next 24h. The answer goes to `shadow_opinions` and nothing
+parallel and under one timeout, whether the trade AS THE BOT WILL MANAGE IT (its real
+stop, targets, trailing stop, hold cap and costs, per mode; see `exit_terms`) will close
+at a net profit. The answer goes to `shadow_opinions` and nothing
 else: no gate reads it, no position depends on it, and a provider that fails or hangs
 costs the cycle nothing.
 
@@ -37,12 +38,39 @@ _LABELS = {"BULLISH", "BEARISH", "NEUTRAL", "BUY", "SELL", "HOLD", "WEAK", "NORM
            "STRONG", "TRENDING", "RANGING", "VOLATILE", "futures", "spot"}
 
 SYSTEM = (
-    "You review trading signals from a rule-based BTC/USDT bot. You receive only "
-    "numbers. Decide whether a trade in the signal's direction, entered now, is likely "
-    "to be profitable over the next 24 hours after ~0.2% round-trip costs. Reply with "
-    'ONLY a JSON object: {"verdict": "AGREE" or "DISAGREE", "confidence": integer '
-    '0-100, "reason": "at most 25 words, in Indonesian"}.'
+    "You review trading signals from a rule-based BTC/USDT paper-trading bot. You receive "
+    "only numbers. The trade would be entered now at the signal's entry price and then "
+    "managed exactly as described in `exit_rules`: the stop and target distances given, "
+    "half closed at the first target, a trailing stop of `trailing_atr_mult` x ATR, and a "
+    "forced close after `max_hold_hours`. Spot is long-only with no leverage; futures can "
+    "be long or short. Decide whether this trade, managed that way, will close at a net "
+    "profit after `round_trip_cost_pct`. Reply with ONLY a JSON object: "
+    '{"verdict": "AGREE" or "DISAGREE", "confidence": integer 0-100, '
+    '"reason": "at most 25 words, in Indonesian"}.'
 )
+
+
+def exit_terms(signal):
+    """(signal as the bot would OPEN it, exit rules) for this signal's mode.
+
+    Read from the same config and helpers the bot and the backtest use, never copied:
+    futures stops and targets are widened at open (`apply_futures_exit_geometry`), and
+    each mode has its own trailing factor, hold cap and costs.
+    """
+    from backtest import _costs
+    from config import FUTURES_CONFIG, RISK_CONFIG
+    mode = signal.get("mode", "futures")
+    if mode == "futures":
+        from trading.paper import apply_futures_exit_geometry
+        opened = apply_futures_exit_geometry(signal)
+        trail, hold = FUTURES_CONFIG["trailing_atr_factor"], RISK_CONFIG["max_position_hours"]
+    else:
+        opened = signal
+        trail, hold = RISK_CONFIG["trailing_atr_factor"], RISK_CONFIG["max_position_hours_spot"]
+    return opened, {"mode": mode, "timeframe": "1h" if mode == "futures" else "4h",
+                    "long_only": mode == "spot", "max_hold_hours": hold,
+                    "trailing_atr_mult": trail, "partial_close_at_first_target_pct": 50,
+                    "round_trip_cost_pct": round(_costs(mode, 2), 4)}
 
 
 def _num(v):
@@ -58,8 +86,10 @@ def _label(v):
 
 
 def build_context(signal):
-    """The prompt's facts: numbers and whitelisted labels, nothing free-text."""
-    s, last = signal, signal.get("_last") or {}
+    """The prompt's facts: numbers and whitelisted labels, nothing free-text. Stop and
+    target are the levels the bot would actually open with."""
+    s, rules = exit_terms(signal)
+    last = s.get("_last") or {}
     e = _num(s.get("entry_price")) or 0.0
     pct = lambda p: _num((p - e) / e * 100) if e and _num(p) is not None else None
     m = s.get("_market") or {}
@@ -86,6 +116,7 @@ def build_context(signal):
                    "taker_ratio": g("taker", "ratio"), "dxy_change_pct": g("dxy", "change_pct"),
                    "sp500_change_pct": g("sp500", "change_pct"), "vix_change_pct": g("vix", "change_pct")},
         "contributions": {k: [_num(v[0]), _num(v[1])] for k, v in (s.get("_contributions") or {}).items()},
+        "exit_rules": rules,
     }
 
 
@@ -108,7 +139,11 @@ def _providers():
 
 
 def _base_record(signal, provider):
+    opened, _ = exit_terms(signal)
+    atr = signal.get("atr") or (signal.get("_last") or {}).get("atr")
     return {"timestamp": datetime.now(UTC).isoformat(), "mode": signal.get("mode"),
+            "stop_loss": _num(opened.get("stop_loss")), "take_profit": _num(opened.get("take_profit")),
+            "tp2": _num(opened.get("tp2")), "atr": _num(atr),
             "signal_type": signal.get("type"), "strength": _num(signal.get("strength")),
             "threshold": _num(signal.get("_threshold")), "confidence": signal.get("confidence"),
             "entry_price": _num(signal.get("entry_price")), "signal_id": signal.get("db_id"),
