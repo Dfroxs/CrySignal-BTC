@@ -4,6 +4,24 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — research: H-RG — the spot regime gate selects (primary PASS); it stays
+
+Pre-registered (`e18840f`). The instrument `scripts/regime_ic.py` was committed
+(`1a3d488`) before the scored run. 10 OKX 4h symbols, engine as deployed.
+
+- **Primary window:** BUYs blocked by `regime_bearish` alone lost **−1.367pp**
+  (n=82), against −0.359pp for kept trades. The difference is **+1.009pp
+  [+0.201, +1.850]**: PASS. They were also worse than random entries in the same
+  regime (−0.379pp).
+- **Confirmation:** n=4, below the guard, so INCONCLUSIVE, and INCONCLUSIVE overall per
+  the rule.
+- **The gate stays.** It is the first Phase 3 gate here with a measured selection effect.
+  The 13:01 block of today's spot BUY was very likely correct.
+- Results: `docs/superpowers/specs/2026-10-09-regime-gate-results.md`. The run-4 backlog
+  is updated.
+
+---
+
 ## 2026-10-09 — fix(notifier): a signal blocked at an entry gate no longer looks like a trade
 
 At 13:01 a spot BUY NORMAL (5.25 vs 4.05) cleared the confidence bar, and the card

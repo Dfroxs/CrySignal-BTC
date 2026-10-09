@@ -1,0 +1,21 @@
+# started 2026-10-09T13:11:47Z at 1a3d488
+H-RG  spot 4h, 10 symbols, engine as deployed
+
+== primary
+  regime_only  n=  82 mean=-1.367pp [-2.064, -0.655]
+  kept         n= 474 mean=-0.359pp [-0.743, +0.047]
+  random_regime mean=-0.379pp (n=1640)
+  kept − regime_only = +1.009 [+0.201, +1.850]   H-RG1 PASS   H-RG2 FAIL
+  BTC: regime_only n=  23 mean=-0.765pp [-1.799, +0.326] · kept n= 130 mean=-0.287pp [-0.711, +0.121]
+  per symbol regime_only mean: {'BTC': -0.765, 'ETH': -0.59, 'SOL': -2.227, 'BNB': None, 'OKB': -0.481, 'ICP': None, 'SUSHI': -9.97, 'NEAR': 0.931, 'UNI': -1.489, 'DOGE': -3.851}
+== confirmation
+  regime_only  n=   4 mean=+0.015pp [-4.255, +3.698]
+  kept         n=  51 mean=-0.222pp [-1.220, +0.805]
+  random_regime mean=-2.057pp (n=80)
+  kept − regime_only = —   H-RG1 INCONCLUSIVE   H-RG2 INCONCLUSIVE
+  BTC: regime_only — · kept n=  10 mean=-0.898pp [-1.585, -0.186]
+  per symbol regime_only mean: {'BTC': None, 'ETH': None, 'SOL': 3.661, 'BNB': None, 'OKB': 3.81, 'ICP': None, 'SUSHI': None, 'NEAR': None, 'UNI': None, 'DOGE': -3.705}
+
+OVERALL (gate): INCONCLUSIVE
+gate combos with regime_counter: {"BTC": {"regime_counter+trend_confluence": 61, "psy_sl_first+regime_counter+trend_confluence": 7, "regime_counter": 47, "fakeout_first+regime_counter+trend_confluence": 16, "breakout_chase+regime_counter": 10, "breakout_chase+regime_counter+trend_confluence": 3, "psy_sl_first+regime_counter": 1, "fakeout_first+psy_sl_first+regime_counter+trend_confluence": 1, "breakout_chase+psy_sl_first+regime_counter": 1}, "ETH": {"breakout_chase+regime_counter": 9, "regime_counter": 74, "regime_counter+trend_confluence": 52, "breakout_chase+regime_counter+trend_confluence": 8, "fakeout_first+regime_counter+trend_confluence": 18}, "SOL": {"fakeout_first+regime_counter+trend_confluence": 4, "regime_counter": 12, "breakout_chase+regime_counter": 2, "regime_counter+trend_confluence": 11, "breakout_chase+regime_counter+trend_confluence": 4}, "BNB": {}, "OKB": {"regime_counter": 48, "regime_counter+trend_confluence": 77, "fakeout_first+regime_counter+trend_confluence": 20, "breakout_chase+regime_counter+trend_confluence": 6, "breakout_chase+regime_counter": 3}, "ICP": {}, "SUSHI": {"breakout_chase+regime_counter+trend_confluence": 1, "breakout_chase+regime_counter": 1, "regime_counter": 2}, "NEAR": {"regime_counter": 3, "breakout_chase+regime_counter": 1, "breakout_chase+regime_counter+trend_confluence": 1, "regime_counter+trend_confluence": 2}, "UNI": {"regime_counter": 3, "breakout_chase+regime_counter+trend_confluence": 2, "breakout_chase+regime_counter": 1, "regime_counter+trend_confluence": 11, "fakeout_first+regime_counter+trend_confluence": 4}, "DOGE": {"regime_counter": 34, "fakeout_first+regime_counter+trend_confluence": 18, "regime_counter+trend_confluence": 48, "breakout_chase+regime_counter": 6, "breakout_chase+regime_counter+trend_confluence": 6}}
+written → docs/superpowers/specs/2026-10-09-regime-gate-run/result.json

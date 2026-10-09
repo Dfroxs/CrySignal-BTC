@@ -36,7 +36,7 @@ claim). Started 2026-10-09.
 | anti-chase vetoes (spot) | 09-24 H-B FAILED to show they pay | off for spot since run 3 |
 | counter-trend veto | H-CT INCONCLUSIVE, but vetoed shorts are worse than random in both windows | **stays** |
 | futures Phase 3 gates | 10-09 INCONCLUSIVE (overlap) | stay |
-| spot regime gate | H-RG, see `2026-10-09-regime-gate-results.md` | pending |
+| spot regime gate | H-RG: primary PASS (blocked −1.37pp vs kept −0.36pp, diff +1.0pp, CI > 0); confirmation n=4, so INCONCLUSIVE overall | **stays** — the first gate with a measured selection effect |
 | short-term (5-SMA) veto | untested | candidate |
 
 ## Not to re-propose (already failed)
