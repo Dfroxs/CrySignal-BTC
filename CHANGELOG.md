@@ -4,6 +4,25 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — research: H-F2/H-F3 — basis/funding in five other perps: INCONCLUSIVE
+
+Pre-registered (`6ed4d46`) before any non-BTC data was fetched. ETH, SOL, BNB, XRP and
+DOGE perps, 2020 → 2026-08.
+
+- **H-F2 (full window):** basis CI below 0 in 3/5, funding in 2/5. PASS needed ≥ 4, so
+  both are **INCONCLUSIVE**. No interval is above 0.
+- **H-F3 (2025–26):** basis negative in 3/5, funding in 4/5 but with only 1 CI below 0.
+  Both **INCONCLUSIVE**.
+- Together with BTC, the effect is real but weak and patchy: clearest in majors, absent
+  in SOL, |IC| 0.01–0.06. **The run-4 z-score condition is not licensed.** Supported
+  without an edge claim: stop scoring a high basis as BULLISH, and neutralise it in
+  run 4.
+- `hist_futures_ic.py` gains `--recent` (90% CI, 2025-01 →) and starts each symbol at
+  its listing hour. BTC output is unchanged. Results:
+  `docs/superpowers/specs/2026-10-09-hist-futures-ic-alts-results.md`.
+
+---
+
 ## 2026-10-09 — design decision: futures opens from WEAK (the 1.0–1.2× dead zone)
 
 **Not a test result.** Owner decision, so run 3 yields futures trades. Futures opened 0

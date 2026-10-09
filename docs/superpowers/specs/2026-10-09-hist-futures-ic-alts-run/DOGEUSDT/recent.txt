@@ -1,0 +1,26 @@
+H-F  DOGEUSDT perp 1h  2025-01-01 00:00:00 → 2026-08-29 23:00:00  hours=53799
+missing: mark 0.00%  index 0.00%  perp 0.00%
+
+H-F  Spearman IC of z168(field) vs forward 24h log return, 95% block CI (168h)
+  basis_pct     IC=-0.0080  [-0.0424, +0.0226]  n=14520  years agree 1/2  → FAIL  (OPPOSES the engine)
+      per year: 2025:+0.002  2026:-0.026
+  funding_rate  IC=-0.0237  [-0.0768, +0.0230]  n=14520  years agree 2/2  → FAIL  (agrees with the engine)
+      per year: 2025:-0.012  2026:-0.044
+  taker_ratio   IC=-0.0006  [-0.0157, +0.0144]  n=14520  years agree 1/2  → FAIL  (OPPOSES the engine)
+      per year: 2025:-0.002  2026:+0.000
+
+descriptive (never a criterion)
+  basis_pct     z-IC 4h +0.0084  12h -0.0067  raw-IC 24h -0.0164
+      fwd 24h mean % by z quintile (low→high): [-0.1868, -0.1367, -0.3673, -0.3571, -0.0468]
+  funding_rate  z-IC 4h -0.0237  12h -0.0315  raw-IC 24h -0.0291
+      fwd 24h mean % by z quintile (low→high): [-0.095, -0.1154, -0.2361, -0.6207, -0.0294]
+  taker_ratio   z-IC 4h -0.0118  12h +0.0018  raw-IC 24h +0.0010
+      fwd 24h mean % by z quintile (low→high): [-0.2574, -0.241, -0.1082, -0.2164, -0.2722]
+
+  z-score correlation (Spearman):
+                z_basis_pct  z_funding_rate  z_taker_ratio
+z_basis_pct           1.000           0.268           0.01
+z_funding_rate        0.268           1.000           0.02
+z_taker_ratio         0.010           0.020           1.00
+
+written → docs/superpowers/specs/2026-10-09-hist-futures-ic-alts-run/DOGEUSDT/recent.json

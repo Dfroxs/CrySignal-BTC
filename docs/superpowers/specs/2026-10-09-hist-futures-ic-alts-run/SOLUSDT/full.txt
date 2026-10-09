@@ -1,0 +1,26 @@
+H-F  SOLUSDT perp 1h  2020-09-14 07:00:00 → 2026-08-29 23:00:00  hours=52217
+missing: mark 0.00%  index 0.00%  perp 0.00%
+
+H-F  Spearman IC of z168(field) vs forward 24h log return, 95% block CI (168h)
+  basis_pct     IC=+0.0045  [-0.0188, +0.0273]  n=52074  years agree 5/7  → FAIL  (agrees with the engine)
+      per year: 2020:-0.162  2021:+0.033  2022:+0.003  2023:+0.018  2024:-0.010  2025:+0.017  2026:+0.031
+  funding_rate  IC=+0.0058  [-0.0250, +0.0351]  n=51214  years agree 5/7  → FAIL  (OPPOSES the engine)
+      per year: 2020:-0.134  2021:+0.014  2022:+0.001  2023:+0.023  2024:-0.021  2025:+0.037  2026:+0.034
+  taker_ratio   IC=+0.0016  [-0.0075, +0.0114]  n=52074  years agree 4/7  → FAIL  (agrees with the engine)
+      per year: 2020:+0.044  2021:+0.010  2022:+0.002  2023:-0.002  2024:-0.021  2025:+0.002  2026:-0.005
+
+descriptive (never a criterion)
+  basis_pct     z-IC 4h -0.0182  12h -0.0094  raw-IC 24h +0.0137
+      fwd 24h mean % by z quintile (low→high): [0.1044, 0.0589, 0.1592, 0.2531, 0.2411]
+  funding_rate  z-IC 4h -0.0059  12h -0.0010  raw-IC 24h +0.0083
+      fwd 24h mean % by z quintile (low→high): [0.0468, 0.3076, -0.0472, 0.1447, 0.3983]
+  taker_ratio   z-IC 4h -0.0128  12h -0.0024  raw-IC 24h +0.0026
+      fwd 24h mean % by z quintile (low→high): [0.1582, 0.0595, 0.2542, 0.1052, 0.2397]
+
+  z-score correlation (Spearman):
+                z_basis_pct  z_funding_rate  z_taker_ratio
+z_basis_pct           1.000           0.383         -0.049
+z_funding_rate        0.383           1.000         -0.032
+z_taker_ratio        -0.049          -0.032          1.000
+
+written → docs/superpowers/specs/2026-10-09-hist-futures-ic-alts-run/SOLUSDT/full.json
