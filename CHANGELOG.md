@@ -4,6 +4,18 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — fix: shadow agents could misread levels against price
+
+A live probe on the VPS: price 2% above EMA200, and Claude answered "harga di bawah
+EMA200". The context field `ema200_pct` held (EMA − price)/price and reads either way.
+The agents now get `<level>_vs_price_pct` names (entry and exit contexts), the sign
+convention stated in both prompts, and `price_above_ema200` / `price_above_vwap`. Re-run
+on the same scenario: Claude "tren bullish", DeepSeek "harga di atas EMA200/VWAP".
+Production shadow tables held 0 rows, so H-S/H-X cut-offs move to this deploy with no
+data lost (prereg amendment). Suite 264 → 265.
+
+---
+
 ## 2026-10-09 — feat: the Q&A bot answers with Claude Haiku 4.5 (owner's choice)
 
 - `agents/qa_bot.qa_model()`: the Q&A bot's own model, `QA_LLM_MODEL`, default

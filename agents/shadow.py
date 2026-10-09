@@ -43,7 +43,8 @@ _LABELS = {"BULLISH", "BEARISH", "NEUTRAL", "BUY", "SELL", "HOLD", "WEAK", "NORM
 
 SYSTEM = (
     "You review trading signals from a rule-based BTC/USDT paper-trading bot. You receive "
-    "only numbers. The trade would be entered now at the signal's entry price and then "
+    "only numbers. " "Fields named `<level>_vs_price_pct` are (level - current price) / current price x 100: negative means the level is below the current price, positive means above it; `*_from_entry` fields measure from the entry price the same way. "
+    "The trade would be entered now at the signal's entry price and then "
     "managed exactly as described in `exit_rules`: the stop and target distances given, "
     "half closed at the first target, a trailing stop of `trailing_atr_mult` x ATR, and a "
     "forced close after `max_hold_hours`. Spot is long-only with no leverage; futures can "
@@ -108,10 +109,15 @@ def build_context(signal):
                    "buy_score": _num(s.get("buy_score")), "sell_score": _num(s.get("sell_score")),
                    "stop_pct_from_entry": pct(s.get("stop_loss")),
                    "target_pct_from_entry": pct(s.get("take_profit"))},
+        # `<level>_vs_price_pct` = (level − price)/price: a live probe read the old
+        # `ema200_pct` backwards ("price below EMA200" with price 2% above it).
         "price": {"close": _num(last.get("close")), "rsi": _num(last.get("rsi")),
-                  "ema200_pct": pct(last.get("ema200")), "vwap_pct": pct(last.get("vwap")),
+                  "ema200_vs_price_pct": pct(last.get("ema200")),
+                  "price_above_ema200": (e > last["ema200"]) if e and _num(last.get("ema200")) else None,
+                  "vwap_vs_price_pct": pct(last.get("vwap")),
+                  "price_above_vwap": (e > last["vwap"]) if e and _num(last.get("vwap")) else None,
                   "atr_pct": _num(last["atr"] / e * 100) if e and _num(last.get("atr")) else None,
-                  "high24_pct": pct(last.get("hi24")), "low24_pct": pct(last.get("lo24")),
+                  "high24_vs_price_pct": pct(last.get("hi24")), "low24_vs_price_pct": pct(last.get("lo24")),
                   "mfi": _num(last.get("mfi")), "cmf": _num(last.get("cmf"))},
         "htf": {k: _label(v) for k, v in (s.get("_htf") or {}).items()
                 if k in ("4h", "1d", "1w") and _label(v)},

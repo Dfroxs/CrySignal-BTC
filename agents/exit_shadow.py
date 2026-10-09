@@ -34,7 +34,8 @@ _threads = []
 
 EXIT_SYSTEM = (
     "You review an OPEN position held by a rule-based BTC/USDT paper-trading bot. You "
-    "receive only numbers. If you say HOLD, the bot keeps managing the position by "
+    "receive only numbers. " "Fields named `<level>_vs_price_pct` are (level - current price) / current price x 100: negative means the level is below the current price, positive means above it; `*_from_entry` fields measure from the entry price the same way. "
+    "If you say HOLD, the bot keeps managing the position by "
     "`exit_rules`: its trailing stop, its targets (half closes at the first), and a forced "
     "close at `max_hold_hours`. If you say CLOSE, the whole position is closed now at "
     "`price`, for `pnl_if_closed_now_pct`. Choose CLOSE only if you expect closing now to "
@@ -71,9 +72,9 @@ def build_exit_context(pos, price, signal):
                         "hours_held": _num(held),
                         "hours_left_before_cap": _num(rules["max_hold_hours"] - held)
                         if held is not None else None,
-                        "stop_pct_from_price": from_price(stop),
-                        "first_target_pct_from_price": from_price(pos.get("tp1") or pos.get("take_profit")),
-                        "second_target_pct_from_price": from_price(pos.get("tp2")),
+                        "stop_vs_price_pct": from_price(stop),
+                        "first_target_vs_price_pct": from_price(pos.get("tp1") or pos.get("take_profit")),
+                        "second_target_vs_price_pct": from_price(pos.get("tp2")),
                         "atr_pct_at_entry": _num(pos["atr"] / pos["entry_price"] * 100)
                         if _num(pos.get("atr")) and _num(pos.get("entry_price")) else None},
            "exit_rules": rules}

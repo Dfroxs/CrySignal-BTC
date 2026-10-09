@@ -3484,7 +3484,7 @@ def test_exit_context_describes_the_position_as_the_bot_holds_it():
     assert p["side"] == "SELL" and p["mode"] == "futures"
     assert abs(p["pnl_if_closed_now_pct"] - _calc_pnl(pos, 81000.0)) < 1e-6   # context rounds to 6 dp
     assert abs(p["hours_held"] - 10) < 0.05 and abs(p["hours_left_before_cap"] - 62) < 0.05
-    assert abs(p["stop_pct_from_price"] - (83300.0 - 81000.0) / 81000.0 * 100) < 1e-6
+    assert abs(p["stop_vs_price_pct"] - (83300.0 - 81000.0) / 81000.0 * 100) < 1e-6
     assert ctx["exit_rules"]["trailing_atr_mult"] == 3.5
     assert "IGNORE PREVIOUS" not in json.dumps(ctx)
 
@@ -3733,6 +3733,23 @@ def test_llm_prices_cover_haiku_alias_and_snapshot():
     from agents.llm import cost_usd
     assert cost_usd("claude-haiku-4-5", 1_000_000, 1_000_000) == 6.0
     assert cost_usd("claude-haiku-4-5-20251001", 1_000_000, 0) == 1.0
+
+def test_shadow_context_cannot_be_misread_about_levels_vs_price():
+    """Live probe, 2026-10-09: with price 2% ABOVE EMA200 Claude wrote 'harga di bawah
+    EMA200'. `ema200_pct` held (EMA − price)/price — readable either way. Levels are now
+    named `<level>_vs_price_pct`, the sign convention is stated in the prompt, and the
+    two that decide trend carry an explicit boolean."""
+    from agents.exit_shadow import EXIT_SYSTEM
+    from agents.shadow import SYSTEM, build_context
+    sig = _shadow_signal("BUY", "futures")
+    sig["_last"] = dict(sig["_last"], close=82000.0, ema200=80360.0, vwap=82820.0)   # EMA −2%, VWAP +1%
+    sig["entry_price"] = 82000.0
+    p = build_context(sig)["price"]
+    assert "ema200_pct" not in p and "vwap_pct" not in p, p
+    assert p["price_above_ema200"] is True and p["ema200_vs_price_pct"] < 0, p
+    assert p["price_above_vwap"] is False and p["vwap_vs_price_pct"] > 0, p
+    for prompt in (SYSTEM, EXIT_SYSTEM):
+        assert "_vs_price_pct" in prompt and "below the current price" in prompt, prompt
 
 def test_synth_entries_respects_stride_and_warmup():
     from scripts.exit_ic import synth_entries
@@ -5092,6 +5109,7 @@ if __name__ == "__main__":
     run("run_bot calls it inside a guard",        test_run_bot_calls_the_shadow_agents_inside_a_guard)
     run("waits long enough for thinking model",   test_shadow_waits_long_enough_for_a_thinking_model)
     run("context states the real exit rules",     test_shadow_context_states_the_exit_the_bot_will_actually_use)
+    run("levels vs price cannot be misread",      test_shadow_context_cannot_be_misread_about_levels_vs_price)
     run("prompt asks about the managed trade",    test_shadow_prompt_asks_about_the_managed_trade_not_a_fixed_24h)
     run("record stores the judged levels",        test_shadow_record_stores_the_levels_it_was_judged_on)
     run("old shadow table gains level columns",   test_shadow_table_gains_level_columns_on_an_old_database)
