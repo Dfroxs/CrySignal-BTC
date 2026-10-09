@@ -39,6 +39,14 @@ On `develop`. Formatting only: what is sent, and when, is unchanged.
 - Rewritten deliberately because they pinned the old layout: `Gap`/`gap`, `TECHNICALS —`,
   `Stop SL`/`TP1 50%`, `PERFORMANCE` and `OPEN POSITIONS` assertions in sections 2, 3 and 6.
 
+### Fixed (review)
+- A HOLD whose leading score cleared the bar was always labelled `held back (news/macro)`.
+  Usually it is a veto gate instead (no-chase, anti-FOMO, entry wick, short-term
+  momentum, counter-trend), which leaves a `⛔` reason. The line now quotes the first
+  such reason, trimmed to 45 characters and escaped:
+  `BUY 5.00 ≥ bar 3.80 · vetoed: Short-term down: 5-SMA slope -1.24×ATR (need`.
+  The news/macro wording remains only for when there is no `⛔` reason. Suite 205 → 207.
+
 ---
 
 ## 2026-10-09 — feat: shadow agents (Claude + DeepSeek), logged and never traded

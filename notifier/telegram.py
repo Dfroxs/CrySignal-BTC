@@ -21,6 +21,7 @@ _DOWN = "▼"
 
 _TOP_REASONS = 3          # reasons shown under an actionable signal
 _REASON_CHARS = 70        # truncated BEFORE escaping, so no entity is cut in half
+_VETO_CHARS = 45          # the ⛔ reason quoted on a vetoed HOLD line, same rule
 
 _CLOSE_LABELS = {
     "TP1":           "TP1 hit · trailing→BE",
@@ -107,7 +108,15 @@ def _verdict_line(sig):
     else:
         side, lead = ("BUY", buy_s) if buy_s > sell_s else ("SELL", sell_s)
         if lead >= thr:
-            why = f"{side} {lead:.2f} ≥ bar {thr:.2f} · held back (news/macro)"
+            # A veto gate (no-chase, anti-FOMO, entry wick, momentum, counter-trend)
+            # turns a scored signal into HOLD and leaves a ⛔ reason. Name it; only
+            # without one is the news/macro overlay the likely cause.
+            veto = next((str(r) for r in (sig.get("reasons") or []) if "⛔" in str(r)), None)
+            if veto:
+                text = veto.replace("⛔", "", 1).strip()[:_VETO_CHARS]
+                why = f"{side} {lead:.2f} ≥ bar {thr:.2f} · vetoed: {_esc(text)}"
+            else:
+                why = f"{side} {lead:.2f} ≥ bar {thr:.2f} · held back (news/macro)"
         else:
             why = f"{side} {lead:.2f} · bar {thr:.2f}"
     return f"⏸ {label} · HOLD · {why}", False

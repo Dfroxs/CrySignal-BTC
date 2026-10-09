@@ -3675,6 +3675,37 @@ def test_tg_a_hold_says_why_when_it_is_not_just_short_of_the_bar():
     assert "no direction" in flat, flat
 
 
+def test_tg_a_vetoed_hold_names_the_veto_not_news():
+    """Veto gates (no-chase, anti-FOMO, wick, momentum, counter-trend) turn a scored
+    BUY into HOLD and append a ⛔ reason. Calling that 'news/macro' misinforms."""
+    from notifier.telegram import _format_compact_signal_telegram
+    sig = make_signal("HOLD", "spot", score=5.0, buy_score=5.0, sell_score=1.0)
+    sig["_threshold"] = 3.8
+    sig["reasons"] = ["✓ MACD bullish crossover",
+                      "  ⛔ Short-term down: 5-SMA slope -1.24×ATR (need ≥ −0.5 for BUY)"]
+    with _tg_db():
+        out = _format_compact_signal_telegram(sig)
+    assert "vetoed: Short-term down: 5-SMA slope" in out, out
+    assert "news/macro" not in out and "⛔" not in out, out
+    assert len(out) <= 200, (len(out), out)
+    _assert_html_safe(out)
+
+    sig["reasons"] = ["⛔ Entry wick <b>& chase</b> " + "x" * 80]
+    with _tg_db():
+        out = _format_compact_signal_telegram(sig)
+    assert "vetoed: Entry wick &lt;b&gt;&amp; chase" in out, out
+    assert len(out) <= 200, (len(out), out)
+    _assert_html_safe(out)
+
+
+def test_tg_a_hold_above_the_bar_without_a_veto_still_says_news_macro():
+    from notifier.telegram import _format_compact_signal_telegram
+    sig = make_signal("HOLD", "futures", score=6.5, buy_score=6.5, sell_score=2.0)
+    with _tg_db():
+        out = _format_compact_signal_telegram(sig)
+    assert "held back (news/macro)" in out and "vetoed" not in out, out
+
+
 def test_tg_open_positions_are_one_line_each():
     from notifier.telegram import _format_consolidated_telegram
     pos = {"id": 42, "type": "BUY", "mode": "spot", "entry_price": 95000.0, "stop_loss": 93800.0,
@@ -3999,6 +4030,8 @@ if __name__ == "__main__":
     run("dynamic text escaped",                   test_tg_dynamic_text_is_escaped)
     run("every case HTML-safe",                   test_tg_every_case_is_html_safe)
     run("HOLD says why (BUY-only/news/flat)",     test_tg_a_hold_says_why_when_it_is_not_just_short_of_the_bar)
+    run("vetoed HOLD names the ⛔ veto",           test_tg_a_vetoed_hold_names_the_veto_not_news)
+    run("above bar, no veto → news/macro",        test_tg_a_hold_above_the_bar_without_a_veto_still_says_news_macro)
     run("open positions one line each",           test_tg_open_positions_are_one_line_each)
     run("position open card compact + complete",  test_tg_position_open_card_is_compact_and_complete)
     run("position close: mode, outcome, total",   test_tg_position_close_names_mode_outcome_pnl_and_running_total)
