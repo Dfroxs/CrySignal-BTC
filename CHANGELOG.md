@@ -4,6 +4,26 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — feat: hourly real-time alarm (`agents/alarm.py`, no LLM)
+
+The daily ops report at 03:30 UTC is up to a day late for a dead bot. `agents/alarm.py`
+runs hourly from the user crontab (`10 * * * *`, ten minutes after the :01 cycle) and
+sends a short Indonesian Telegram message the moment a rule fires: `spotsignal` or
+`nakhoda-alloc` (user scope, so cron sets `XDG_RUNTIME_DIR`) not `active`; the last
+`cycle_log` row older than 75 min; the newest futures cycle with `funding_rate = 0`;
+`MemAvailable` under 120 MB; home filesystem over 90%; a shadow provider whose last 3
+opinions all errored; or an unreadable database. Rules only — no LLM, and health only:
+nothing here reads forward returns or variant/shadow performance.
+
+De-duplication through `data/alarm_state.json`, keyed per condition: alert when it
+first appears, remind at most every 6 h while it persists, one "✅ pulih" when it
+clears. State is written only after Telegram accepts the message, so an outage retries
+next hour. Exit 1 while anything is active; `--dry-run` prints and leaves state alone.
+Not installed on the VPS by this commit — the crontab line is in the module docstring.
+Suite 220 → 227.
+
+---
+
 ## 2026-10-09 — fix: shadow agents run in a background thread
 
 A live retest in DeepSeek's peak hours (06:08 UTC, Friday) timed out at the new 90 s

@@ -3929,6 +3929,193 @@ def test_tg_position_close_names_mode_outcome_pnl_and_running_total():
     assert "+2.41%" in out, "a DB failure drops the total, never the close"
 
 
+# ── 36. agents/alarm.py — hourly real-time alarm, no LLM ──────────────────────
+
+def _alarm_db(cycles, shadow=None):
+    """Raw SQLite file with just the columns the alarm reads. `cycles` is
+    [(timestamp, mode, funding_rate)], `shadow` [(timestamp, provider, error)] or None
+    for a database that predates the shadow_opinions table."""
+    import os, sqlite3, tempfile
+    fd, path = tempfile.mkstemp(suffix=".db"); os.close(fd)
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE cycle_log (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "timestamp TEXT, mode TEXT, funding_rate REAL)")
+    con.executemany("INSERT INTO cycle_log (timestamp, mode, funding_rate) VALUES (?,?,?)", cycles)
+    if shadow is not None:
+        con.execute("CREATE TABLE shadow_opinions (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "timestamp TEXT, provider TEXT, error TEXT)")
+        con.executemany("INSERT INTO shadow_opinions (timestamp, provider, error) VALUES (?,?,?)",
+                        shadow)
+    con.commit(); con.close()
+    return path
+
+def _alarm_clean():
+    return {"spot_svc": "active", "alloc_svc": "active", "db_error": None,
+            "last_cycle_age_min": 9.0, "futures_funding_zero": False,
+            "mem_available_mb": 380.0, "disk_used_pct": 41.0, "shadow_failing": []}
+
+def test_alarm_db_facts_read_both_timestamp_forms_and_the_latest_futures_cycle():
+    import os
+    from datetime import UTC, datetime
+    from agents.alarm import collect_db_facts
+    now = datetime(2026, 10, 9, 7, 10, tzinfo=UTC)
+    # The newest row is ISO with an offset; as a plain string it would sort BEFORE
+    # '2026-10-09 06:01:00' ('T' > ' ' only after the date) — here it must win by time.
+    path = _alarm_db([("2026-10-09 06:01:00", "futures", 0.0),
+                      ("2026-10-09T07:01:00+00:00", "futures", 0.0001),
+                      ("2026-10-09 05:01:00", "spot", 0.0)],
+                     shadow=[("t", "anthropic", "timeout"), ("t", "anthropic", None),
+                             ("t", "anthropic", "timeout"), ("t", "anthropic", "timeout"),
+                             ("t", "deepseek", None), ("t", "deepseek", "429"),
+                             ("t", "deepseek", "429"), ("t", "deepseek", "429"),
+                             ("t", "solo", "boom"), ("t", "solo", "boom")])
+    try:
+        f = collect_db_facts(path, now)
+        assert f["db_error"] is None, f
+        assert f["last_cycle_age_min"] == 9.0, f["last_cycle_age_min"]
+        assert f["futures_funding_zero"] is False, "latest futures cycle has funding"
+        # anthropic's newest three (ids 2..4) include a success; deepseek's are all 429;
+        # 'solo' has only two opinions, too few to judge.
+        assert f["shadow_failing"] == ["deepseek"], f["shadow_failing"]
+    finally:
+        os.unlink(path)
+
+def test_alarm_db_facts_flag_a_blind_latest_futures_cycle_and_tolerate_no_shadow_table():
+    import os
+    from datetime import UTC, datetime
+    from agents.alarm import collect_db_facts
+    now = datetime(2026, 10, 9, 7, 10, tzinfo=UTC)
+    path = _alarm_db([("2026-10-09 06:01:00", "futures", 0.0003),
+                      ("2026-10-09 07:01:00", "futures", 0.0)], shadow=None)
+    try:
+        f = collect_db_facts(path, now)
+        assert f["db_error"] is None and f["futures_funding_zero"] is True, f
+        assert f["shadow_failing"] == [], "no shadow table is not a fault"
+    finally:
+        os.unlink(path)
+    path = _alarm_db([])
+    try:
+        f = collect_db_facts(path, now)
+        assert f["last_cycle_age_min"] is None and f["futures_funding_zero"] is False, f
+    finally:
+        os.unlink(path)
+    f = collect_db_facts("/nonexistent/dir/none.db", now)
+    assert f["db_error"], "an unreadable database is reported, never raised"
+
+def test_alarm_host_facts_read_services_memory_and_disk_through_injected_sources():
+    import os, tempfile
+    from collections import namedtuple
+    from agents.alarm import collect_host_facts
+    fd, mi = tempfile.mkstemp(); os.close(fd)
+    with open(mi, "w") as fh:
+        fh.write("MemTotal:         983040 kB\nMemFree:  20000 kB\nMemAvailable:     102400 kB\n")
+    seen = []
+    def run(cmd):
+        seen.append(cmd)
+        return "active" if "--user" not in cmd else "failed"
+    Usage = namedtuple("Usage", "total used free")
+    try:
+        f = collect_host_facts(run=run, meminfo_path=mi,
+                               disk_usage=lambda p: Usage(100, 93, 7))
+    finally:
+        os.unlink(mi)
+    assert f["spot_svc"] == "active" and f["alloc_svc"] == "failed", f
+    assert f["mem_available_mb"] == 100.0 and f["disk_used_pct"] == 93.0, f
+    assert any("--user" in c and "nakhoda-alloc" in c for c in seen), seen
+    f = collect_host_facts(run=lambda c: "", meminfo_path="/nonexistent/meminfo",
+                           disk_usage=lambda p: (_ for _ in ()).throw(OSError("x")))
+    assert f["spot_svc"] == "unknown" and f["mem_available_mb"] is None
+    assert f["disk_used_pct"] is None
+
+def test_alarm_rules_name_each_condition_by_a_stable_key():
+    from agents.alarm import conditions
+    assert conditions(_alarm_clean()) == {}
+    bad = dict(_alarm_clean(), spot_svc="failed", alloc_svc="inactive", last_cycle_age_min=130.0,
+               futures_funding_zero=True, mem_available_mb=90.0, disk_used_pct=95.0,
+               shadow_failing=["deepseek"])
+    c = conditions(bad)
+    assert set(c) == {"svc:spotsignal", "svc:nakhoda-alloc", "cycle_stale", "futures_blind",
+                      "memory", "disk", "shadow:deepseek"}, set(c)
+    assert "130" in c["cycle_stale"] and "funding" in c["futures_blind"], c
+    # Edges: 75 min is still fine, 120 MB is still fine, 90% is still fine.
+    edge = dict(_alarm_clean(), last_cycle_age_min=75.0, mem_available_mb=120.0, disk_used_pct=90.0)
+    assert conditions(edge) == {}, conditions(edge)
+    # No cycle at all is stale; an unreadable DB is its own condition.
+    assert "cycle_stale" in conditions(dict(_alarm_clean(), last_cycle_age_min=None))
+    assert set(conditions(dict(_alarm_clean(), db_error="no such table: cycle_log",
+                               last_cycle_age_min=None))) == {"db"}
+    # Unknown host readings (no /proc on a Mac) are not alarms; an unknown service is.
+    assert conditions(dict(_alarm_clean(), mem_available_mb=None, disk_used_pct=None)) == {}
+    assert "svc:spotsignal" in conditions(dict(_alarm_clean(), spot_svc="unknown"))
+
+def test_alarm_alerts_once_re_alerts_after_six_hours_and_recovers_once():
+    from datetime import UTC, datetime, timedelta
+    from agents.alarm import step
+    t0 = datetime(2026, 10, 9, 6, 10, tzinfo=UTC)
+    down = {"svc:spotsignal": "layanan spotsignal: failed"}
+
+    new, again, rec, s = step({}, down, t0)
+    assert list(new) == ["svc:spotsignal"] and not again and not rec, (new, again, rec)
+    for h in (1, 5):
+        new, again, rec, s2 = step(s, down, t0 + timedelta(hours=h))
+        assert not new and not again and not rec, f"repeat at +{h}h"
+        s = s2
+    new, again, rec, s = step(s, down, t0 + timedelta(hours=6))
+    assert list(again) == ["svc:spotsignal"] and not new, "re-alert after 6 h"
+    assert again["svc:spotsignal"][1] == 6.0, "carries how long it has been down"
+    new, again, rec, s = step(s, down, t0 + timedelta(hours=7))
+    assert not again, "the 6 h clock restarts at the re-alert"
+
+    new, again, rec, s = step(s, {}, t0 + timedelta(hours=8))
+    assert list(rec) == ["svc:spotsignal"] and not new and not again and s == {"active": {}}
+    new, again, rec, s = step(s, {}, t0 + timedelta(hours=9))
+    assert not (new or again or rec), "recovery is announced once"
+
+    # Independent conditions are tracked independently.
+    _, _, _, s = step({}, down, t0)
+    new, _, rec, s = step(s, {"disk": "disk 95%"}, t0 + timedelta(hours=1))
+    assert list(new) == ["disk"] and list(rec) == ["svc:spotsignal"]
+
+def test_alarm_message_is_short_escaped_and_indonesian():
+    from datetime import UTC, datetime
+    from agents.alarm import render
+    now = datetime(2026, 10, 9, 6, 10, tzinfo=UTC)
+    out = render({"x": "layanan <spot> & co"}, {"cycle_stale": ("siklus terakhir 130 menit lalu", 6.0)},
+                 {"disk": "disk 95%"}, now)
+    assert "&lt;spot&gt; &amp; co" in out and "<spot>" not in out, out
+    assert "masih" in out and "6" in out and "pulih" in out and "2026-10-09 06:10" in out, out
+    _assert_html_safe(out)
+    only_rec = render({}, {}, {"disk": "disk 95%"}, now)
+    assert "✅" in only_rec and "pulih" in only_rec and "🚨" not in only_rec, only_rec
+    assert render({}, {}, {}, now) is None
+    assert len(out) < 800
+
+def test_alarm_run_saves_state_only_after_a_send_and_exits_nonzero_while_active():
+    import json, os, tempfile
+    from datetime import UTC, datetime, timedelta
+    from agents.alarm import run_alarm
+    d = tempfile.mkdtemp(); sp = os.path.join(d, "alarm_state.json")
+    t0 = datetime(2026, 10, 9, 6, 10, tzinfo=UTC)
+    bad = dict(_alarm_clean(), spot_svc="failed")
+
+    assert run_alarm(bad, sp, t0, send_fn=lambda t: False) == 1
+    assert not os.path.exists(sp), "a failed send must not record the alert as sent"
+    sent = []
+    assert run_alarm(bad, sp, t0, send_fn=lambda t: sent.append(t) or True) == 1
+    assert len(sent) == 1 and "spotsignal" in sent[0]
+    assert "svc:spotsignal" in json.load(open(sp))["active"]
+    assert run_alarm(bad, sp, t0 + timedelta(hours=1), send_fn=lambda t: sent.append(t) or True) == 1
+    assert len(sent) == 1, "no repeat within 6 h"
+    assert run_alarm(_alarm_clean(), sp, t0 + timedelta(hours=2),
+                     send_fn=lambda t: sent.append(t) or True) == 0
+    assert len(sent) == 2 and "pulih" in sent[1]
+
+    # Dry run prints and never writes state; a corrupt state file reads as empty.
+    open(sp, "w").write("{not json")
+    assert run_alarm(bad, sp, t0, send_fn=lambda t: True, save=False) == 1
+    assert open(sp).read() == "{not json"
+
+
 if __name__ == "__main__":
     print("\n══ Pipeline Dummy-Data Tests ══\n")
 
@@ -4223,6 +4410,15 @@ if __name__ == "__main__":
     run("open positions one line each",           test_tg_open_positions_are_one_line_each)
     run("position open card compact + complete",  test_tg_position_open_card_is_compact_and_complete)
     run("position close: mode, outcome, total",   test_tg_position_close_names_mode_outcome_pnl_and_running_total)
+
+    print("\n── 36. agents/alarm.py — hourly alarm, no LLM ──")
+    run("db facts: both ts forms, latest futures", test_alarm_db_facts_read_both_timestamp_forms_and_the_latest_futures_cycle)
+    run("blind futures; no shadow table is fine", test_alarm_db_facts_flag_a_blind_latest_futures_cycle_and_tolerate_no_shadow_table)
+    run("host facts via injected sources",        test_alarm_host_facts_read_services_memory_and_disk_through_injected_sources)
+    run("rules keyed per condition, edges",       test_alarm_rules_name_each_condition_by_a_stable_key)
+    run("alert once, 6h re-alert, recover once",  test_alarm_alerts_once_re_alerts_after_six_hours_and_recovers_once)
+    run("message short, escaped, Indonesian",     test_alarm_message_is_short_escaped_and_indonesian)
+    run("state saved only after send; exit 1",    test_alarm_run_saves_state_only_after_a_send_and_exits_nonzero_while_active)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
