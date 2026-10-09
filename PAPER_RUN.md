@@ -29,6 +29,14 @@ position opens with, and `backtest.py` scores each candle on live's own windows 
 VWAP was 96h). No hypothesis window changes. The owner has ruled that real findings
 ship mid-run, recorded like this.
 
+**Restart 2026-10-09 09:15 UTC at `9580b8a`.** The Q&A bot now answers with Claude
+Haiku 4.5 (its own `QA_LLM_MODEL`; the shadow agents keep Opus 5.5 / DeepSeek). The
+shadow context names levels `<level>_vs_price_pct`, after Claude misread `ema200_pct`.
+Also loaded: the futures gate switch (`disabled_gates: []`, so behaviour is identical).
+Shadow tables held 0 / 0 rows right before the restart.
+**H-S and H-X count only opinions with `timestamp >= 2026-10-09T09:17:00Z`**, which
+supersedes the 06:16 and 07:16 cut-offs (prereg amendment).
+
 ---
 
 ## New session? Do this first
