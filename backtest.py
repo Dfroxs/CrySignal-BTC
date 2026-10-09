@@ -211,7 +211,10 @@ def _failing_gates(signal, mode, window, last_resolved=None,
     """
     fails = []
     conf = signal.get("confidence", "WEAK")
-    min_conf = "NORMAL"
+    # The same minimum Phase 3 reads per mode, so a config change cannot leave the
+    # backtest gating on the old bar.
+    min_conf = (FUTURES_CONFIG["entry"].get("min_confidence", "NORMAL") if mode == "futures"
+                else RISK_CONFIG["pyramid"].get("min_initial_confidence", "NORMAL"))
     stype = signal["type"]
 
     # Confidence gate

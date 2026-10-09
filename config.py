@@ -79,7 +79,13 @@ FUTURES_CONFIG = {
     # and skips a same-direction one (has_open_position_same_direction).
     # The old setting was never read by any module.
     "entry": {
-        "min_confidence":         "NORMAL",   # minimum confidence to open first position
+        # NORMAL → WEAK: a DESIGN DECISION (owner, 2026-10-09) so futures yields trades,
+        # not a test result. Futures opened 0 positions in runs 1–3; in the 7 days before
+        # this, 12 of 15 futures blocks were confidence_first (the 1.0–1.2× dead zone).
+        # 2026-10-04-deadzone-results.md: tiers do not order P&L in either window and the
+        # dead zone was no worse than NORMAL (−0.56 vs −0.79pp). H1 found no PROFIT in it
+        # either, so this buys data, not edge. Flips use the same minimum.
+        "min_confidence":         "WEAK",     # minimum confidence to open first position
         "reentry_price_check":    True,       # TA-driven re-entry quality gate
         "fakeout_wick_ratio":     0.60,       # reject on >60% upper/lower wick
         "max_aggregate_risk_pct": 8.0,        # max total risk % across all futures positions

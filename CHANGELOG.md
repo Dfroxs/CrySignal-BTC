@@ -4,6 +4,30 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — design decision: futures opens from WEAK (the 1.0–1.2× dead zone)
+
+**Not a test result.** Owner decision, so run 3 yields futures trades. Futures opened 0
+positions in runs 1, 2 and 3 so far. In the 7 days before this, 12 of 15 futures blocks
+were `confidence_first`.
+
+- `FUTURES_CONFIG["entry"]["min_confidence"]`: `NORMAL` → **`WEAK`**. It covers first
+  entries and flips. Spot keeps NORMAL, and pyramiding keeps STRONG.
+- Evidence it does not throw away selection: `2026-10-04-deadzone-results.md`. Tiers do
+  not order P&L in either window, and the dead zone (−0.56pp) was no worse than NORMAL
+  (−0.79pp). H1 found no profit in the dead zone either, so this buys data, not edge.
+- `backtest._failing_gates` hard-coded `NORMAL`. It now reads the same per-mode minimum
+  Phase 3 reads, so replays keep mirroring live.
+- Verified on an isolated worktree with a copy of the VPS database (Telegram and LLM
+  keys removed). A futures BUY forced into the band (5.35 vs threshold 4.95, WEAK)
+  passed `confidence_first`, reached the remaining gates, and with them satisfied
+  opened #4 at $82,658 with the ×2 exit geometry. Suite 269 → 270.
+- Scoring effect on run 3 (to record at restart): H-L and H-V1 are per-cycle and
+  unaffected. H-B is offline at a fixed threshold. H-V2's fidelity check must apply the
+  WEAK minimum to futures from the restart onward. The adaptive controller now sees
+  futures opens, so the futures threshold may rise.
+
+---
+
 ## 2026-10-09 — tooling: project Claude skills `backtest-expert` and `residual-edge-analyzer`
 
 Two skills from `tradermonty/claude-trading-skills` (MIT, commit `eab8d5c`) are now in

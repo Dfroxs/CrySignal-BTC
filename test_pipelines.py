@@ -910,7 +910,13 @@ def test_failing_gates_reports_every_gate_not_just_the_first():
     bad = _gate_signal()
     bad["confidence"] = "WEAK"                       # trips confidence_first
     bad["_regime"] = {"regime": "TRENDING", "trend_dir": "BEARISH"}   # + regime_counter
-    gates = _failing_gates(bad, "futures", w)
+    from config import FUTURES_CONFIG
+    saved = FUTURES_CONFIG["entry"]["min_confidence"]
+    FUTURES_CONFIG["entry"]["min_confidence"] = "NORMAL"   # futures opens from WEAK since 10-09
+    try:
+        gates = _failing_gates(bad, "futures", w)
+    finally:
+        FUTURES_CONFIG["entry"]["min_confidence"] = saved
     assert "confidence_first" in gates and "regime_counter" in gates, gates
     assert len(gates) >= 3, f"confluence should fail too, got {gates}"
     assert len(gates) == len(set(gates)), f"a gate must not be counted twice: {gates}"
@@ -2206,11 +2212,25 @@ def test_will_open_derives_the_bar_from_config_not_a_literal():
     spot_min = RISK_CONFIG["pyramid"]["min_initial_confidence"]
     fut_min = FUTURES_CONFIG["entry"]["min_confidence"]
     for mode, minimum in (("spot", spot_min), ("futures", fut_min)):
-        for conf, expected in (("WEAK", False), ("NORMAL", True), ("STRONG", True)):
+        rank = {"WEAK": 0, "NORMAL": 1, "STRONG": 2}
+        for conf in rank:
             got = will_open({"type": "BUY", "mode": mode, "confidence": conf})
-            want = expected if minimum == "NORMAL" else None
-            if want is not None:
-                assert got is want, f"{mode}/{conf}: {got}, config minimum is {minimum}"
+            want = rank[conf] >= rank[minimum]
+            assert got is want, f"{mode}/{conf}: {got}, config minimum is {minimum}"
+
+
+def test_futures_opens_from_weak_and_backtest_gates_on_the_same_minimum():
+    """Design decision 2026-10-09: futures first entries and flips open from WEAK (the
+    1.0–1.2× dead zone); spot keeps NORMAL. The backtest must read the same per-mode
+    minimum, or replays stop mirroring live."""
+    import pandas as pd
+    from config import FUTURES_CONFIG, RISK_CONFIG
+    import backtest
+    assert FUTURES_CONFIG["entry"]["min_confidence"] == "WEAK"
+    assert RISK_CONFIG["pyramid"]["min_initial_confidence"] == "NORMAL"
+    src = __import__("inspect").getsource(backtest._failing_gates)
+    assert 'min_conf = "NORMAL"' not in src, "the backtest must not hard-code the bar"
+    assert 'FUTURES_CONFIG["entry"]' in src and "min_initial_confidence" in src
 
 
 def test_will_open_is_false_for_a_hold_whatever_its_confidence():
@@ -5075,6 +5095,7 @@ if __name__ == "__main__":
     print("\n── 26. Unopenable signals ──")
     run("will_open reads config, not a literal",  test_will_open_derives_the_bar_from_config_not_a_literal)
     run("HOLD never opens",                       test_will_open_is_false_for_a_hold_whatever_its_confidence)
+    run("futures opens from WEAK, bt same bar", test_futures_opens_from_weak_and_backtest_gates_on_the_same_minimum)
     run("one comparator, two consumers",          test_phase3_and_the_notifier_share_one_comparator)
     run("WEAK alert says no position",            test_a_weak_buy_alert_says_no_position_will_open)
     run("NORMAL alert still tradeable",           test_a_normal_buy_alert_is_still_a_tradeable_signal)
