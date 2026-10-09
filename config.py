@@ -186,6 +186,22 @@ CONDITION_MAX = {
 # set entirely. See CHANGELOG 2026-08-29 for the full write-up.
 DISABLED_CONDITIONS = frozenset()
 
+# Engine veto gates switched off per mode (names from signals/engine._VETO_GATES).
+# `generate_signals(gates_disabled=None)` reads this, so the live bot, the variants and
+# backtest.py all apply the same set. Pass an explicit tuple, `()` included, to override.
+#
+# spot: no_chase, anti_fomo, entry_wick OFF. A DESIGN DECISION (owner, 2026-10-09) so
+# spot yields trades, not a test result. 2026-09-24-entry-results.md H-B: removing
+# these three left the system LESS bad by 0.069pp per entry (FAILED to show they pay),
+# with entries more than doubled. Live 2026-10-04 → 10-09: 23 spot cycles cleared the
+# threshold, 1 fired, and 13 were killed by no_chase/entry_wick. short_term and
+# counter_trend stay (untested / H-CT), and the Phase 3 breakout_chase gate still
+# blocks entries more than 1 ATR above VWAP.
+VETOES_DISABLED = {
+    "spot": frozenset({"no_chase", "anti_fomo", "entry_wick"}),
+    "futures": frozenset(),
+}
+
 
 def _max_score(mode):
     """Ceiling over the ACTIVE conditions for *mode*."""

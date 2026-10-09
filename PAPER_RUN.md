@@ -44,6 +44,17 @@ outage placeholders are now sent to the agents as null. No BUY/SELL fired betwee
 numpy values recorded all four opinions. **H-S and H-X count opinions with
 `timestamp >= 2026-10-09T09:28:00Z`.**
 
+
+**Restart 2026-10-09 10:55:39 UTC at `4dc837b` (PR #17). Run 3's scoring window restarts
+here.** Futures now opens from WEAK (`min_confidence` NORMAL → WEAK, an owner design
+decision for data yield; spot unchanged), and the backtest reads the same minimum. This
+is a `config.py` change, so the 05:41 start is discarded per the prereg's clause. It
+cost nothing: 0 signals, 0 positions and 0 shadow opinions existed before it. **All
+run-3 hypotheses, H-S and H-X included, count from the regenerated manifest's
+`started_at = 2026-10-09T11:12:48Z`** (old manifest archived as `paper_run_manifest.run3-0541.json`). Day 30 is
+still 2026-11-08. See the prereg amendment "~11:00 UTC". The Q&A bot restarted at 10:55:19
+on Sonnet 5.5 with project knowledge, chat memory and engine reasons. The trading-path
+diff check is now measured from `4dc837b`.
 ---
 
 ## New session? Do this first

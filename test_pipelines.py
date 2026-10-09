@@ -1873,10 +1873,13 @@ def test_an_unknown_gate_name_raises_instead_of_ablating_nothing():
 
 
 def test_no_gates_disabled_leaves_every_gate_running():
-    """None and () are both 'disable nothing' â the default must not ablate by accident."""
+    """() is 'disable nothing'. None applies config.VETOES_DISABLED for the mode (spot has
+    no_chase off since 2026-10-09), so it must ablate exactly that and nothing by accident."""
+    from config import VETOES_DISABLED
     df, _ = _gate_fixture("no_chase")
-    for gd in (None, ()):
-        assert _fires("no_chase", df, None, gd), f"gates_disabled={gd!r} disabled a gate"
+    assert _fires("no_chase", df, None, ()), "gates_disabled=() disabled a gate"
+    assert _fires("no_chase", df, None, None) is ("no_chase" not in VETOES_DISABLED["spot"]), \
+        "gates_disabled=None must follow config.VETOES_DISABLED['spot']"
 
 
 
@@ -2231,6 +2234,32 @@ def test_futures_opens_from_weak_and_backtest_gates_on_the_same_minimum():
     src = __import__("inspect").getsource(backtest._failing_gates)
     assert 'min_conf = "NORMAL"' not in src, "the backtest must not hard-code the bar"
     assert 'FUTURES_CONFIG["entry"]' in src and "min_initial_confidence" in src
+
+
+def test_engine_vetoes_disabled_default_reads_config_per_mode():
+    """Design decision 2026-10-09: spot runs without the three anti-chase vetoes. The
+    engine's default must read config per mode, so live, variants and backtest agree;
+    an explicit () still means "disable nothing" for research arms."""
+    import inspect
+    from config import VETOES_DISABLED
+    from signals import engine
+    assert VETOES_DISABLED["spot"] == {"no_chase", "anti_fomo", "entry_wick"}
+    assert VETOES_DISABLED["futures"] == frozenset()
+    assert set(VETOES_DISABLED["spot"]) <= set(engine._VETO_GATES)
+    src = inspect.getsource(engine.generate_signals)
+    assert "if gates_disabled is None:" in src and "VETOES_DISABLED.get(mode" in src
+
+
+def test_rr_gate_admits_an_exact_one_point_five_geometry():
+    """SL at the 2.5×ATR cap and TP at 1.5×2.5 ATR is R:R 1.5 exactly. Float noise made
+    `rr < 1.5` reject it on ~34% of prices ("R:R 1.50 below 1.5 minimum")."""
+    import inspect
+    from signals import engine
+    src = inspect.getsource(engine.generate_signals)
+    assert "if rr < 1.5 - 1e-9:" in src
+    close, atr = 82704.0, 437.3
+    rr = ((close + atr * 1.5 * 2.5) - close) / (close - (close - 2.5 * atr))
+    assert not rr < 1.5 - 1e-9, rr
 
 
 def test_will_open_is_false_for_a_hold_whatever_its_confidence():
@@ -5096,6 +5125,8 @@ if __name__ == "__main__":
     run("will_open reads config, not a literal",  test_will_open_derives_the_bar_from_config_not_a_literal)
     run("HOLD never opens",                       test_will_open_is_false_for_a_hold_whatever_its_confidence)
     run("futures opens from WEAK, bt same bar", test_futures_opens_from_weak_and_backtest_gates_on_the_same_minimum)
+    run("engine vetoes off per mode from config", test_engine_vetoes_disabled_default_reads_config_per_mode)
+    run("R:R gate admits exact 1.5 geometry",     test_rr_gate_admits_an_exact_one_point_five_geometry)
     run("one comparator, two consumers",          test_phase3_and_the_notifier_share_one_comparator)
     run("WEAK alert says no position",            test_a_weak_buy_alert_says_no_position_will_open)
     run("NORMAL alert still tradeable",           test_a_normal_buy_alert_is_still_a_tradeable_signal)

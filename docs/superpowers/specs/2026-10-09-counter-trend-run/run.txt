@@ -1,0 +1,32 @@
+# started 2026-10-09T11:54:42Z at dc27a21
+H-CT  BTCUSDT perp 1h  scoring 49535 candles 2021-01-01 00:00:00 → 2026-08-26 22:00:00 on 7 workers
+
+== primary 2021-01-01 → 2025-01-01
+  SELL in 1D BULLISH (primary question)
+    ct_vetoed  n=  73 mean=-0.535pp [-1.234, +0.237] win 32%
+    random_ct  mean=-0.132pp (n=1460, 20 seeds)
+    kept (with-trend, same side)  n= 150 mean=-0.235pp [-0.742, +0.296] win 34%
+    H-CT1 INCONCLUSIVE   H-CT2 INCONCLUSIVE   also blocked by regime_counter/trend_confluence: 57/73
+    per year: {2021: 0.5025, 2022: 1.305, 2023: -1.2039, 2024: -0.8168}
+  BUY in 1D BEARISH (secondary)
+    ct_vetoed  n=  54 mean=-1.116pp [-2.204, -0.038] win 26%
+    random_ct  mean=-0.496pp (n=1080, 20 seeds)
+    kept (with-trend, same side)  n= 188 mean=+0.015pp [-0.425, +0.468] win 38%
+    H-CT1 INCONCLUSIVE   H-CT2 INCONCLUSIVE   also blocked by regime_counter/trend_confluence: 43/54
+    per year: {2021: -0.8603, 2022: -1.9818, 2023: 1.0999, 2024: 0.3662}
+
+== confirmation 2025-01-01 → 2026-08-30
+  SELL in 1D BULLISH (primary question)
+    ct_vetoed  n=  24 mean=-0.199pp [-0.964, +0.611] win 33%
+    random_ct  mean=-0.122pp (n=480, 20 seeds)
+    kept (with-trend, same side)  n=  64 mean=-0.235pp [-0.802, +0.385] win 28%
+    H-CT1 INCONCLUSIVE   H-CT2 INCONCLUSIVE   also blocked by regime_counter/trend_confluence: 17/24
+    per year: {2025: -0.1227, 2026: -1.949}
+  BUY in 1D BEARISH (secondary)
+    ct_vetoed  n=  32 mean=+1.144pp [+0.162, +2.148] win 62%
+    random_ct  mean=-0.360pp (n=640, 20 seeds)
+    kept (with-trend, same side)  n=  53 mean=+0.110pp [-0.412, +0.649] win 36%
+    H-CT1 PASS   H-CT2 PASS   also blocked by regime_counter/trend_confluence: 27/32
+    per year: {2025: 1.1823, 2026: 1.1107}
+
+written → docs/superpowers/specs/2026-10-09-counter-trend-run/result.json

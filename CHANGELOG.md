@@ -4,6 +4,58 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — design decision: spot runs without the anti-chase vetoes; fix: R:R gate rejected exact 1.5
+
+**Not a test result** for the veto change. It is an owner decision so spot yields
+trades.
+
+### Changed
+- New `config.VETOES_DISABLED` per mode. `generate_signals(gates_disabled=None)` now
+  applies it, as `disabled=None` applies `DISABLED_CONDITIONS`, so live, variants and
+  `backtest.py` agree. An explicit `()` still disables nothing.
+- **spot: `no_chase`, `anti_fomo`, `entry_wick` OFF.** Futures is unchanged.
+  - Evidence they do not pay: `2026-09-24-entry-results.md` H-B FAILED. Removing them
+    was 0.069pp per entry *less* bad, with more than 2× the entries.
+  - Live, 2026-10-04 → 10-09: 23 spot cycles cleared the threshold, 1 fired, and 13
+    were killed by `no_chase`/`entry_wick`.
+  - `short_term` (untested) and `counter_trend` (H-CT) stay. The Phase 3
+    `breakout_chase` gate still blocks entries more than 1 ATR above VWAP.
+- Research scripts that pass `gates_disabled=None` (e.g. `entry_ic.py`'s `spotsignal`
+  arm) now see the configured set. Pass `()` to reproduce a pre-2026-10-09 figure.
+
+### Fixed
+- **The R:R ≥ 1.5 gate rejected geometries of exactly 1.5.** With the SL at its 2.5×ATR
+  cap and TP uncapped, R:R is 3.75/2.5 = 1.5 exactly, but float subtraction on ~$80k
+  prices gave 1.4999… on ~34% of prices ("⛔ R:R 1.50 below 1.5 minimum"). It now
+  compares against `1.5 − 1e-9`.
+
+### Verified
+- Isolated full cycle on a fresh copy of the VPS database: today's spot setup (5.25 vs
+  4.05) was HOLD by the R:R float veto. After the fix it fires as BUY NORMAL, reaches
+  Phase 3, and is held by `regime_bearish` (ADX trend bearish), a legitimate gate.
+  Suite 270 → 272.
+- Scoring effect: this is a `signals/` + `config.py` change, so run 3's window restarts
+  again at the deploy, recorded in PAPER_RUN.md.
+
+---
+
+## 2026-10-09 — research: H-CT — counter-trend veto: INCONCLUSIVE (under-powered); the veto stays
+
+Pre-registered (`c70edf7`). The instrument `scripts/veto_ic.py` was committed (`dc27a21`)
+before the scored run. BTC perp 1h, 2021 → 2026-08, through the live futures exit.
+
+- **SELL in a 1D-bullish trend (why futures never shorts):** 73 vetoed shorts in
+  2021–24 at −0.535pp against random −0.132pp, and 24 in 2025–26 at −0.199pp against
+  −0.122pp. Both are under the power guard, so INCONCLUSIVE, but every point estimate
+  says they are worse than random and lose money. 74 of 97 would also fail
+  `regime_counter`/`trend_confluence`.
+- **BUY in a 1D-bearish trend:** PASS in 2025–26 (+1.14pp, n=32), but −1.12pp in
+  2021–24. The sign flips, so it is not passed.
+- **The veto stays.** Opening counter-trend shorts for data is not recommended.
+- Results: `docs/superpowers/specs/2026-10-09-counter-trend-results.md`.
+
+---
+
 ## 2026-10-09 — research: H-F2/H-F3 — basis/funding in five other perps: INCONCLUSIVE
 
 Pre-registered (`6ed4d46`) before any non-BTC data was fetched. ETH, SOL, BNB, XRP and
