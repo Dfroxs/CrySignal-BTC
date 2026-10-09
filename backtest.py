@@ -29,7 +29,11 @@ from config import (
 )
 from signals.engine import generate_signals
 from signals.htf import _htf_aligned, htf_indicator_series, indicators_from_row
-from signals.indicators import detect_support_resistance
+from signals.indicators import (
+    calculate_atr, calculate_bollinger_bands, calculate_ema, calculate_macd, calculate_obv,
+    calculate_rsi, calculate_stoch_rsi, calculate_vwap, compute_cmf, compute_mfi,
+    detect_support_resistance,
+)
 from signals.ohlcv import _fetch_ohlcv_paged, _fetch_ohlcv_range, fetch_ohlcv_df
 from signals.market_data import get_signal_confidence
 
@@ -81,20 +85,22 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
     added to erase one specific losing trade; nothing ever measured the winners
     it took with it.
     """
-    limit = lookback_days * (24 if timeframe == "1h" else 6) + MIN_WARMUP
+    warmup = max(MIN_WARMUP, LIVE_BASE_BARS)
+    limit = lookback_days * (24 if timeframe == "1h" else 6) + warmup
     max_hold = MAX_HOLD_CANDLES.get(timeframe, 72)
     threshold = SPOT_THRESHOLD if mode == "spot" else SIGNAL_THRESHOLD
 
     if start is not None:
-        span = pd.Timedelta(hours=4 if timeframe == "4h" else 1) * MIN_WARMUP
+        span = pd.Timedelta(hours=4 if timeframe == "4h" else 1) * warmup
         since_ms = int((pd.Timestamp(start) - span).timestamp() * 1000)
         until_ms = int(pd.Timestamp(end).timestamp() * 1000) if end is not None else None
         logger.info("Fetching %s %s from %s to %s ...", mode, timeframe, start, end or "now")
-        df = fetch_ohlcv_df(symbol, timeframe, since=since_ms, until=until_ms)
+        df = fetch_ohlcv_df(symbol, timeframe, since=since_ms, until=until_ms,
+                            vwap_period=_vwap_period(timeframe))
     else:
         logger.info("Fetching %d days of %s %s OHLCV ...", lookback_days, mode, symbol)
-        df = fetch_ohlcv_df(symbol, timeframe, limit=limit)
-    if len(df) < MIN_WARMUP + 10:
+        df = fetch_ohlcv_df(symbol, timeframe, limit=limit, vwap_period=_vwap_period(timeframe))
+    if len(df) < warmup + 10:
         logger.error("Not enough data (got %d candles).", len(df))
         return [], {}
 
@@ -123,26 +129,11 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
     # re-entering the exact setup that just stopped out. 5 candles on 1H, 2 on 4H.
     cooldown_n = 5 if timeframe == "1h" else 2
     cooldown_until = {"BUY": -1, "SELL": -1}
-    loop_start = MIN_WARMUP
+    loop_start = LIVE_BASE_BARS - 1
     if start is not None:
-        loop_start = max(MIN_WARMUP, int(df.index.searchsorted(pd.Timestamp(start))))
+        loop_start = max(loop_start, int(df.index.searchsorted(pd.Timestamp(start))))
     for i in range(loop_start, len(df) - max_hold - 1):
-        window = df.iloc[:i + 1].copy()
-        sr = detect_support_resistance(window)
-
-        try:
-            htf = _htf_at(htf_frames, window.index[-1])
-        except Exception:
-            htf = None
-
-        # Pass base threshold only; generate_signals() applies regime + session bump once internally.
-        # Pre-computing them here would double-apply (engine recomputes from same window data).
-        effective_threshold = threshold
-
-        signal = generate_signals(
-            window, htf=htf, market_structure=None, sr=sr,
-            mode=mode, threshold_override=effective_threshold, disabled=disabled,
-        )
+        window, signal = _score_candle(df, i, timeframe, mode, htf_frames, threshold, disabled)
         signal["mode"] = mode
 
         if signal["type"] == "HOLD":
@@ -545,6 +536,74 @@ def _make_trade(df, entry_idx, exit_idx, signal, outcome, entry, exit_px, pnl_pc
     }
 
 
+# Live (signals/spot.py, signals/futures.py) fetches 500 base bars and drops the forming
+# one, so every indicator it scores is computed over the last 499 CLOSED bars.
+LIVE_BASE_BARS = 499
+
+
+def _vwap_period(timeframe):
+    """VWAP length live uses: 6 x 4h = 24h on spot, 24 x 1h = 24h on futures. The
+    backtest used the 24-bar default everywhere, i.e. a 96h VWAP on every spot replay."""
+    return 6 if timeframe == "4h" else 24
+
+
+def _live_indicators(raw, vwap_period):
+    """The indicator block of `signals.ohlcv.fetch_ohlcv_df`, applied to `raw` OHLCV.
+
+    A copy, because signals/ is frozen during a run. A test pins it against the original
+    on identical bars, so the two cannot drift silently.
+    """
+    df = raw[["open", "high", "low", "close", "volume"]].copy()
+    df['EMA_200'] = calculate_ema(df['close'], 200)
+    df['RSI_14'] = calculate_rsi(df['close'])
+    df['MACD'], df['MACD_Signal'], df['MACD_Histogram'] = calculate_macd(df['close'])
+    df['BB_Upper'], df['BB_Middle'], df['BB_Lower'] = calculate_bollinger_bands(df['close'])
+    df['ATR_14'] = calculate_atr(df)
+    df['OBV'] = calculate_obv(df)
+    df['StochRSI_K'], df['StochRSI_D'] = calculate_stoch_rsi(df['close'])
+    df['VWAP_24'] = calculate_vwap(df, period=vwap_period)
+    df['MFI_14'] = compute_mfi(df)
+    df['CMF_20'] = compute_cmf(df)
+    return df
+
+
+def _score_candle(df, i, timeframe, mode, htf_frames, threshold, disabled):
+    """(window, signal) for candle `i`, scored on exactly what live would see then: the
+    last LIVE_BASE_BARS closed bars with indicators computed over them alone, and HTF
+    as of that bar. The result no longer depends on how much history was loaded."""
+    window = _live_indicators(df.iloc[max(0, i - LIVE_BASE_BARS + 1): i + 1],
+                              _vwap_period(timeframe))
+    sr = detect_support_resistance(window)
+    try:
+        htf = _htf_at(htf_frames, window.index[-1]) if htf_frames else None
+    except Exception:
+        htf = None
+    # Pass base threshold only; generate_signals() applies regime + session bump once.
+    signal = generate_signals(window, htf=htf, market_structure=None, sr=sr, mode=mode,
+                              threshold_override=threshold, disabled=disabled)
+    return window, signal
+
+
+# Live (signals/htf.py) fetches this many HTF bars each cycle and computes every HTF
+# indicator over them alone. Pinned against that source by a test, because signals/ is
+# frozen during a run and the two must not drift silently.
+LIVE_HTF_BARS = 250
+
+
+def _live_htf_series(d, window=LIVE_HTF_BARS):
+    """Per-bar HTF indicators exactly as live computes them: from the trailing `window`
+    bars ending at that bar, not from all loaded history.
+
+    An EMA200 over 250 bars has not converged (the seed still weighs ~8%), so a series
+    computed once over the whole history differs from live, and differs again with how
+    much history was loaded. Measured on BTC: trend label different on 1.1-2.9% of bars,
+    close-vs-EMA200 up to 7.4pp apart on 1w.
+    """
+    rows = [htf_indicator_series(d.iloc[max(0, i - window + 1): i + 1]).iloc[-1]
+            for i in range(len(d))]
+    return pd.DataFrame(rows, index=d.index)
+
+
 def _load_htf_series(symbol, timeframe, lookback_days, start=None, end=None):
     """Fetch the SAME higher timeframes live uses and precompute per-bar indicators.
 
@@ -568,7 +627,7 @@ def _load_htf_series(symbol, timeframe, lookback_days, start=None, end=None):
             raise ValueError(f"exchange returned no {tf} bars")
         d = pd.DataFrame(bars, columns=["timestamp", "open", "high", "low", "close", "volume"])
         d.index = pd.to_datetime(d["timestamp"], unit="ms")
-        series = htf_indicator_series(d)
+        series = _live_htf_series(d)
         # Precompute each bar's CLOSE time once. _htf_at was rebuilding this
         # index, a boolean mask and a DataFrame slice for every candle — O(bars)
         # per lookup across thousands of candles.

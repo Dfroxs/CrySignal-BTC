@@ -4,6 +4,35 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — fix: backtest scores each candle exactly as live would
+
+On `develop`. Local only: `backtest.py` is never run on the server.
+
+### Fixed
+- **Spot backtests used a 96h VWAP.** `run_backtest` called `fetch_ohlcv_df` without
+  `vwap_period`, so 4h replays got the 24-bar default (96h), while live spot uses 6 bars
+  (24h). VWAP feeds the score and the no-chase, trend-confluence and breakout-chase
+  gates. **Every `backtest.py --mode spot` figure before this described a different
+  system.** That includes this session's "2 trades a year, +0.02%". The research
+  instruments (`entry_ic`, `reentry_ic`) already used 6 and are unaffected.
+- **Indicators depended on how much history was loaded.** Live scores the last 499
+  closed base bars and the last 250 HTF bars, each with indicators computed over that
+  window alone. EMA200 has not converged in either. The backtest computed every series
+  once over all loaded history, so the same candle scored 6.5 or 6.8 depending on the
+  window. `_score_candle` / `_live_indicators` / `_live_htf_series` now reproduce live's
+  windows exactly. Tests pin `_live_indicators` against `fetch_ohlcv_df` and
+  `LIVE_HTF_BARS` against `signals/htf.py`. Measured HTF drift before the fix: trend
+  label different on 1.1–2.9% of bars, close-vs-EMA200 up to 7.4pp apart (1w).
+- **Result:** spot 2026-08-30→10-08 and 2025-10→2026-10 now produce identical trades
+  (both 5.5, +0.99%). Before, the windows disagreed, and both disagreed with live. A 1y
+  spot replay takes ~160 s instead of ~60 s. Suite 254 → 258.
+
+### Not changed
+- `signals/` is untouched (frozen during run 3). Running live on a converged EMA200 (more
+  bars fetched) is a design change for run 4, not a fidelity fix.
+
+---
+
 ## 2026-10-09 — docs: run-3 prereg amendment, the discard clause as meant
 
 The prereg's discard clause ("any change to `signals/`, `trading/`, `config.py` or

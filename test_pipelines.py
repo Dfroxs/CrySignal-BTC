@@ -3572,6 +3572,82 @@ def test_tg_spot_card_levels_are_untouched():
     msg = _format_consolidated_telegram(sig, None)
     assert f"${sig['stop_loss']:,.0f}" in msg, msg
 
+def test_backtest_htf_matches_what_live_computes_from_250_bars():
+    """Live fetches 250 HTF bars per cycle and computes EMA200 over those alone (not
+    converged: the seed still weighs ~8%). The backtest computed one series over the
+    whole history, so its HTF read depended on how much history was loaded (a trade
+    scored 6.5 or 6.8 by window length) and drifted from live: trend label different
+    on 1.1-2.9% of bars, close-vs-EMA200 up to 7.4pp apart on 1w (measured 2026-10-09)."""
+    import numpy as np, pandas as pd
+    from backtest import _live_htf_series, LIVE_HTF_BARS
+    from signals.htf import htf_indicator_series
+    rng = np.random.default_rng(4)
+    n = 700
+    close = 30000 * np.exp(np.cumsum(rng.normal(0, 0.02, n)))
+    d = pd.DataFrame({"open": close, "high": close * 1.01, "low": close * 0.99, "close": close,
+                      "volume": rng.uniform(1, 2, n)},
+                     index=pd.date_range("2020-01-01", periods=n, freq="1D"))
+    live = _live_htf_series(d)
+    import inspect, signals.htf as htf
+    src = inspect.getsource(htf)
+    assert src.count(f"limit={LIVE_HTF_BARS}") == 2, "live HTF fetch no longer matches LIVE_HTF_BARS"
+    for i in (300, 450, 699):
+        want = htf_indicator_series(d.iloc[i - 249:i + 1]).iloc[-1]
+        got = live.iloc[i]
+        assert got["trend"] == want["trend"] and abs(got["pct_ema"] - want["pct_ema"]) < 1e-9, i
+    full = htf_indicator_series(d)
+    assert (full["pct_ema"].iloc[300:] - live["pct_ema"].iloc[300:]).abs().max() > 0.1, \
+        "fixture too smooth to tell the two apart"
+
+def _raw_bars(n, seed=8, freq="4h"):
+    import numpy as np, pandas as pd
+    rng = np.random.default_rng(seed)
+    close = 60000 * np.exp(np.cumsum(rng.normal(0, 0.008, n)))
+    idx = pd.date_range("2024-01-01", periods=n, freq=freq)
+    return pd.DataFrame({"open": close * (1 + rng.normal(0, .001, n)), "high": close * 1.004,
+                         "low": close * 0.996, "close": close,
+                         "volume": rng.uniform(100, 200, n)}, index=idx)
+
+def test_backtest_indicators_are_the_ones_live_computes():
+    """_live_indicators must reproduce fetch_ohlcv_df's indicator block exactly. It is a
+    copy (signals/ is frozen during a run), so this pins it against the original."""
+    import pandas as pd
+    import signals.ohlcv as o
+    from backtest import _live_indicators
+    raw = _raw_bars(499)
+    bars = [[int(t.timestamp() * 1000), *r] for t, r in zip(raw.index, raw.itertuples(index=False))]
+    saved = o._fetch_ohlcv_range
+    try:
+        o._fetch_ohlcv_range = lambda *a, **k: bars
+        live = o.fetch_ohlcv_df("BTC/USDT", "4h", since=1, vwap_period=6)
+    finally:
+        o._fetch_ohlcv_range = saved
+    mine = _live_indicators(raw, vwap_period=6)
+    cols = [c for c in live.columns if c not in raw.columns]
+    assert set(cols) <= set(mine.columns), set(cols) - set(mine.columns)
+    assert list(mine.index) == list(live.index), "different candles"
+    pd.testing.assert_frame_equal(mine[cols].reset_index(drop=True),   # index unit (us/ms)
+                                  live[cols].reset_index(drop=True))   # is a fixture artefact
+
+def test_backtest_vwap_period_matches_each_live_mode():
+    """Spot live uses a 6-bar (24h) VWAP on 4h; the backtest used the 24-bar default,
+    i.e. 96h, for every spot replay."""
+    import inspect, signals.spot as sp, signals.futures as fu
+    from backtest import _vwap_period
+    assert _vwap_period("4h") == 6 and "vwap_period=6" in inspect.getsource(sp)
+    assert _vwap_period("1h") == 24 and "vwap_period=24" in inspect.getsource(fu)
+
+def test_backtest_signal_does_not_depend_on_how_much_history_was_loaded():
+    """Live sees the last 499 closed bars. A replayed candle must score the same whether
+    the backtest loaded 600 bars or 1,500 — it did not (one trade read 6.5 or 6.8)."""
+    from backtest import _score_candle
+    raw = _raw_bars(1500)
+    short = raw.iloc[900:]                               # same candles, less history
+    t = raw.index[1400]
+    _, a = _score_candle(raw, int(raw.index.get_loc(t)), "4h", "spot", {}, 4.3, ())
+    _, b = _score_candle(short, int(short.index.get_loc(t)), "4h", "spot", {}, 4.3, ())
+    assert (a["buy_score"], a["sell_score"], a["type"]) == (b["buy_score"], b["sell_score"], b["type"])
+
 def test_synth_entries_respects_stride_and_warmup():
     from scripts.exit_ic import synth_entries
     df = _exit_fixture([1000] * 260)
@@ -4996,6 +5072,12 @@ if __name__ == "__main__":
     print("\n── 37. Futures card shows opened levels ──")
     run("futures card = levels it opens with",    test_tg_futures_card_shows_the_levels_the_position_opens_with)
     run("spot card levels untouched",             test_tg_spot_card_levels_are_untouched)
+
+    print("\n── 38. Backtest HTF = live's 250-bar view ──")
+    run("backtest HTF = live 250-bar EMA200",     test_backtest_htf_matches_what_live_computes_from_250_bars)
+    run("backtest indicators = live's block",     test_backtest_indicators_are_the_ones_live_computes)
+    run("backtest VWAP period per live mode",     test_backtest_vwap_period_matches_each_live_mode)
+    run("signal independent of loaded history",   test_backtest_signal_does_not_depend_on_how_much_history_was_loaded)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
