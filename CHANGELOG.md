@@ -4,6 +4,23 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — fix(notifier): a signal blocked at an entry gate no longer looks like a trade
+
+At 13:01 a spot BUY NORMAL (5.25 vs 4.05) cleared the confidence bar, and the card
+showed entry, SL, TP and size under a 🔔 header. `regime_bearish` blocked it in Phase 3,
+and nothing opened. The card only checked confidence (`will_open`). The gates run
+before Phase 4 sends it, but the card never saw their verdict.
+
+- `run_bot._block()` now annotates the signal with `_phase3_block = (gate, reason)`.
+  Nothing in Phase 3 reads it back.
+- `notifier.telegram._verdict_line` renders such a signal as
+  `⛔ SPOT · BUY NORMAL 5.25 · bar 4.05 — blocked by regime_bearish, no position: …`,
+  with no setup, sizing or 🔔.
+- Trading-path diff from `316e0dc` (`signals/ config.py trading/paper.py backtest.py`)
+  is empty, so run 3's window is unaffected. Suite 272 → 273.
+
+---
+
 ## 2026-10-09 — design decision: spot runs without the anti-chase vetoes; fix: R:R gate rejected exact 1.5
 
 **Not a test result** for the veto change. It is an owner decision so spot yields

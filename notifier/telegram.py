@@ -95,8 +95,16 @@ def _verdict_line(sig):
             conf_s = f" {conf}" if conf else ""
             return (f"🔇 {label} · {stype}{conf_s} {score:.2f} — "
                     f"below the bar, no position will open", False)
-        icon = "🟢" if stype == "BUY" else "🔴"
         conf_s = f" {conf}" if conf else ""
+        block = sig.get("_phase3_block")
+        if block:
+            # Cleared the confidence bar, then an entry gate refused it. Without this the
+            # card showed entry, SL, TP and size for a position that never opened.
+            gate, reason = block
+            return (f"⛔ {label} · {stype}{conf_s} {score:.2f} · bar {thr:.2f} — "
+                    f"blocked by <b>{_esc(gate)}</b>, no position: "
+                    f"{_esc(str(reason)[:80])}", False)
+        icon = "🟢" if stype == "BUY" else "🔴"
         return f"{icon} {label} · <b>{stype}</b>{conf_s} {score:.2f} · bar {thr:.2f}", True
 
     buy_s = sig.get("buy_score", 0) or 0

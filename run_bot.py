@@ -368,6 +368,10 @@ def _block(phase3_actions, mode, signal, gate, reason):
     logger.info(reason)
     label = "SPOT" if mode == "spot" else "FUT "
     phase3_actions.append(f"⏭ {label}  {reason}")
+    # Annotation only, read by the Phase 4 card so a blocked signal is not presented as
+    # a trade. Nothing in Phase 3 reads it back.
+    if isinstance(signal, dict):
+        signal.setdefault("_phase3_block", (gate, reason))
 
 
 # ---------------------------------------------------------------------------
