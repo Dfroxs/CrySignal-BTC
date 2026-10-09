@@ -4,6 +4,29 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — feat: daily operations agent (agents/ops_report.py)
+
+For **run 3**, on `develop`. Never touches trading.
+
+### Added
+- **`agents/llm.py`**: one `ask()` for Claude (`anthropic` SDK, `claude-opus-5-5`,
+  low effort, server-side refusal fallbacks `"default"`) and DeepSeek (`openai` SDK at
+  `https://api.deepseek.com`, `deepseek-v4-pro`, as DeepSeek's docs recommend). It is
+  environment-configured, and every failure, refusals included, raises `LLMError`.
+- **`agents/ops_report.py`**: `scripts/morning_check.sh`, automated on the VPS from
+  cron. It covers both bots plus run-3 checks (variants NULL share, positions opened in
+  7 days, top blocking gates, thresholds). **Rules in code decide anomalies. The LLM
+  only writes the summary.** If the model fails, the deterministic report still goes
+  out. The DB is opened read-only, no RSS text enters the prompt, model output is
+  HTML-escaped, and the exit code is 1 on any anomaly.
+- `requirements.txt`: `anthropic==1.12.1`, `openai==3.26.1`. `.env.example`: the
+  `LLM_*` and API-key entries. Suite 177 → 185.
+
+Ships with the run-3 promotion: the VPS has one checkout, and pulling this means pulling
+everything on `develop`.
+
+---
+
 ## 2026-10-09 — feat: wider futures exit (PASSED its pre-registered test)
 
 For **run 3**, on `develop`.

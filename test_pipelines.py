@@ -3005,6 +3005,151 @@ def test_backtest_simulates_futures_with_the_live_exit_geometry():
     assert _exit_signal(sig, "futures")["stop_loss"] == 98.0
     assert _exit_signal(sig, "spot") == sig
 
+class _FakeClaude:
+    """Stands in for anthropic.Anthropic(); records the call, returns a canned reply."""
+    def __init__(self, stop_reason="end_turn", text="ringkasan"):
+        self.calls, self._stop, self._text = [], stop_reason, text
+        outer = self
+        class _M:
+            def create(self, **kw):
+                outer.calls.append(kw)
+                from types import SimpleNamespace as NS
+                return NS(stop_reason=outer._stop, model=kw["model"],
+                          content=[NS(type="thinking", thinking=""), NS(type="text", text=outer._text)],
+                          usage=NS(input_tokens=120, output_tokens=40))
+        from types import SimpleNamespace as NS
+        self.beta = NS(messages=_M())
+
+class _FakeDeepSeek:
+    def __init__(self, text="ringkasan ds"):
+        self.calls = []
+        outer = self
+        from types import SimpleNamespace as NS
+        class _C:
+            def create(self, **kw):
+                outer.calls.append(kw)
+                return NS(model=kw["model"], choices=[NS(message=NS(content=text))],
+                          usage=NS(prompt_tokens=100, completion_tokens=30))
+        self.chat = NS(completions=_C())
+
+def test_llm_claude_adapter_sends_fallbacks_and_reads_only_text():
+    """Opus 5.5 code opts into server-side fallbacks by default; thinking blocks are
+    skipped and only text is returned."""
+    from agents.llm import ask
+    fake = _FakeClaude()
+    r = ask("halo", system="sys", provider="anthropic", client=fake)
+    kw = fake.calls[0]
+    assert kw["model"] == "claude-opus-5-5" and kw["fallbacks"] == "default", kw
+    assert "server-side-fallback-2026-07-01" in kw["betas"], kw
+    assert kw["output_config"] == {"effort": "low"}, kw
+    assert r.text == "ringkasan" and r.provider == "anthropic" and r.output_tokens == 40
+
+def test_llm_refusal_is_an_error_not_a_summary():
+    from agents.llm import LLMError, ask
+    try:
+        ask("halo", provider="anthropic", client=_FakeClaude(stop_reason="refusal"))
+    except LLMError:
+        return
+    raise AssertionError("a refusal was returned as text")
+
+def test_llm_deepseek_adapter_uses_the_openai_shape():
+    from agents.llm import ask
+    fake = _FakeDeepSeek()
+    r = ask("halo", system="sys", provider="deepseek", client=fake)
+    kw = fake.calls[0]
+    assert kw["model"] == "deepseek-v4-pro", kw
+    assert kw["messages"][0] == {"role": "system", "content": "sys"}, kw
+    assert r.text == "ringkasan ds" and r.input_tokens == 100
+
+def test_llm_missing_key_or_unknown_provider_is_an_error():
+    import os
+    from agents.llm import LLMError, ask
+    saved = os.environ.pop("DEEPSEEK_API_KEY", None)
+    try:
+        for kwargs in ({"provider": "deepseek"}, {"provider": "nope"}):
+            try:
+                ask("halo", **kwargs)
+            except LLMError:
+                continue
+            raise AssertionError(f"{kwargs} did not raise LLMError")
+    finally:
+        if saved is not None:
+            os.environ["DEEPSEEK_API_KEY"] = saved
+
+def _ops_db():
+    """Temp DB with the last day of a run: 3 futures + 1 spot cycle, one blind futures
+    cycle, one cycle without variants, an opened and a closed position, two blocks."""
+    from datetime import UTC, datetime, timedelta
+    h, saved, path = _temp_history_db()
+    c = h._conn()
+    now = datetime(2026, 11, 5, 3, 30, tzinfo=UTC)
+    iso = lambda hrs: (now - timedelta(hours=hrs)).strftime("%Y-%m-%d %H:%M:%S")
+    for hrs, mode, typ, fr, v in [(1, "futures", "HOLD", 0.004, "{}"), (2, "futures", "SELL", 0.0, "{}"),
+                                  (3, "futures", "HOLD", 0.004, None), (4, "spot", "BUY", 0.004, "{}"),
+                                  (30, "futures", "HOLD", 0.004, "{}")]:
+        c.execute("INSERT INTO cycle_log (timestamp,mode,type,price,threshold,funding_rate,variants) "
+                  "VALUES (?,?,?,80000,5.2,?,?)", (iso(hrs), mode, typ, fr, v))
+    c.execute("INSERT INTO paper_positions (type,entry_price,stop_loss,take_profit,opened_at,mode) "
+              "VALUES ('SELL',80000,81600,76000,?, 'futures')", (iso(2),))
+    c.execute("INSERT INTO paper_positions (type,entry_price,stop_loss,take_profit,opened_at,closed_at,"
+              "outcome,pnl_pct,mode) VALUES ('BUY',79000,78000,81000,?,?,'WIN',1.25,'spot')",
+              (iso(40), iso(5)))
+    for g in ("fakeout_first", "fakeout_first", "confidence_first"):
+        c.execute("INSERT INTO signal_blocks (timestamp,mode,signal_type,gate,reason) "
+                  "VALUES (?, 'futures','BUY',?, 'x')", (iso(2), g))
+    c.commit()
+    return h, saved, path, now
+
+def test_ops_collects_the_last_day_from_the_database():
+    from agents.ops_report import collect_db_facts
+    h, saved, path, now = _ops_db()
+    try:
+        f = collect_db_facts(path, now)
+        assert f["cycles_24h"] == {"futures": 3, "spot": 1}, f["cycles_24h"]
+        assert f["futures_blind_24h"] == 1 and abs(f["variants_null_share_24h"] - 0.25) < 1e-9
+        assert f["opened_24h"] == 1 and f["opened_7d"] == 2 and f["open_positions"] == 1
+        assert f["closed_24h"] == [{"mode": "spot", "outcome": "WIN", "pnl_pct": 1.25}]
+        assert f["blocks_24h"]["fakeout_first"] == 2 and f["fired_24h"] == {"futures": 1, "spot": 1}
+        assert f["last_cycle_age_h"] == 1.0
+    finally:
+        _restore_history_db(h, saved, path)
+
+def _clean_facts():
+    return {"cycles_24h": {"futures": 24, "spot": 6}, "last_cycle_age_h": 0.5,
+            "futures_blind_24h": 0, "variants_null_share_24h": 0.0, "opened_24h": 0,
+            "opened_7d": 2, "open_positions": 1, "closed_24h": [], "blocks_24h": {},
+            "fired_24h": {}, "thresholds": {}, "spot_svc": "active", "alloc_svc": "active",
+            "spot_log_errors": 0, "alloc_errors_24h": 0, "alloc_decisions_24h": 1,
+            "backup_latest": "db-20261105.db", "today": "20261105"}
+
+def test_ops_anomalies_are_decided_by_rules_not_by_the_model():
+    from agents.ops_report import anomalies
+    assert anomalies(_clean_facts()) == []
+    bad = dict(_clean_facts(), spot_svc="failed", futures_blind_24h=3, opened_7d=0,
+               variants_null_share_24h=0.2, backup_latest="db-20261104.db", last_cycle_age_h=3.0)
+    msgs = " | ".join(anomalies(bad))
+    for needle in ("spotsignal", "futures", "7 hari", "varian", "backup", "siklus terakhir"):
+        assert needle in msgs, f"missing {needle!r}: {msgs}"
+
+def test_ops_render_escapes_the_model_and_survives_without_it():
+    from agents.ops_report import render
+    out = render(_clean_facts(), [], summary="harga <b>naik</b> & turun")
+    assert "&lt;b&gt;naik&lt;/b&gt; &amp; turun" in out and "semua bersih" in out
+    out2 = render(_clean_facts(), ["spotsignal: failed"], summary=None)
+    assert "spotsignal: failed" in out2 and "ringkasan AI tidak tersedia" in out2
+
+def test_ops_report_still_sends_when_the_llm_fails():
+    from agents.llm import LLMError
+    from agents.ops_report import run_report
+    sent = []
+    def boom(*a, **k):
+        raise LLMError("down")
+    code = run_report(_clean_facts(), ask_fn=boom, send_fn=lambda t: sent.append(t) or True)
+    assert code == 0 and sent and "ringkasan AI tidak tersedia" in sent[0], sent
+    code = run_report(dict(_clean_facts(), alloc_svc="inactive"), ask_fn=boom,
+                      send_fn=lambda t: sent.append(t) or True)
+    assert code == 1, "an anomaly must make the report exit non-zero for cron"
+
 def test_synth_entries_respects_stride_and_warmup():
     from scripts.exit_ic import synth_entries
     df = _exit_fixture([1000] * 260)
@@ -3499,6 +3644,18 @@ if __name__ == "__main__":
     run("futures exit geometry widens a copy",    test_futures_exit_geometry_widens_a_copy)
     run("futures exit settings are the tested",   test_futures_exit_settings_are_the_tested_ones)
     run("backtest uses live exit geometry",       test_backtest_simulates_futures_with_the_live_exit_geometry)
+
+    print("\n── 32. agents/llm.py — provider-neutral LLM ──")
+    run("claude: fallbacks on, text only",        test_llm_claude_adapter_sends_fallbacks_and_reads_only_text)
+    run("refusal is an error",                    test_llm_refusal_is_an_error_not_a_summary)
+    run("deepseek: openai shape",                 test_llm_deepseek_adapter_uses_the_openai_shape)
+    run("missing key / provider is an error",     test_llm_missing_key_or_unknown_provider_is_an_error)
+
+    print("\n── 33. agents/ops_report.py — daily operations agent ──")
+    run("collects the last day from the DB",      test_ops_collects_the_last_day_from_the_database)
+    run("anomalies come from rules",              test_ops_anomalies_are_decided_by_rules_not_by_the_model)
+    run("render escapes model, survives w/o it",  test_ops_render_escapes_the_model_and_survives_without_it)
+    run("report sends when the LLM fails",        test_ops_report_still_sends_when_the_llm_fails)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
