@@ -2,6 +2,13 @@
 
 **Rewritten 2026-10-09, when run 3 started. Read this first when you come back.**
 
+**Run 3 started 2026-10-09 05:41:31 UTC at `c0e8764`** (manifest on the host; run 2's
+is archived as `paper_run_manifest.run2.json`, its final DB as
+`data/backups/FINAL-run2-20261009-signal_history.db`, integrity ok, also on the Mac).
+Ops-report fixes followed at `01d3e71` without a bot restart: the report runs from cron
+as its own process, so pulling a commit that touches only `agents/ops_report.py` does
+not change what the running bot executes. **Day 30 = 2026-11-08.**
+
 ---
 
 ## New session? Do this first
@@ -206,6 +213,16 @@ project has.
 ---
 
 ## Traps that cost a previous session real time
+
+- **The VPS venv was made with `uv` and has no `pip`.** `./venv/bin/pip` does not exist
+  and `python -m pip` fails. Install with
+  `~/.local/bin/uv pip install --python venv/bin/python -r requirements.txt`.
+- **Restart without sudo by killing the service's MainPID**, not `pkill -f`:
+  `kill -TERM $(systemctl show -p MainPID --value spotsignal)`. `Restart=always` brings it
+  back on the code on disk within ~30 s. `pkill -f run_bot.py` can match the SSH shell
+  running it.
+- **A cron job reading user-scope journals needs `XDG_RUNTIME_DIR=/run/user/$(id -u)`.**
+  The ops-report crontab line sets it.
 
 - **`pgrep -f <name>` matches the shell running it**, because that shell's own command line
   contains `<name>`. It produced a wait loop that never exited (two of them ran for ten
