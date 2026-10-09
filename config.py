@@ -84,7 +84,12 @@ FUTURES_CONFIG = {
         "fakeout_wick_ratio":     0.60,       # reject on >60% upper/lower wick
         "max_aggregate_risk_pct": 8.0,        # max total risk % across all futures positions
     },
-    "trailing_atr_factor":   1.5,    # 0.9→1.5 (audit #8): backtest showed avg-hold=4 candles, SELLs that were directionally right got trailed out in 2c
+    # 1.5 → 3.5 and stop/target distance × 2.0: PASSED its pre-registered paired test on
+    # 2022-01 → 2025-10 (417 signals, +0.243pp, 90% CI [+0.054, +0.436], 4/4 windows,
+    # both directions) — docs/superpowers/specs/2026-10-09-futures-exit-results.md.
+    # The 1.5×ATR trail from entry (~1.1% on 1h) sat inside BTC's normal adverse move.
+    "trailing_atr_factor":   3.5,
+    "stop_distance_mult":    2.0,    # applied at open, after the gates — trading/paper.py
     "funding_exit": {
         "close_long_rate":   0.10,   # close LONG if funding > 0.10% (expensive to hold)
         "close_short_rate": -0.10,   # close SHORT if funding < -0.10% (symmetric with long threshold)

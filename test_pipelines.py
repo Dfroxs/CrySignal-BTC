@@ -2984,6 +2984,27 @@ def test_trail_ic_pairs_only_signals_resolved_in_both_arms():
     pairs = paired(base, cand)
     assert pairs == [(0, 1.0, -0.5), (3, -1.0, 0.5)], pairs
 
+def test_futures_exit_geometry_widens_a_copy():
+    """2026-10-09-futures-exit-results.md PASSED: futures stop and target distances × 2.0
+    from entry. Applied at open time, after the gates, exactly as it was tested."""
+    from trading.paper import apply_futures_exit_geometry
+    sig = {"type": "SELL", "entry_price": 100.0, "stop_loss": 101.0, "take_profit": 97.5}
+    out = apply_futures_exit_geometry(sig)
+    assert (out["stop_loss"], out["take_profit"]) == (102.0, 95.0), out
+    assert sig["stop_loss"] == 101.0, "the input signal was mutated"
+
+def test_futures_exit_settings_are_the_tested_ones():
+    from config import FUTURES_CONFIG
+    assert FUTURES_CONFIG["trailing_atr_factor"] == 3.5
+    assert FUTURES_CONFIG["stop_distance_mult"] == 2.0
+
+def test_backtest_simulates_futures_with_the_live_exit_geometry():
+    """The replay must open what live opens: widened for futures, untouched for spot."""
+    from backtest import _exit_signal
+    sig = {"type": "BUY", "entry_price": 100.0, "stop_loss": 99.0, "take_profit": 102.5}
+    assert _exit_signal(sig, "futures")["stop_loss"] == 98.0
+    assert _exit_signal(sig, "spot") == sig
+
 def test_synth_entries_respects_stride_and_warmup():
     from scripts.exit_ic import synth_entries
     df = _exit_fixture([1000] * 260)
@@ -3475,6 +3496,9 @@ if __name__ == "__main__":
     run("widen keeps R geometry",                 test_trail_ic_widen_scales_stop_and_targets_from_entry)
     run("verdict follows the prereg",             test_trail_ic_verdict_follows_the_preregistration)
     run("pairs only both-resolved signals",       test_trail_ic_pairs_only_signals_resolved_in_both_arms)
+    run("futures exit geometry widens a copy",    test_futures_exit_geometry_widens_a_copy)
+    run("futures exit settings are the tested",   test_futures_exit_settings_are_the_tested_ones)
+    run("backtest uses live exit geometry",       test_backtest_simulates_futures_with_the_live_exit_geometry)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

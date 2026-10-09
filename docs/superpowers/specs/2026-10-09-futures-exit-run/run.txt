@@ -1,0 +1,16 @@
+# started 2026-10-09T02:21:34Z at 279c6b5
+WARNING:signals.market_data:binance fetch_ohlcv failed (binance GET https://api.binance.com/api/v3/exchangeInfo) — falling back to data-api.binance.vision for 1800s
+BTC futures 1h  2022-01-01 → 2025-10-08  signals recorded=417  paired=417  (stop ×2.0, trail 3.5×ATR)
+
+base       mean -0.296pp  win 30.0%
+candidate  mean -0.053pp  win 35.3%
+
+paired diff  +0.243pp  90% CI [+0.054, +0.436]
+windows      +0.714  +0.038  +0.094  +0.122
+SELL         n=170  diff +0.311pp
+BUY          n=247  diff +0.197pp
+
+VERDICT: PASS
+written → docs/superpowers/specs/2026-10-09-futures-exit-run/result.json
+# finished 2026-10-09T02:35:45Z
+# fidelity (discard check), separate re-run at 279c6b5 code: signals 417  base replay mismatches vs run_backtest: 0

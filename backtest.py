@@ -160,7 +160,7 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
         gates = _failing_gates(signal, mode, window, last_resolved)
         if gates:
             if counterfactual and i > cf_open_until[signal["type"]]:
-                shadow = _simulate_forward(df, i, signal, max_hold, timeframe, mode)
+                shadow = _simulate_forward(df, i, _exit_signal(signal, mode), max_hold, timeframe, mode)
                 if shadow:
                     shadow["gates"] = gates
                     blocked.append(shadow)
@@ -168,7 +168,7 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
             continue
 
         # ── Forward simulation with trailing stop + partial TP ──
-        result = _simulate_forward(df, i, signal, max_hold, timeframe, mode)
+        result = _simulate_forward(df, i, _exit_signal(signal, mode), max_hold, timeframe, mode)
         if result:
             trades.append(result)
             exit_idx = i + result["candles_held"]
@@ -198,6 +198,15 @@ def run_backtest(symbol="BTC/USDT", timeframe="1h", mode="futures",
 # ---------------------------------------------------------------------------
 
 _FROM_CONFIG = object()   # sentinel: read RISK_CONFIG, so the replay applies what live applies
+
+
+def _exit_signal(signal, mode):
+    """The signal as live OPENS it: futures stop/target widened after the gates
+    (trading/paper.apply_futures_exit_geometry); spot untouched."""
+    if mode != "futures":
+        return signal
+    from trading.paper import apply_futures_exit_geometry
+    return apply_futures_exit_geometry(signal)
 
 def _failing_gates(signal, mode, window, last_resolved=None,
                    reentry_max_age_hours=_FROM_CONFIG):

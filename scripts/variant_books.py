@@ -28,7 +28,9 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from backtest import MAX_HOLD_CANDLES, RESOLVED, _failing_gates, _simulate_forward  # noqa: E402
+from backtest import (  # noqa: E402
+    MAX_HOLD_CANDLES, RESOLVED, _exit_signal, _failing_gates, _simulate_forward,
+)
 from config import RISK_CONFIG  # noqa: E402
 from scripts.entry_ic import summarise  # noqa: E402
 from scripts.exit_ic import _signal_at  # noqa: E402
@@ -115,7 +117,8 @@ def main() -> int:
         return _failing_gates(sig, args.mode, df.iloc[: i + 1], lr, reentry_max_age_hours=max_age)
 
     def sim(i, sig):
-        return _simulate_forward(df, i, sig, MAX_HOLD_CANDLES[tf], tf, args.mode)
+        return _simulate_forward(df, i, _exit_signal(sig, args.mode), MAX_HOLD_CANDLES[tf], tf,
+                                 args.mode)
 
     print(f"{args.db}  {args.mode}  {len(rows)} cycles  "
           f"{rows[0][0][:16]} → {rows[-1][0][:16]}  books: {', '.join(books)}\n")

@@ -22,6 +22,26 @@ def _trail_factor(mode):
         return FUTURES_CONFIG.get("trailing_atr_factor", 0.7)
     return RISK_CONFIG.get("trailing_atr_factor", 1.0)
 
+def apply_futures_exit_geometry(signal):
+    """A copy of a futures `signal` with stop and target distances from entry scaled by
+    FUTURES_CONFIG["stop_distance_mult"].
+
+    Applied at OPEN time, after every Phase 3 gate has judged the engine's own stop.
+    That is exactly how it passed its test (2026-10-09-futures-exit-prereg.md), so the
+    psychology-level and S/R gates still see the stop they were written against.
+    """
+    import copy
+    mult = FUTURES_CONFIG.get("stop_distance_mult", 1.0)
+    out = copy.deepcopy(signal)
+    if mult == 1.0 or not out.get("entry_price"):
+        return out
+    e = out["entry_price"]
+    for k in ("stop_loss", "take_profit", "tp2"):
+        if out.get(k):
+            out[k] = e + (out[k] - e) * mult
+    return out
+
+
 # Slippage threshold — warn when fill price is this far past the trigger
 _SLIPPAGE_WARN_PCT = 0.01  # 1%
 

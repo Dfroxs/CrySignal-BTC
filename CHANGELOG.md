@@ -4,6 +4,27 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — feat: wider futures exit (PASSED its pre-registered test)
+
+For **run 3**, on `develop`.
+
+### Changed
+- **Futures `trailing_atr_factor` 1.5 → 3.5, and stop/target distance × 2.0.** It passed
+  every criterion of `2026-10-09-futures-exit-prereg.md` on BTC futures 1h,
+  2022-01 → 2025-10, 417 paired signals: +0.243pp per trade, 90% CI [+0.054, +0.436],
+  4/4 windows, SELL +0.311, BUY +0.197. The base replay matched the backtest on all
+  417 signals. Why: futures shorts were not late (they entered into bounces), but a
+  1.5×ATR trail from entry, about 1.1% on 1h bars, sat inside BTC's normal ~2.4% adverse
+  move. The 09-21 exit tests only covered trailing after TP1.
+- **Absolute result:** −0.296pp → **−0.053pp** per trade. Better, and still not
+  profitable.
+- `trading/paper.apply_futures_exit_geometry` widens at both futures open sites in
+  `run_bot.py`, after every gate, as tested. On a fresh open it runs before the
+  aggregate-risk cap. `backtest.py` (`_exit_signal`) and `scripts/variant_books.py`
+  simulate futures through it. Spot is untouched. Suite 174 → 177.
+
+---
+
 ## 2026-10-09 — fix: the adaptive controller could never lower a mode that never opened
 
 For **run 3**, on `develop`. Found while reviewing `develop` before promoting it.

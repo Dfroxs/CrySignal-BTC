@@ -16,7 +16,7 @@ from signals.futures import analyze_futures_signal
 from signals.terminal import display_combined
 from news_scraper import scrape_and_export
 from notifier import _format_close_notification, _format_open_notification, _send_telegram_message, send_signal_alert
-from trading.paper import check_and_close_positions, print_open_status, print_paper_summary
+from trading.paper import apply_futures_exit_geometry, check_and_close_positions, print_open_status, print_paper_summary
 from config import RISK_CONFIG, FUTURES_CONFIG, RISK_LIMITS
 from signals.sizing import calculate_position_size, get_pyramid_size_factor
 from trading.history import close as close_db, close_paper_position, get_open_position_count_by_direction, get_open_positions, has_open_position_same_direction, log_signal_block, open_paper_position
@@ -773,6 +773,8 @@ def run_cycle():
                     _block(phase3_actions, "futures", futures_signal, "flip_trend_confluence",
                            f"FUT {futures_signal['type']} flip blocked — trend confluence < 2/3")
                 else:
+                    # Exit geometry is applied after the gates, as it was tested.
+                    futures_signal = apply_futures_exit_geometry(futures_signal)
                     pid = open_paper_position(futures_signal, mode="futures")
                     _opened_this_cycle["futures"] = True
                     msg = f"FUT {futures_signal['type']} opened (#{pid}) @ ${futures_signal['entry_price']:,.0f} (flip)"
@@ -822,6 +824,9 @@ def run_cycle():
                     _block(phase3_actions, "futures", futures_signal, "trend_confluence",
                            f"FUT {futures_signal['type']} blocked — trend confluence < 2/3")
                 else:
+                    # Exit geometry is applied after the gates, as it was tested — and
+                    # before the aggregate-risk cap, which must see the stop actually used.
+                    futures_signal = apply_futures_exit_geometry(futures_signal)
                     # Aggregate risk cap
                     agg_risk, agg_warn = _calc_aggregate_risk(
                         "futures", futures_signal["entry_price"],
