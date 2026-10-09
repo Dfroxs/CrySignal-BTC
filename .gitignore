@@ -248,3 +248,6 @@ data/*.log
 !docs/superpowers/specs/2026-09-21-exit-run/*.log
 docs/superpowers/specs/2026-10-09-hist-futures-ic-run/*.csv
 docs/superpowers/specs/2026-10-09-hist-futures-ic-alts-run/*/*.csv
+
+# Binance derivatives archive (scripts/archive_binance_derivs.py), VPS only
+data/derivs/

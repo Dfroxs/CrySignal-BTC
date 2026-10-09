@@ -80,6 +80,13 @@ Both bots, one command, exits non-zero if anything needs attention. From run 3 t
 also sends its own **daily Telegram report at 03:30 UTC** (`agents/ops_report.py`, user
 crontab). Rules decide the anomalies; an LLM only writes the summary.
 
+**Derivatives archive (from 2026-10-10):** `scripts/archive_binance_derivs.py` runs daily
+at 03:40 UTC from the user crontab and appends Binance's 30-day L/S, OI and taker stats
+to `data/derivs/` (log: `data/derivs/archive.log`). That data exists nowhere else once it
+is older than 30 days, so **a gap of more than ~25 days is permanent loss**. It is scored
+by H-D (`2026-10-10-derivs-archive-prereg.md`) on 2026-11-08, and no IC may be computed
+from it before then.
+
 ## Run 3 — what it is for, and the one date that matters
 
 **Goal changed (owner, 2026-10-09):** collect data *and* improve toward profit. Zero

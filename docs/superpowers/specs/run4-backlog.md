@@ -19,6 +19,7 @@ claim). Started 2026-10-09.
 | item | status | next step |
 |---|---|---|
 | Limit-order entries (maker fee, no entry slippage) | **H-LO INCONCLUSIVE** (2026-10-10): d̄ +0.014pp [−0.041, +0.059] primary, +0.089pp confirmation. The 4% of trades the limit misses are the runaway winners (+1.44pp) | **not licensed**. Even the best case (+0.09pp) leaves futures negative; revisit only if an entry ever shows edge |
+| L/S momentum condition (global L/S, IC > 0) | H-D pre-registered 2026-10-10 on the derivatives archive (5 alts) plus H-L2 (BTC, run 3) | score both on 2026-11-08; a candidate only if both PASS |
 | z-score funding/basis condition {funding −1, basis −1} | H-F PASS on BTC, H-F2/H-F3 INCONCLUSIVE, so **not licensed** | only if run-3 live data (H-L) or a later window confirms it |
 
 ## Design decisions already shipped in run 3 (re-examine at day 30)
