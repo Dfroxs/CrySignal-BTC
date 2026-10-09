@@ -55,6 +55,14 @@ run-3 hypotheses, H-S and H-X included, count from the regenerated manifest's
 still 2026-11-08. See the prereg amendment "~11:00 UTC". The Q&A bot restarted at 10:55:19
 on Sonnet 5.5 with project knowledge, chat memory and engine reasons. The trading-path
 diff check is now measured from `4dc837b`.
+
+**Restart 2026-10-09 12:34:11 UTC at `316e0dc` (PR #18). Run 3's window restarts again.**
+Spot runs without `no_chase`/`anti_fomo`/`entry_wick` (`config.VETOES_DISABLED`, owner
+design decision; 09-24 H-B FAILED to show they pay), and the R:R gate no longer vetoes
+an exact 1.5 on float noise. Nothing existed since 11:12 (0 signals, positions or shadow
+opinions). **All run-3 hypotheses count from the manifest's `started_at =
+2026-10-09T12:34:20Z`** (previous one archived as `paper_run_manifest.run3-1112.json`).
+Day 30 is still 2026-11-08. The diff check now runs from `316e0dc`.
 ---
 
 ## New session? Do this first
