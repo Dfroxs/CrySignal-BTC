@@ -4,6 +4,41 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — design decision: spot runs without the anti-chase vetoes; fix: R:R gate rejected exact 1.5
+
+**Not a test result** for the veto change. It is an owner decision so spot yields
+trades.
+
+### Changed
+- New `config.VETOES_DISABLED` per mode. `generate_signals(gates_disabled=None)` now
+  applies it, as `disabled=None` applies `DISABLED_CONDITIONS`, so live, variants and
+  `backtest.py` agree. An explicit `()` still disables nothing.
+- **spot: `no_chase`, `anti_fomo`, `entry_wick` OFF.** Futures is unchanged.
+  - Evidence they do not pay: `2026-09-24-entry-results.md` H-B FAILED. Removing them
+    was 0.069pp per entry *less* bad, with more than 2× the entries.
+  - Live, 2026-10-04 → 10-09: 23 spot cycles cleared the threshold, 1 fired, and 13
+    were killed by `no_chase`/`entry_wick`.
+  - `short_term` (untested) and `counter_trend` (H-CT) stay. The Phase 3
+    `breakout_chase` gate still blocks entries more than 1 ATR above VWAP.
+- Research scripts that pass `gates_disabled=None` (e.g. `entry_ic.py`'s `spotsignal`
+  arm) now see the configured set. Pass `()` to reproduce a pre-2026-10-09 figure.
+
+### Fixed
+- **The R:R ≥ 1.5 gate rejected geometries of exactly 1.5.** With the SL at its 2.5×ATR
+  cap and TP uncapped, R:R is 3.75/2.5 = 1.5 exactly, but float subtraction on ~$80k
+  prices gave 1.4999… on ~34% of prices ("⛔ R:R 1.50 below 1.5 minimum"). It now
+  compares against `1.5 − 1e-9`.
+
+### Verified
+- Isolated full cycle on a fresh copy of the VPS database: today's spot setup (5.25 vs
+  4.05) was HOLD by the R:R float veto. After the fix it fires as BUY NORMAL, reaches
+  Phase 3, and is held by `regime_bearish` (ADX trend bearish), a legitimate gate.
+  Suite 270 → 272.
+- Scoring effect: this is a `signals/` + `config.py` change, so run 3's window restarts
+  again at the deploy, recorded in PAPER_RUN.md.
+
+---
+
 ## 2026-10-09 — research: H-CT — counter-trend veto: INCONCLUSIVE (under-powered); the veto stays
 
 Pre-registered (`c70edf7`). The instrument `scripts/veto_ic.py` was committed (`dc27a21`)

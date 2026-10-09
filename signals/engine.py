@@ -6,7 +6,7 @@ import logging
 
 import pandas as pd
 
-from config import DISABLED_CONDITIONS, RISK_CONFIG
+from config import DISABLED_CONDITIONS, RISK_CONFIG, VETOES_DISABLED
 
 # Below this a threshold stops being a bar and becomes an off switch — the
 # per-mode minimums live in config.py and are enforced on the adaptive base.
@@ -30,9 +30,12 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     and three of them (no_chase, anti_fomo, entry_wick) are what make this a
     pullback-only system. Their widths were tuned on one 90-day BTC file and have
     never been tested out of sample, so an experiment needs to run with and
-    without them over the same candles. None (the default) disables nothing;
-    `()` likewise. An unknown name raises rather than silently ablating nothing.
+    without them over the same candles. None (the default) applies
+    `config.VETOES_DISABLED[mode]`, as `disabled=None` applies DISABLED_CONDITIONS;
+    `()` disables nothing. An unknown name raises rather than silently ablating nothing.
     """
+    if gates_disabled is None:
+        gates_disabled = VETOES_DISABLED.get(mode, frozenset())
     if gates_disabled:
         unknown = set(gates_disabled) - set(_VETO_GATES)
         if unknown:
@@ -967,7 +970,10 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             risk = sl - entry
             reward = entry - tp
         rr = reward / risk if risk > 0 else 0
-        if rr < 1.5:
+        # Tolerance, not a looser bar: with the SL at its 2.5×ATR cap and TP uncapped, R:R
+        # is exactly 1.5 (3.75 / 2.5 ATR), but float subtraction on ~$80k prices lands at
+        # 1.4999… about a third of the time and vetoed a valid geometry.
+        if rr < 1.5 - 1e-9:
             signal['reasons'].append(
                 f"⛔ R:R {rr:.2f} below 1.5 minimum — geometry unfavourable"
             )
