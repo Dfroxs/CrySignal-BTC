@@ -246,3 +246,4 @@ data/*.log
 # excluding them, leaving the document asserting a provenance that did not
 # ship. 16 KB, written once, never regenerated.
 !docs/superpowers/specs/2026-09-21-exit-run/*.log
+docs/superpowers/specs/2026-10-09-hist-futures-ic-run/*.csv

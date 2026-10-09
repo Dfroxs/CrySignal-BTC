@@ -4,6 +4,28 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — research: H-F — basis and funding predict BTC 24h (bearish when high); taker does not
+
+Pre-registered (`4271d44`) before any data was fetched. Binance does serve years of mark,
+index, funding and taker-buy history, contrary to the backtest note, so three of the
+"live-only" fields were testable on 2020-01 → 2026-08 (58,392 hours) without waiting
+for run 3.
+
+- **basis_pct PASS, sign opposite to the engine**: z168 IC −0.048 [−0.072, −0.026],
+  5/7 years. The engine scores a high basis as bullish.
+- **funding_rate PASS**: IC −0.056 [−0.085, −0.030], 6/7 years. Contrarian, as the
+  engine reads it, but its absolute bands rarely fire.
+- **taker_ratio FAIL**: IC +0.002.
+- **Caveat that matters**: both passing fields flipped or faded in 2025–2026, and the
+  quintile spread is about one round trip's cost. This licenses designing a z-score
+  condition {funding −1, basis −1} for run 4, tested on post-2026-08-29 data. It is not
+  an edge yet. Neither live variant uses that sign set.
+- Added `scripts/fetch_futures_history.py` and `scripts/hist_futures_ic.py`. The CSVs
+  are gitignored and verified by `sha256.txt`.
+- Results: `docs/superpowers/specs/2026-10-09-hist-futures-ic-results.md`.
+
+---
+
 ## 2026-10-09 — feat: Q&A bot gets project knowledge, chat memory and engine reasons; Sonnet 5.5
 
 The owner reported that the Q&A bot did not understand context. It had none: a 12-line
