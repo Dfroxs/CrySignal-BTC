@@ -23,6 +23,12 @@ exit shadow (`shadow_exit_opinions`, scored by H-X), richer ops report with LLM 
 answers only the owner's chat, has a read-only DB, and allows 30 questions a day.
 **H-X counts exit opinions with `timestamp >= 2026-10-09T07:16:00Z`.**
 
+**Restart 2026-10-09 ~07:45 UTC** (notifier + backtest only; trading-path diff from
+`c0e8764` empty, `backtest._costs` identical): the futures card now shows the levels a
+position opens with, and `backtest.py` scores each candle on live's own windows (spot
+VWAP was 96h). No hypothesis window changes. The owner has ruled that real findings
+ship mid-run, recorded like this.
+
 ---
 
 ## New session? Do this first
