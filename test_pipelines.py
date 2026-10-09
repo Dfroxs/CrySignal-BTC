@@ -3106,7 +3106,8 @@ def test_ops_collects_the_last_day_from_the_database():
         assert f["cycles_24h"] == {"futures": 3, "spot": 1}, f["cycles_24h"]
         assert f["futures_blind_24h"] == 1 and abs(f["variants_null_share_24h"] - 0.25) < 1e-9
         assert f["opened_24h"] == 1 and f["opened_7d"] == 2 and f["open_positions"] == 1
-        assert f["closed_24h"] == [{"mode": "spot", "outcome": "WIN", "pnl_pct": 1.25}]
+        assert f["closed_24h"] == [{"mode": "spot", "side": "BUY", "entry": 79000.0,
+                                    "outcome": "WIN", "pnl_pct": 1.25}], f["closed_24h"]
         assert f["blocks_24h"]["fakeout_first"] == 2 and f["fired_24h"] == {"futures": 1, "spot": 1}
         assert f["last_cycle_age_h"] == 1.0
     finally:
@@ -3929,6 +3930,219 @@ def test_tg_position_close_names_mode_outcome_pnl_and_running_total():
     assert "+2.41%" in out, "a DB failure drops the total, never the close"
 
 
+# ── 36. Ops report: positions, variant health, agent health, LLM cost ─────────
+# Health and spend only. The prereg forbids computing any hypothesis figure before day
+# 30, so nothing here relates a variant, a verdict or a field to an outcome.
+
+def _variants_json(base="HOLD", eng="HOLD", ic="HOLD", drop=None):
+    import json
+    v = {"base": {"type": base}, "rel_engine_dir": {"type": eng}, "rel_ic_dir": {"type": ic}}
+    if drop:
+        v.pop(drop)
+    return json.dumps(v)
+
+def test_ops_lists_positions_opened_and_closed_with_side_and_entry():
+    from agents.ops_report import collect_db_facts
+    h, saved, path, now = _ops_db()
+    try:
+        f = collect_db_facts(path, now)
+        assert f["opened_list_24h"] == [{"mode": "futures", "side": "SELL", "entry": 80000.0}], f
+        assert f["closed_24h"] == [{"mode": "spot", "side": "BUY", "entry": 79000.0,
+                                    "outcome": "WIN", "pnl_pct": 1.25}], f["closed_24h"]
+    finally:
+        _restore_history_db(h, saved, path)
+
+def test_ops_counts_cycles_where_a_variant_type_differs_from_base():
+    """Alive-check only: a variant that never differs from base, or is missing from the
+    JSON (it raised and was skipped), is a logging problem. Not a performance figure."""
+    from datetime import timedelta
+    from agents.ops_report import anomalies, collect_db_facts
+    h, saved, path, now = _ops_db()
+    try:
+        c = h._conn()
+        iso = lambda hrs: (now - timedelta(hours=hrs)).strftime("%Y-%m-%d %H:%M:%S")
+        c.execute("DELETE FROM cycle_log")
+        rows = [(1, "futures", _variants_json("HOLD", "BUY", "HOLD")),
+                (2, "futures", _variants_json("HOLD", "BUY", "SELL")),
+                (3, "futures", _variants_json("SELL", "SELL", "SELL")),
+                (4, "futures", _variants_json(drop="rel_ic_dir")),
+                (5, "futures", "{not json"),
+                (6, "spot", _variants_json("BUY", "BUY", "HOLD")),
+                (7, "spot", None),
+                (30, "futures", _variants_json("HOLD", "BUY", "BUY"))]   # outside 24h
+        for hrs, mode, v in rows:
+            c.execute("INSERT INTO cycle_log (timestamp,mode,type,price,threshold,funding_rate,"
+                      "variants) VALUES (?,?,'HOLD',80000,5.2,0.004,?)", (iso(hrs), mode, v))
+        c.commit()
+        f = collect_db_facts(path, now)
+        vd = f["variant_diff_24h"]
+        assert vd["futures"] == {"cycles": 5, "rel_engine_dir": 2, "rel_ic_dir": 1, "broken": 2}, vd
+        assert vd["spot"] == {"cycles": 1, "rel_engine_dir": 0, "rel_ic_dir": 1, "broken": 0}, vd
+        msgs = " | ".join(anomalies(dict(_clean_facts(), variant_diff_24h=vd)))
+        assert "rusak" in msgs and "futures" in msgs, msgs
+        ok = {"futures": {"cycles": 24, "rel_engine_dir": 3, "rel_ic_dir": 0, "broken": 0}}
+        assert anomalies(dict(_clean_facts(), variant_diff_24h=ok)) == []
+    finally:
+        _restore_history_db(h, saved, path)
+
+def test_ops_shadow_health_reports_median_latency_per_provider():
+    from datetime import timedelta
+    from agents.ops_report import collect_db_facts, render
+    h, saved, path, now = _ops_db()
+    try:
+        c = h._conn()
+        t = (now - timedelta(hours=1)).isoformat()
+        for prov, err, ms in (("anthropic", None, 10000), ("anthropic", None, 30000),
+                              ("anthropic", None, 20000), ("deepseek", "timeout", 600000),
+                              ("deepseek", None, 40000)):
+            c.execute("INSERT INTO shadow_opinions (timestamp, provider, verdict, error, latency_ms) "
+                      "VALUES (?,?,?,?,?)", (t, prov, None if err else "AGREE", err, ms))
+        c.commit()
+        f = collect_db_facts(path, now)
+        # Median over answered calls: a timeout's latency is the cap, not the model.
+        assert f["shadow_latency_ms_24h"] == {"anthropic": 20000, "deepseek": 40000}, f
+        out = render(dict(_clean_facts(), shadow_24h=f["shadow_24h"],
+                          shadow_latency_ms_24h=f["shadow_latency_ms_24h"]), [])
+        assert "20.0 dtk" in out and "40.0 dtk" in out, out
+        assert "AGREE" not in out and "DISAGREE" not in out, "verdicts are not reported pre-day-30"
+    finally:
+        _restore_history_db(h, saved, path)
+
+def test_llm_price_table_prices_known_models_and_flags_unknown():
+    from agents.llm import PRICES_USD_PER_MTOK, cost_usd
+    assert PRICES_USD_PER_MTOK["claude-opus-5-5"] == (4.00, 20.00)
+    assert PRICES_USD_PER_MTOK["deepseek-v4-pro"] == (1.32, 3.96)
+    assert abs(cost_usd("claude-opus-5-5", 1_000_000, 100_000) - 6.00) < 1e-9
+    assert abs(cost_usd("deepseek-v4-pro", 500_000, 1_000_000) - (0.66 + 3.96)) < 1e-9
+    assert cost_usd("mystery-model-9", 10, 10) is None and cost_usd(None, 10, 10) is None
+
+def _cost_fixture(tmp):
+    """Shadow rows across three windows plus a usage file from the report's own calls."""
+    import json
+    from datetime import timedelta
+    from pathlib import Path
+    h, saved, path, now = _ops_db()          # now = 2026-11-05 03:30 UTC
+    c = h._conn()
+    rows = [((now - timedelta(hours=2)).isoformat(), "anthropic", "claude-opus-5-5", 1_000_000, 100_000),
+            ((now - timedelta(hours=3)).isoformat(), "deepseek", "deepseek-v4-pro", 1_000_000, 1_000_000),
+            ((now - timedelta(hours=4)).isoformat(), "deepseek", None, None, None),   # timeout
+            ("2026-11-01T06:00:00+00:00", "anthropic", "claude-opus-5-5", 1_000_000, 0),
+            ("2026-10-31T23:00:00+00:00", "anthropic", "claude-opus-5-5", 9_000_000, 0),  # last month
+            ((now - timedelta(hours=5)).isoformat(), "deepseek", "deepseek-v9-x", 1000, 1000)]
+    for ts, prov, model, i, o in rows:
+        c.execute("INSERT INTO shadow_opinions (timestamp, provider, model, input_tokens, "
+                  "output_tokens) VALUES (?,?,?,?,?)", (ts, prov, model, i, o))
+    c.commit()
+    usage = Path(tmp) / "llm_usage.jsonl"
+    usage.write_text("\n".join([
+        json.dumps({"timestamp": (now - timedelta(hours=1)).isoformat(), "purpose": "ops_report",
+                    "provider": "anthropic", "model": "claude-opus-5-5",
+                    "input_tokens": 500_000, "output_tokens": 0}),
+        "garbage line",
+        json.dumps({"timestamp": "2026-11-02T03:30:00+00:00", "purpose": "ops_report",
+                    "provider": "anthropic", "model": "claude-opus-5-5",
+                    "input_tokens": 0, "output_tokens": 100_000})]) + "\n")
+    return h, saved, path, now, usage
+
+def test_ops_llm_cost_sums_shadow_and_report_usage_by_window():
+    import tempfile
+    from agents.ops_report import collect_cost_facts
+    tmp = tempfile.mkdtemp()
+    h, saved, path, now, usage = _cost_fixture(tmp)
+    try:
+        f = collect_cost_facts(path, usage, now)
+        d, m = f["llm_cost_24h"], f["llm_cost_mtd"]
+        # 24h anthropic: shadow 1M in + 100k out = 4 + 2 = 6.00; report 500k in = 2.00
+        assert d["anthropic"]["input_tokens"] == 1_500_000 and d["anthropic"]["output_tokens"] == 100_000
+        assert abs(d["anthropic"]["usd"] - 8.00) < 1e-9, d
+        # 24h deepseek: 1M in + 1M out = 1.32 + 3.96; the unknown model is flagged, not guessed
+        assert abs(d["deepseek"]["usd"] - 5.28) < 1e-9 and d["deepseek"]["unpriced"] == ["deepseek-v9-x"], d
+        # MTD anthropic adds Nov 1 shadow (4.00) and Nov 2 report (2.00), not Oct 31
+        assert abs(m["anthropic"]["usd"] - 14.00) < 1e-9, m
+        assert abs(f["llm_usd_mtd"] - 19.28) < 1e-9 and abs(f["llm_usd_24h"] - 13.28) < 1e-9, f
+        assert f["llm_unpriced"] == ["deepseek-v9-x"], f
+        # Linear projection: MTD plus the last 24h's rate for the days left (Nov 5 03:30 → Dec 1)
+        left = (25 * 24 + 20.5) / 24
+        assert abs(f["llm_usd_projected_month"] - (19.28 + 13.28 * left)) < 1e-6, f
+    finally:
+        _restore_history_db(h, saved, path)
+
+def test_ops_llm_cost_survives_a_missing_usage_file_and_no_shadow_table():
+    import os, sqlite3, tempfile
+    from datetime import UTC, datetime
+    from agents.ops_report import collect_cost_facts
+    fd, db = tempfile.mkstemp(suffix=".db"); os.close(fd)
+    sqlite3.connect(db).close()
+    f = collect_cost_facts(db, os.path.join(tempfile.mkdtemp(), "none.jsonl"),
+                           datetime(2026, 11, 5, 3, 30, tzinfo=UTC))
+    assert f["llm_cost_24h"] == {} and f["llm_usd_mtd"] == 0.0 and f["llm_unpriced"] == [], f
+
+def test_ops_budget_flags_spend_or_projection_over_budget():
+    from agents.ops_report import anomalies
+    base = dict(_clean_facts(), llm_usd_mtd=10.0, llm_usd_projected_month=25.0, llm_unpriced=[])
+    assert anomalies(dict(base, llm_budget_usd=None)) == [], "no budget set: no check"
+    assert anomalies(dict(base, llm_budget_usd=30.0)) == []
+    proj = " | ".join(anomalies(dict(base, llm_budget_usd=20.0)))
+    assert "proyeksi" in proj and "20.00" in proj, proj
+    over = anomalies(dict(base, llm_budget_usd=8.0))
+    assert len(over) == 1 and "melewati" in over[0], over
+    unk = " | ".join(anomalies(dict(base, llm_unpriced=["deepseek-v9-x"])))
+    assert "deepseek-v9-x" in unk, unk
+
+def test_ops_budget_reads_the_env_and_ignores_garbage():
+    import os
+    from agents.ops_report import budget_from_env
+    saved = os.environ.pop("LLM_MONTHLY_BUDGET_USD", None)
+    try:
+        assert budget_from_env() is None
+        os.environ["LLM_MONTHLY_BUDGET_USD"] = "25"
+        assert budget_from_env() == 25.0
+        os.environ["LLM_MONTHLY_BUDGET_USD"] = "lots"
+        assert budget_from_env() is None
+    finally:
+        os.environ.pop("LLM_MONTHLY_BUDGET_USD", None)
+        if saved is not None:
+            os.environ["LLM_MONTHLY_BUDGET_USD"] = saved
+
+def test_ops_report_records_its_own_llm_usage():
+    import json, tempfile
+    from pathlib import Path
+    from types import SimpleNamespace as NS
+    from agents.llm import LLMError
+    from agents.ops_report import run_report
+    usage = Path(tempfile.mkdtemp()) / "data" / "llm_usage.jsonl"
+    ask = lambda *a, **k: NS(text="semua baik", provider="anthropic", model="claude-opus-5-5",
+                             input_tokens=1200, output_tokens=300)
+    run_report(_clean_facts(), ask_fn=ask, send_fn=lambda t: True, usage_path=usage)
+    rec = json.loads(usage.read_text().strip())
+    assert rec["purpose"] == "ops_report" and rec["provider"] == "anthropic", rec
+    assert rec["model"] == "claude-opus-5-5" and rec["input_tokens"] == 1200, rec
+    assert rec["output_tokens"] == 300 and rec["timestamp"], rec
+    def boom(*a, **k):
+        raise LLMError("down")
+    run_report(_clean_facts(), ask_fn=boom, send_fn=lambda t: True, usage_path=usage)
+    assert len(usage.read_text().strip().splitlines()) == 1, "a failed call bills nothing"
+
+def test_ops_render_shows_activity_and_cost_within_telegram_limit():
+    from agents.ops_report import TELEGRAM_LIMIT, render
+    many = [{"mode": "futures", "side": "SELL", "entry": 80000.0 + i} for i in range(40)]
+    closed = [{"mode": "spot", "side": "BUY", "entry": 79000.0, "outcome": "<WIN>", "pnl_pct": 1.25}]
+    f = dict(_clean_facts(), opened_list_24h=many, closed_24h=closed,
+             fired_24h={"futures": 2, "spot": 1},
+             variant_diff_24h={"futures": {"cycles": 24, "rel_engine_dir": 3, "rel_ic_dir": 1, "broken": 0}},
+             llm_cost_24h={"anthropic": {"input_tokens": 120_000, "output_tokens": 30_000,
+                                         "usd": 1.08, "unpriced": []}},
+             llm_usd_24h=1.08, llm_usd_mtd=4.5, llm_usd_projected_month=30.0,
+             llm_budget_usd=50.0, llm_unpriced=[])
+    out = render(f, [])
+    assert len(out) <= TELEGRAM_LIMIT, len(out)
+    for want in ("dibuka: futures SELL @ 80,000", "ditutup: spot BUY @ 79,000 &lt;WIN&gt; +1.25%",
+                 "sinyal 24j: futures 2 · spot 1", "engine 3", "ic 1", "/24",
+                 "$1.08", "$4.50", "$30.00", "$50.00", "lagi"):
+        assert want in out, (want, out)
+    assert "<WIN>" not in out
+
+
 if __name__ == "__main__":
     print("\n══ Pipeline Dummy-Data Tests ══\n")
 
@@ -4223,6 +4437,18 @@ if __name__ == "__main__":
     run("open positions one line each",           test_tg_open_positions_are_one_line_each)
     run("position open card compact + complete",  test_tg_position_open_card_is_compact_and_complete)
     run("position close: mode, outcome, total",   test_tg_position_close_names_mode_outcome_pnl_and_running_total)
+
+    print("\n── 36. Ops report: activity, agent health, LLM cost ──")
+    run("ops lists opens/closes with side+entry", test_ops_lists_positions_opened_and_closed_with_side_and_entry)
+    run("ops counts variant ≠ base per mode",     test_ops_counts_cycles_where_a_variant_type_differs_from_base)
+    run("ops shadow median latency per provider", test_ops_shadow_health_reports_median_latency_per_provider)
+    run("price table: known priced, unknown None", test_llm_price_table_prices_known_models_and_flags_unknown)
+    run("ops cost: shadow + report by window",    test_ops_llm_cost_sums_shadow_and_report_usage_by_window)
+    run("ops cost survives missing sources",      test_ops_llm_cost_survives_a_missing_usage_file_and_no_shadow_table)
+    run("ops budget: spend or projection",        test_ops_budget_flags_spend_or_projection_over_budget)
+    run("ops budget env parsing",                 test_ops_budget_reads_the_env_and_ignores_garbage)
+    run("ops report logs its own LLM usage",      test_ops_report_records_its_own_llm_usage)
+    run("ops render: activity + cost, <= limit",  test_ops_render_shows_activity_and_cost_within_telegram_limit)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

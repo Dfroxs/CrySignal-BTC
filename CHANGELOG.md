@@ -4,6 +4,32 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — feat: ops report shows trade activity, agent health and LLM cost
+
+The daily report (`agents/ops_report.py`) now lists each position opened or closed in
+the last 24h with mode, side and entry (closes add outcome and P&L, five lines each at
+most), signals fired per mode, and per mode how many cycles each score variant's `type`
+differed from `base`'s. Variant JSON that is unreadable or missing a variant counts as
+broken and is an anomaly. Shadow agents get their median latency (answered calls only,
+since a timeout's latency is just the cap).
+
+LLM cost: `agents/llm.PRICES_USD_PER_MTOK` is the one price table, in USD per 1M tokens:
+`claude-opus-5-5` 4.00 / 20.00 and `deepseek-v4-pro` 1.32 / 3.96. DeepSeek is priced at
+its peak rate, so its figure is an upper bound (off-peak is half). A model missing from
+the table is priced `None` and raised as an anomaly, never guessed. The report adds up
+tokens and USD per provider for the last 24h and month to date from `shadow_opinions`
+plus `data/llm_usage.jsonl`, where `run_report` now appends one line per summary call.
+The projection to month end is month-to-date spend plus the last 24h's rate for the
+days left. A month average would understate a run that began mid-month and blow up on
+the 1st. `LLM_MONTHLY_BUDGET_USD` (unset by default, meaning no check) raises an
+anomaly when spend or the projection exceeds it.
+
+This is health and spend only. The run-3 prereg forbids any hypothesis figure before day
+30, so the report computes no IC, no variant P&L and no verdict-against-outcome, and a
+comment in the module says so. Suite 220 → 230.
+
+---
+
 ## 2026-10-09 — fix: shadow agents run in a background thread
 
 A live retest in DeepSeek's peak hours (06:08 UTC, Friday) timed out at the new 90 s

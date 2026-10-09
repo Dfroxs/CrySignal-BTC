@@ -13,6 +13,11 @@ report: without it the deterministic report goes out with a note. The database i
 opened read-only, no news/RSS text enters the prompt, and model output is HTML-escaped
 before Telegram renders it.
 
+Health and spend only: positions opened/closed, signals fired, whether the score
+variants still differ from base, shadow agents' calls/errors/latency, and LLM tokens and
+estimated USD (24h, month to date, projection) against LLM_MONTHLY_BUDGET_USD. The
+report's own summary call is logged to data/llm_usage.jsonl and counted from then on.
+
     python3 -m agents.ops_report --dry-run          # print, send nothing
     python3 -m agents.ops_report --no-llm           # deterministic report only
     python3 -m agents.ops_report                    # LLM summary + send
@@ -26,12 +31,14 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import os
 import re
 import sqlite3
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from statistics import median
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -49,6 +56,14 @@ def _ts(col):
     and ISO 'YYYY-MM-DDTHH:MM:SS+00:00', which do not compare as strings."""
     return f"datetime(substr({col}, 1, 19))"
 
+
+# What this report may and may not compute. Run 3's pre-registration
+# (docs/superpowers/specs/2026-10-09-run3-prereg.md) forbids computing ANY hypothesis
+# figure before day 30 (2026-11-08): no IC of a field against forward returns, no
+# variant P&L or variant book, no shadow AGREE/DISAGREE against outcomes, no BTC vs
+# random. Everything here is a count, a latency, an error rate or a cost: health, never
+# performance. A position's own P&L is the bot's ledger, not a hypothesis figure.
+# Do not add a fact that relates a variant, a verdict or a field to an outcome.
 
 def collect_db_facts(db_path, now, run_start=None):
     """Facts for the last 24h. Run-scoped checks (variants, positions) start at the
@@ -73,8 +88,12 @@ def collect_db_facts(db_path, now, run_start=None):
         n, nulls = q(f"SELECT COUNT(*), SUM(variants IS NULL) FROM cycle_log WHERE {since}",
                      run_from)[0]
         f["variants_null_share_24h"] = (nulls or 0) / n if n else None
+        f["variant_diff_24h"] = _variant_diff(q(
+            f"SELECT mode, variants FROM cycle_log WHERE {since} AND variants IS NOT NULL",
+            run_from))
     else:
         f["variants_null_share_24h"] = None
+        f["variant_diff_24h"] = {}
     opened = f"{_ts('opened_at')} >= datetime(?)"
     f["opened_24h"] = q(f"SELECT COUNT(*) FROM paper_positions WHERE {opened}", d24)[0][0]
     f["opened_7d"] = q(f"SELECT COUNT(*) FROM paper_positions WHERE {opened}", d7)[0][0]
@@ -83,9 +102,14 @@ def collect_db_facts(db_path, now, run_start=None):
                            run_start.strftime("%Y-%m-%d %H:%M:%S"))[0][0]
                          if run_start else f["opened_7d"])
     f["open_positions"] = q("SELECT COUNT(*) FROM paper_positions WHERE closed_at IS NULL")[0][0]
-    f["closed_24h"] = [{"mode": m, "outcome": o, "pnl_pct": p} for m, o, p in q(
-        f"SELECT mode, outcome, pnl_pct FROM paper_positions WHERE closed_at IS NOT NULL "
-        f"AND {_ts('closed_at')} >= datetime(?) ORDER BY closed_at", d24)]
+    f["opened_list_24h"] = [{"mode": m, "side": t, "entry": e} for m, t, e in q(
+        f"SELECT mode, type, entry_price FROM paper_positions WHERE {opened} "
+        "ORDER BY opened_at", d24)]
+    f["closed_24h"] = [{"mode": m, "side": t, "entry": e, "outcome": o, "pnl_pct": p}
+                       for m, t, e, o, p in q(
+        f"SELECT mode, type, entry_price, outcome, pnl_pct FROM paper_positions "
+        f"WHERE closed_at IS NOT NULL AND {_ts('closed_at')} >= datetime(?) ORDER BY closed_at",
+        d24)]
     f["blocks_24h"] = dict(q(f"SELECT gate, COUNT(*) FROM signal_blocks WHERE {since} "
                              "GROUP BY gate ORDER BY COUNT(*) DESC", d24))
     f["thresholds"] = dict(q("SELECT mode, threshold FROM cycle_log c WHERE id = "
@@ -95,8 +119,126 @@ def collect_db_facts(db_path, now, run_start=None):
         f"SELECT provider, COUNT(*), SUM(error IS NOT NULL) FROM shadow_opinions "
         f"WHERE {since} GROUP BY provider ORDER BY provider", d24)}
         if "shadow_opinions" in tables else {})
+    # Median over ANSWERED calls: a timeout's latency is the cap, not the model's speed.
+    lat = {}
+    if "shadow_opinions" in tables:
+        for p, ms in q(f"SELECT provider, latency_ms FROM shadow_opinions WHERE {since} "
+                       "AND error IS NULL AND latency_ms IS NOT NULL", d24):
+            lat.setdefault(p, []).append(ms)
+    f["shadow_latency_ms_24h"] = {p: int(round(median(v))) for p, v in sorted(lat.items())}
     con.close()
     return f
+
+
+def _variant_diff(rows):
+    """Per mode: cycles with variants, cycles where each variant's `type` differs from
+    base's, and cycles whose JSON is unreadable or lacks base or a variant (a variant
+    that raises is skipped by score_variants). A liveness check, nothing more."""
+    from signals.variants import VARIANTS
+    out = {}
+    for mode, raw in rows:
+        d = out.setdefault(mode, {"cycles": 0, **{n: 0 for n in VARIANTS}, "broken": 0})
+        d["cycles"] += 1
+        try:
+            v = json.loads(raw)
+            base = v["base"]["type"]
+            types = {n: v[n]["type"] for n in VARIANTS}
+        except (ValueError, TypeError, KeyError):
+            d["broken"] += 1
+            continue
+        for n, t in types.items():
+            d[n] += t != base
+    return out
+
+
+# ---------------------------------------------------------------------------
+# LLM spend — every model call the agents make, priced from agents/llm.PRICES_USD_PER_MTOK
+# ---------------------------------------------------------------------------
+
+def _parse_ts(raw):
+    try:
+        t = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=UTC)
+
+
+def _usage_rows(db_path, usage_path):
+    """(timestamp, provider, model, input_tokens, output_tokens) from shadow_opinions and
+    from the report's own log. A row without tokens (a timeout, a missing key) is skipped:
+    what it may have cost is not knowable from here."""
+    rows = []
+    con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                       "AND name='shadow_opinions'").fetchone():
+            rows += con.execute("SELECT timestamp, provider, model, input_tokens, output_tokens "
+                                "FROM shadow_opinions WHERE COALESCE(input_tokens, 0) + "
+                                "COALESCE(output_tokens, 0) > 0").fetchall()
+    finally:
+        con.close()
+    path = Path(usage_path) if usage_path else None
+    if path and path.exists():
+        for line in path.read_text(errors="replace").splitlines():
+            try:
+                r = json.loads(line)
+                rows.append((r["timestamp"], r["provider"], r.get("model"),
+                             int(r.get("input_tokens") or 0), int(r.get("output_tokens") or 0)))
+            except (ValueError, TypeError, KeyError, AttributeError):
+                continue
+    return rows
+
+
+def collect_cost_facts(db_path, usage_path, now):
+    """Tokens and estimated USD per provider, last 24h and month to date, plus a linear
+    projection to month end: spend so far + the last 24h's rate for the days left.
+    (Projecting from the month's average would understate a run that started mid-month
+    and explode on the 1st, when the report runs three hours into the month.)"""
+    from agents.llm import cost_usd
+    month0 = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month1 = (month0 + timedelta(days=32)).replace(day=1)
+    d24 = now - timedelta(hours=24)
+    win = {"24h": {}, "mtd": {}}
+    unpriced = set()
+    for ts, prov, model, i, o in _usage_rows(db_path, usage_path):
+        t = _parse_ts(ts)
+        if t is None or t > now:
+            continue
+        usd = cost_usd(model, i, o)
+        if usd is None:
+            unpriced.add(str(model))
+        for key, start in (("24h", d24), ("mtd", month0)):
+            if t < start:
+                continue
+            d = win[key].setdefault(prov, {"input_tokens": 0, "output_tokens": 0, "usd": 0.0,
+                                           "unpriced": []})
+            d["input_tokens"] += i or 0
+            d["output_tokens"] += o or 0
+            if usd is None:
+                if str(model) not in d["unpriced"]:
+                    d["unpriced"].append(str(model))
+            else:
+                d["usd"] += usd
+    total = lambda w: round(sum(d["usd"] for d in w.values()), 6)
+    usd24, mtd = total(win["24h"]), total(win["mtd"])
+    days_left = (month1 - now).total_seconds() / 86400
+    return {"llm_cost_24h": win["24h"], "llm_cost_mtd": win["mtd"],
+            "llm_usd_24h": usd24, "llm_usd_mtd": mtd,
+            "llm_usd_projected_month": round(mtd + usd24 * days_left, 6),
+            "llm_unpriced": sorted(unpriced)}
+
+
+def budget_from_env():
+    """LLM_MONTHLY_BUDGET_USD as a float, or None (unset, or not a positive number)."""
+    raw = os.getenv("LLM_MONTHLY_BUDGET_USD", "").strip()
+    try:
+        v = float(raw)
+    except ValueError:
+        if raw:
+            print(f"LLM_MONTHLY_BUDGET_USD={raw!r} is not a number; budget check off",
+                  file=sys.stderr)
+        return None
+    return v if v > 0 else None
 
 
 def _run(cmd, timeout=20):
@@ -157,9 +299,22 @@ def anomalies(f):
         out.append("allocbot tidak membuat keputusan harian")
     if f.get("backup_latest") != f"db-{f.get('today')}.db":
         out.append(f"backup hari ini tidak ada (terbaru: {f.get('backup_latest')})")
+    for mode, d in (f.get("variant_diff_24h") or {}).items():
+        if d.get("broken"):
+            out.append(f"varian rusak/hilang di {d['broken']} dari {d['cycles']} siklus {mode}")
     for prov, (n, errs) in (f.get("shadow_24h") or {}).items():
         if n and errs == n:
             out.append(f"agent shadow {prov} gagal di semua {n} panggilan — key/saldo?")
+    if f.get("llm_unpriced"):
+        out.append("harga model tidak dikenal, biaya LLM tidak lengkap: "
+                   + ", ".join(f["llm_unpriced"]))
+    budget = f.get("llm_budget_usd")
+    if budget:
+        mtd, proj = f.get("llm_usd_mtd") or 0.0, f.get("llm_usd_projected_month") or 0.0
+        if mtd > budget:
+            out.append(f"biaya LLM bulan ini ${mtd:.2f} melewati anggaran ${budget:.2f}")
+        elif proj > budget:
+            out.append(f"proyeksi biaya LLM bulan ini ${proj:.2f} > anggaran ${budget:.2f}")
     age = f.get("run_age_h")
     if age is None:
         if f.get("opened_7d") == 0:
@@ -188,6 +343,25 @@ def build_prompt(f, anoms):
             json.dumps(anoms, ensure_ascii=False))
 
 
+MAX_POSITION_LINES = 5
+
+
+def _money(v):
+    return f"{v:,.0f}" if isinstance(v, (int, float)) else "?"
+
+
+def _pct(v):
+    return f"{v:+.2f}%" if isinstance(v, (int, float)) else "?"
+
+
+def _tok(n):
+    return f"{n / 1e6:.2f}M" if n >= 1e6 else f"{n / 1e3:.1f}k" if n >= 1e3 else str(n)
+
+
+def _capped(lines, cap=MAX_POSITION_LINES):
+    return lines if len(lines) <= cap else lines[:cap] + [f"… +{len(lines) - cap} lagi"]
+
+
 def render(f, anoms, summary=None, source=None):
     e = html.escape
     lines = [f"<b>📋 Laporan harian bot</b> · {e(str(f.get('today')))}"]
@@ -198,15 +372,35 @@ def render(f, anoms, summary=None, source=None):
         lines.append("\n✅ semua bersih")
     cyc = f.get("cycles_24h") or {}
     lines.append(f"\nsiklus 24j: futures {cyc.get('futures', 0)} · spot {cyc.get('spot', 0)}")
+    fired = f.get("fired_24h") or {}
+    lines.append(f"sinyal 24j: futures {fired.get('futures', 0)} · spot {fired.get('spot', 0)}")
     lines.append(f"posisi baru 24j / 7h: {f.get('opened_24h')} / {f.get('opened_7d')} · "
                  f"terbuka: {f.get('open_positions')}")
-    for c in f.get("closed_24h") or []:
-        lines.append(f"ditutup: {e(str(c['mode']))} {e(str(c['outcome']))} {c['pnl_pct']:+.2f}%")
+    pos = lambda p: f"{e(str(p['mode']))} {e(str(p['side']))} @ {_money(p.get('entry'))}"
+    lines += _capped([f"dibuka: {pos(p)}" for p in f.get("opened_list_24h") or []])
+    lines += _capped([f"ditutup: {pos(c)} {e(str(c['outcome']))} {_pct(c.get('pnl_pct'))}"
+                      for c in f.get("closed_24h") or []])
+    for mode, d in sorted((f.get("variant_diff_24h") or {}).items()):
+        lines.append(f"varian ≠ base 24j {e(mode)}: engine {d.get('rel_engine_dir', 0)} · "
+                     f"ic {d.get('rel_ic_dir', 0)} /{d.get('cycles', 0)} siklus")
     top = list((f.get("blocks_24h") or {}).items())[:3]
     if top:
         lines.append("gerbang teratas: " + ", ".join(f"{e(g)} {n}" for g, n in top))
+    lat = f.get("shadow_latency_ms_24h") or {}
     for prov, (n, errs) in (f.get("shadow_24h") or {}).items():
-        lines.append(f"shadow {e(prov)}: {n} pendapat, {errs} gagal")
+        ms = lat.get(prov)
+        med = f", median {ms / 1000:.1f} dtk" if ms is not None else ""
+        lines.append(f"shadow {e(prov)}: {n} pendapat, {errs} gagal{med}")
+    cost = f.get("llm_cost_24h") or {}
+    if cost or f.get("llm_usd_mtd"):
+        per = " · ".join(f"{e(p)} {_tok(d['input_tokens'] + d['output_tokens'])} tok "
+                         f"${d['usd']:.2f}{'+?' if d.get('unpriced') else ''}"
+                         for p, d in sorted(cost.items()))
+        lines.append(f"biaya LLM 24j: {per or '$0.00'}")
+        budget = f.get("llm_budget_usd")
+        lines.append(f"biaya LLM bulan ini: ${f.get('llm_usd_mtd') or 0:.2f} · proyeksi "
+                     f"${f.get('llm_usd_projected_month') or 0:.2f}"
+                     + (f" / anggaran ${budget:.2f}" if budget else ""))
     if f.get("thresholds"):
         lines.append("threshold: " + ", ".join(f"{e(m)} {t}" for m, t in f["thresholds"].items()))
     if summary:
@@ -217,8 +411,26 @@ def render(f, anoms, summary=None, source=None):
     return text if len(text) <= TELEGRAM_LIMIT else text[:TELEGRAM_LIMIT - 1] + "…"
 
 
-def run_report(facts, ask_fn=None, send_fn=None, provider=None, use_llm=True):
-    """Render and send. Returns 1 when any anomaly fired, so cron can surface it."""
+def record_usage(path, reply, purpose, now=None):
+    """Append one JSON line per model call. Never raises: losing a cost line must not
+    lose the report."""
+    rec = {"timestamp": (now or datetime.now(UTC)).isoformat(), "purpose": purpose,
+           "provider": reply.provider, "model": reply.model,
+           "input_tokens": reply.input_tokens, "output_tokens": reply.output_tokens}
+    try:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a") as fh:
+            fh.write(json.dumps(rec) + "\n")
+    except OSError as exc:
+        print(f"LLM usage not recorded: {exc}", file=sys.stderr)
+
+
+def run_report(facts, ask_fn=None, send_fn=None, provider=None, use_llm=True, usage_path=None):
+    """Render and send. Returns 1 when any anomaly fired, so cron can surface it.
+
+    With `usage_path`, the summary call's tokens are appended there; the cost totals
+    in this report were read before the call, so it counts from the next report on."""
     from agents.llm import LLMError, ask
     ask_fn = ask_fn or ask
     anoms = anomalies(facts)
@@ -227,6 +439,8 @@ def run_report(facts, ask_fn=None, send_fn=None, provider=None, use_llm=True):
         try:
             reply = ask_fn(build_prompt(facts, anoms), system=SYSTEM, provider=provider)
             summary, source = reply.text, f"{reply.provider}/{reply.model}"
+            if usage_path:
+                record_usage(usage_path, reply, "ops_report")
         except LLMError as exc:
             print(f"LLM unavailable: {exc}", file=sys.stderr)
     text = render(facts, anoms, summary, source)
@@ -256,9 +470,12 @@ def main() -> int:
         run_start = datetime.fromisoformat(m["started_at"])
     except Exception:
         pass                          # no manifest: plain 24h / 7-day windows
-    facts = {**collect_db_facts(args.db, now, run_start), **collect_host_facts(args.root, now)}
+    usage = Path(args.root) / "data" / "llm_usage.jsonl"
+    facts = {**collect_db_facts(args.db, now, run_start), **collect_host_facts(args.root, now),
+             **collect_cost_facts(args.db, usage, now), "llm_budget_usd": budget_from_env()}
     send = (lambda t: print(t) or True) if args.dry_run else None
-    return run_report(facts, send_fn=send, provider=args.provider, use_llm=not args.no_llm)
+    return run_report(facts, send_fn=send, provider=args.provider, use_llm=not args.no_llm,
+                      usage_path=usage)
 
 
 if __name__ == "__main__":
