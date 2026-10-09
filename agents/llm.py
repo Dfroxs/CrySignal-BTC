@@ -23,6 +23,23 @@ DEFAULT_MODELS = {"anthropic": "claude-opus-5-5", "deepseek": "deepseek-v4-pro"}
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 TIMEOUT_S = 620.0          # must outlast agents/shadow.TIMEOUT_S, so the shadow decides
 
+# USD per 1M tokens, (input, output). The one price table; agents/ops_report reads it.
+# deepseek-v4-pro is DeepSeek's PEAK price, a conservative upper bound: off-peak is half,
+# and the bill does not say which hours a call fell in. Cache-hit discounts are ignored
+# for the same reason. A model missing here is priced None and flagged, never guessed.
+PRICES_USD_PER_MTOK = {
+    "claude-opus-5-5": (4.00, 20.00),
+    "deepseek-v4-pro": (1.32, 3.96),
+}
+
+
+def cost_usd(model, input_tokens, output_tokens):
+    """Estimated USD for one call, or None when the model has no price here."""
+    price = PRICES_USD_PER_MTOK.get(model) if model else None
+    if price is None:
+        return None
+    return ((input_tokens or 0) * price[0] + (output_tokens or 0) * price[1]) / 1_000_000
+
 
 class LLMError(RuntimeError):
     pass
