@@ -371,7 +371,9 @@ def test_compact_futures_short_with_entry():
     out = _format_compact_signal_telegram(sig)
     assert "SL" in out
     assert "TP1" in out
-    assert "$96,200" in out, out   # SL rendered above the $95,000 entry
+    from trading.paper import apply_futures_exit_geometry
+    opened_sl = apply_futures_exit_geometry(sig)["stop_loss"]
+    assert f"${opened_sl:,.0f}" in out, out   # the SL the position opens with, above the entry
     # SL should be above entry for short
     sl_price = sig["stop_loss"]
     entry    = sig["entry_price"]
@@ -3549,6 +3551,27 @@ def test_run_bot_runs_the_exit_shadow_in_the_background():
     assert i > 0 and "background=True" in src[i:i + 200], "run_cycle must call run_exit_shadow"
     assert "try:" in src[max(0, i - 400):i]
 
+def test_tg_futures_card_shows_the_levels_the_position_opens_with():
+    """Futures stops and targets are widened ×2 at open (apply_futures_exit_geometry).
+    The hourly card showed the engine's levels, so SL, TP, size, liquidation and risk all
+    described a trade the bot would never hold."""
+    from notifier.telegram import _format_consolidated_telegram
+    from trading.paper import apply_futures_exit_geometry
+    sig = make_signal("SELL", "futures")
+    sig["confidence"] = "STRONG"
+    opened = apply_futures_exit_geometry(sig)
+    msg = _format_consolidated_telegram(None, sig)
+    assert f"${opened['stop_loss']:,.0f}" in msg, msg
+    assert f"${opened['take_profit']:,.0f}" in msg, msg
+    assert f"${sig['stop_loss']:,.0f}" not in msg, "the engine's unwidened stop is still shown"
+
+def test_tg_spot_card_levels_are_untouched():
+    from notifier.telegram import _format_consolidated_telegram
+    sig = make_signal("BUY", "spot")
+    sig["confidence"] = "STRONG"
+    msg = _format_consolidated_telegram(sig, None)
+    assert f"${sig['stop_loss']:,.0f}" in msg, msg
+
 def test_synth_entries_respects_stride_and_warmup():
     from scripts.exit_ic import synth_entries
     df = _exit_fixture([1000] * 260)
@@ -3884,10 +3907,13 @@ def test_tg_an_openable_buy_shows_its_setup():
 
 def test_tg_a_futures_sell_shows_leverage_and_liquidation():
     from notifier.telegram import _format_consolidated_telegram
+    from trading.paper import apply_futures_exit_geometry
+    sig = make_signal("SELL", "futures", confidence="STRONG")
     with _tg_db():
-        out = _format_consolidated_telegram(_hold_s(), make_signal("SELL", "futures", confidence="STRONG"))
+        out = _format_consolidated_telegram(_hold_s(), sig)
     assert "🔴" in out and "SELL" in out and "FUTURES SHORT 1H" in out
-    assert "$96,200" in out, "short SL sits above entry"
+    opened_sl = apply_futures_exit_geometry(sig)["stop_loss"]
+    assert opened_sl > sig["entry_price"] and f"${opened_sl:,.0f}" in out, "short SL (as opened) sits above entry"
     assert "Liq" in out and "Funding" in out, out
     assert len(out) <= 800, (len(out), out)
     _assert_html_safe(out)
@@ -4966,6 +4992,10 @@ if __name__ == "__main__":
     run("qa facts exclude locked figures",        test_qa_facts_exclude_the_locked_hypothesis_figures)
     run("qa offset advances past a failure",      test_qa_offset_advances_even_when_a_handler_fails)
     run("qa user unit restarts, runs module",     test_qa_user_unit_restarts_and_runs_the_module)
+
+    print("\n── 37. Futures card shows opened levels ──")
+    run("futures card = levels it opens with",    test_tg_futures_card_shows_the_levels_the_position_opens_with)
+    run("spot card levels untouched",             test_tg_spot_card_levels_are_untouched)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

@@ -142,7 +142,14 @@ def _sizing_line(sig):
 
 
 def _detail_lines(sig):
-    """Setup, sizing and top reasons — only for a signal that can open."""
+    """Setup, sizing and top reasons — only for a signal that can open.
+
+    Futures levels are shown as the position OPENS them: stop and targets widened by
+    `apply_futures_exit_geometry`, the same call run_bot makes after the gates. Sizing,
+    liquidation and risk then follow from the stop actually used."""
+    if sig.get("mode") == "futures":
+        from trading.paper import apply_futures_exit_geometry
+        sig = apply_futures_exit_geometry(sig)
     lines = []
     if sig.get("stop_loss") and sig.get("take_profit") and sig.get("entry_price"):
         lines += _setup_lines(sig["entry_price"], sig["stop_loss"], sig["take_profit"], sig.get("tp2"))

@@ -4,6 +4,16 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — fix: the futures card shows the levels the position opens with
+
+For the next restart, on `develop` (notifier only). The hourly card rendered the
+engine's futures stop and targets, but positions open with them widened ×2
+(`apply_futures_exit_geometry`). SL, TP, size, liquidation price and risk all described
+a trade the bot would never hold. `_detail_lines` now applies the same geometry before
+rendering. Spot is unchanged. Suite 252 → 254.
+
+---
+
 ## 2026-10-09 — integration: alarm, richer ops report, Q&A bot, exit shadow merged
 
 ### Fixed (found by the merged test suite)
