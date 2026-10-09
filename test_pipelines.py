@@ -3648,6 +3648,28 @@ def test_backtest_signal_does_not_depend_on_how_much_history_was_loaded():
     _, b = _score_candle(short, int(short.index.get_loc(t)), "4h", "spot", {}, 4.3, ())
     assert (a["buy_score"], a["sell_score"], a["type"]) == (b["buy_score"], b["sell_score"], b["type"])
 
+def test_gate_ic_judges_each_gate_on_the_signals_only_it_blocked():
+    """Removing a gate admits exactly the signals it blocked ALONE. A gate keeps its
+    place only if those are worse than what the system takes (burden on the gate):
+    FAIL (remove) when only-blocked >= kept; PASS needs kept - only > 0 with CI above 0;
+    fewer than 20 only-blocked trades is INCONCLUSIVE (keep)."""
+    import numpy as np
+    from scripts.gate_ic import evaluate_gates
+    rng = np.random.default_rng(2)
+    kept = list(rng.normal(0.5, 0.3, 60))
+    mk = lambda g, mu, n: [{"gates": g, "outcome": "WIN", "pnl_pct": float(x)}
+                           for x in rng.normal(mu, 0.3, n)]
+    blocked = (mk(["fakeout_first"], 0.9, 40)                 # better than kept → remove
+               + mk(["regime_counter"], -1.0, 40)             # clearly worse → keep (PASS)
+               + mk(["sr_first"], -1.0, 10)                   # too few → INCONCLUSIVE
+               + mk(["fakeout_first", "regime_counter"], 5.0, 30)   # not 'only' → ignored
+               + [{"gates": ["psy_sl_first"], "outcome": "OPEN", "pnl_pct": 0.0}] * 30)
+    res = evaluate_gates(kept, blocked, ("fakeout_first", "regime_counter", "sr_first", "psy_sl_first"))
+    assert res["fakeout_first"]["verdict"] == "FAIL" and res["fakeout_first"]["n_only"] == 40
+    assert res["regime_counter"]["verdict"] == "PASS"
+    assert res["sr_first"]["verdict"] == "INCONCLUSIVE"
+    assert res["psy_sl_first"]["n_only"] == 0, "unresolved shadows are not P&L"
+
 def test_synth_entries_respects_stride_and_warmup():
     from scripts.exit_ic import synth_entries
     df = _exit_fixture([1000] * 260)
@@ -5078,6 +5100,9 @@ if __name__ == "__main__":
     run("backtest indicators = live's block",     test_backtest_indicators_are_the_ones_live_computes)
     run("backtest VWAP period per live mode",     test_backtest_vwap_period_matches_each_live_mode)
     run("signal independent of loaded history",   test_backtest_signal_does_not_depend_on_how_much_history_was_loaded)
+
+    print("\n── 39. gate_ic.py — futures gates under the new exit ──")
+    run("each gate judged on only-blocked",       test_gate_ic_judges_each_gate_on_the_signals_only_it_blocked)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
