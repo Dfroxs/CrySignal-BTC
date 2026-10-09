@@ -4,6 +4,26 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-10 — feat: run-3 scoring instruments committed before day 30
+
+- **`scripts/score_run3.py`**: one command from a pulled DB and manifest. Before
+  2026-11-08 it prints health only (counts, discard conditions, shadow error rates).
+  From day 30 it runs every scorer and writes all outputs to one folder.
+- **`scripts/hb_eval.py`** (H-B): BTCUSDT 4h since 2018 from the Binance spot mirror;
+  engine vs count-matched random over 2026-08-30 → 2026-11-08.
+- **`scripts/hd_eval.py`** (H-D): perp-kline fetch on the VPS, then pooled Spearman IC
+  with joint calendar block bootstrap. Refuses before 2026-11-08.
+- **H-V2 fidelity check** added to `variant_books.py`, as the prereg requires.
+  `reentry_ic.simulate_sequence` now also returns `opened_i`.
+- **Fix: `--start` filters mixed two timestamp forms** (`2026-10-09 17:01:03` vs
+  `…T…+00:00`). With the manifest's ISO start, `live_ic` and `variant_books` would have
+  dropped all of 2026-10-09; with the other form, `shadow_eval` would have admitted
+  earlier opinions. All filters now use `live_ic.norm_ts` / `ts_sql`.
+- Run-3 prereg amendment (instruments plus the fix, no criteria changed). 6 tests;
+  281/281 pass.
+
+---
+
 ## 2026-10-10 — feat: archive Binance's 30-day derivatives stats; pre-register H-D
 
 Binance serves L/S ratios, open-interest history and taker ratios for 30 days only, so

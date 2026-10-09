@@ -3811,6 +3811,97 @@ def test_derivs_archive_never_rewrites_a_row_and_resumes_after_the_newest():
         assert rows[6 * H]["longShortRatio"] == "2.0" and "+1 rows" in msg, msg
         assert calls[0]["startTime"] == 5 * H + 1, calls[0]
 
+def test_scorer_start_filter_reads_both_timestamp_forms_alike():
+    """cycle_log stores '2026-10-09 17:01:03', shadow/position tables an ISO 'T' form. A raw
+    string compare puts ' ' before 'T', so one start would drop or admit a whole day."""
+    import sqlite3
+    from scripts.live_ic import norm_ts, ts_sql
+    assert norm_ts("2026-10-09T12:34:20.203643+00:00") == "2026-10-09 12:34:20"
+    assert norm_ts("2026-10-09T14:34:20+02:00") == "2026-10-09 12:34:20"
+    con = sqlite3.connect(":memory:")
+    con.execute("CREATE TABLE t (timestamp TEXT)")
+    con.executemany("INSERT INTO t VALUES (?)", [("2026-10-09 17:01:03",), ("2026-10-09T16:01:03.2+00:00",),
+                                                  ("2026-10-09 12:01:03",), ("2026-10-09T09:01:03+00:00",)])
+    got = con.execute(f"SELECT COUNT(*) FROM t WHERE {ts_sql('timestamp')} >= ?",
+                      (norm_ts("2026-10-09T12:34:20.2+00:00"),)).fetchone()[0]
+    assert got == 2, got
+
+def test_variant_books_fidelity_matches_within_one_bar():
+    import pandas as pd
+    from scripts.variant_books import fidelity
+    idx = pd.date_range("2026-10-10", periods=48, freq="h")
+    # live opened at 05:01 -> scored bar opened 04:00 (index 4); replay opened bar 5: within 1
+    m, un = fidelity([5, 30], idx, ["2026-10-10T05:01:03+00:00", "2026-10-10T20:01:00+00:00"], "1h")
+    assert m == 1 and un == ["2026-10-10T20:01:00+00:00"], (m, un)
+
+def test_hb_verdict_follows_the_prereg():
+    from scripts.hb_eval import verdict
+    s = lambda n, mean, lo, hi: {"n": n, "mean": mean, "ci": (lo, hi)}
+    assert verdict(s(29, 1.0, 0.5, 1.5), 0.0) == "INCONCLUSIVE"     # power guard
+    assert verdict(s(40, -0.1, -0.5, 0.3), 0.0) == "FAIL"
+    assert verdict(s(40, 0.6, 0.2, 1.0), 0.0) == "PASS"
+    assert verdict(s(40, 0.3, -0.1, 0.7), 0.0) == "INCONCLUSIVE"
+
+def _hd_folder(d, syms, n_hours, signal):
+    """Synthetic archive + klines where ls_global leads the next 24h by `signal`."""
+    import numpy as np, pandas as pd
+    import scripts.hd_eval as hd
+    rng = np.random.default_rng(1)
+    t0 = pd.Timestamp("2026-09-10")
+    (d / "klines").mkdir(parents=True, exist_ok=True)
+    for k, sym in enumerate(syms):
+        ts = pd.date_range(t0, periods=n_hours, freq="h")
+        x = rng.normal(size=n_hours)
+        steps = rng.normal(scale=0.002, size=n_hours + 30)
+        steps[10:10 + n_hours] += signal * 0.002 * x     # x at T moves the bar at T+10, inside T+1..T+24
+        price = 100 * np.exp(np.cumsum(steps))
+        kt = pd.date_range(t0, periods=n_hours + 30, freq="h")
+        ms = lambda t: (t - pd.Timestamp(0)) // pd.Timedelta(milliseconds=1)   # resolution-proof
+        pd.DataFrame({"open_time": ms(kt), "open": price, "close": price}).to_csv(d / "klines" / f"{sym}.csv", index=False)
+        for stem, col in (("ls_global", "longShortRatio"), ("ls_top_position", "longShortRatio"),
+                          ("ls_top_account", "longShortRatio"), ("oi", "sumOpenInterest"), ("taker", "buySellRatio")):
+            v = 2 + x if stem == "ls_global" else 2 + rng.normal(size=n_hours) * 0.1 + 0 * x
+            pd.DataFrame({"timestamp": ms(ts), col: v}).to_csv(d / f"{sym}_{stem}.csv", index=False)
+
+def test_hd_return_starts_after_the_stat_is_known_and_btc_window_holds():
+    import tempfile
+    from pathlib import Path
+    import pandas as pd
+    import scripts.hd_eval as hd
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        _hd_folder(d, ["BTCUSDT"], 60 * 24, 0.0)
+        df = hd.load_symbol(d, "BTCUSDT")
+        k = pd.read_csv(d / "klines" / "BTCUSDT.csv")
+        k.index = pd.to_datetime(k["open_time"], unit="ms")
+        T = df.index[100]
+        assert abs(df.loc[T, "fwd_24h"] - (k.loc[T + pd.Timedelta(hours=24), "close"] /
+                                           k.loc[T + pd.Timedelta(hours=1), "open"] - 1)) < 1e-12
+        rows = hd.scored_rows(df, "BTCUSDT")
+        assert rows.index.min() >= hd.BTC_FROM
+        assert (rows["_last_bar"] + pd.Timedelta(hours=1) <= hd.RETURN_BY).all()
+
+def test_hd_pooled_ic_finds_a_planted_signal_and_not_a_null_one():
+    import tempfile
+    from pathlib import Path
+    import scripts.hd_eval as hd
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        _hd_folder(d, list(hd.ALTS), 58 * 24, 6.0)
+        frames = {s: hd.load_symbol(d, s) for s in hd.ALTS}
+        r = hd.pooled_ic(frames, "ls_global", n_boot=100)
+        assert r["pooled"] > 0.1 and r["ci"][0] > 0 and hd.verdict_hd1(r) == "PASS", r
+        r0 = hd.pooled_ic(frames, "taker", n_boot=100)
+        assert abs(r0["pooled"]) < 0.1 and hd.screen(r0) == "no lead", r0
+        few = hd.pooled_ic({s: frames[s] for s in hd.ALTS[:3]}, "ls_global", n_boot=20)
+        assert hd.verdict_hd1(few) == "INCONCLUSIVE"            # < 4 alts counted
+
+def test_scoring_scripts_refuse_before_day_30():
+    import inspect
+    import scripts.hd_eval as hd, scripts.score_run3 as sr
+    assert str(hd.SCORE_FROM.date()) == "2026-11-08" and str(sr.DAY_30.date()) == "2026-11-08"
+    assert "HEALTH ONLY" in inspect.getsource(sr.main) and "refused" in inspect.getsource(hd.main)
+
 def test_llm_haiku_request_omits_effort_and_fallbacks():
     """Haiku 4.5 rejects `effort` and has no server-side fallback; Opus 5.5 keeps both."""
     from agents.llm import ask
@@ -5383,6 +5474,14 @@ if __name__ == "__main__":
     print("\n── 40. archive_binance_derivs.py — keep the 30-day stats ──")
     run("derivs pages cover span, no overlap",    test_derivs_archive_pages_cover_the_span_without_overlap)
     run("derivs never rewrites, resumes after",   test_derivs_archive_never_rewrites_a_row_and_resumes_after_the_newest)
+
+    print("\n── 41. Run-3 scoring instruments ──")
+    run("start filter: both timestamp forms",     test_scorer_start_filter_reads_both_timestamp_forms_alike)
+    run("H-V2 fidelity within ±1 bar",            test_variant_books_fidelity_matches_within_one_bar)
+    run("H-B verdict per prereg",                 test_hb_verdict_follows_the_prereg)
+    run("H-D return after stat known, BTC window", test_hd_return_starts_after_the_stat_is_known_and_btc_window_holds)
+    run("H-D finds planted signal, not null",     test_hd_pooled_ic_finds_a_planted_signal_and_not_a_null_one)
+    run("scorers refuse before day 30",           test_scoring_scripts_refuse_before_day_30)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

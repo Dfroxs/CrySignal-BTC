@@ -84,7 +84,7 @@ def simulate_sequence(index, signals, gate_fn, sim_fn, max_age_hours,
     Returns taken P&Ls, unresolved count, and — when `stale_after_hours` is given —
     the shadow P&Ls of signals blocked by re-entry alone on an anchor older than it.
     """
-    taken, stale_rejected, trades, stale_trades = [], [], [], []
+    taken, stale_rejected, trades, stale_trades, opened_i = [], [], [], [], []
     unresolved = 0
     open_until = cooldown_until = cf_open_until = -1
     last_resolved = {}
@@ -107,6 +107,7 @@ def simulate_sequence(index, signals, gate_fn, sim_fn, max_age_hours,
         trade = sim_fn(i, sig)
         if not trade:
             continue
+        opened_i.append(i)
         exit_idx = i + trade["candles_held"]
         open_until, cooldown_until = exit_idx, exit_idx + cooldown_n
         if trade["outcome"] in RESOLVED:
@@ -118,7 +119,7 @@ def simulate_sequence(index, signals, gate_fn, sim_fn, max_age_hours,
             last_resolved[sig["type"]] = (sig["entry_price"], sig.get("strength", 0),
                                           index[min(exit_idx, len(index) - 1)])
     return {"taken": taken, "stale_rejected": stale_rejected, "unresolved": unresolved,
-            "trades": trades, "stale_trades": stale_trades}
+            "trades": trades, "stale_trades": stale_trades, "opened_i": opened_i}
 
 
 def diff_ci(a, b, seed=7, n_boot=2000):

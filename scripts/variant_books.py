@@ -33,6 +33,7 @@ from backtest import (  # noqa: E402
 )
 from config import RISK_CONFIG  # noqa: E402
 from scripts.entry_ic import summarise  # noqa: E402
+from scripts.live_ic import norm_ts, ts_sql  # noqa: E402
 from scripts.exit_ic import _signal_at  # noqa: E402
 from scripts.reentry_ic import simulate_sequence  # noqa: E402
 
@@ -72,6 +73,25 @@ def signals_for_book(rows, index, book, timeframe):
     return sorted(out, key=lambda x: x[0])
 
 
+def fidelity(opened_i, index, live_opened_at, timeframe):
+    """Run-3 prereg H-V2 fidelity check: the replayed `base` book must open within ±1 bar
+    of every position the live bot opened. Pyramid entries are passed in separately and
+    never reach here. Returns (matched, unmatched opened_at list). An unmatched position
+    is not automatically a failure: macro-close and the breaker are invisible to the
+    replay, and each must be annotated by hand in the results.
+    """
+    opened = set(opened_i)
+    matched, unmatched = 0, []
+    for ts in live_opened_at:
+        bar_open = utc_naive(ts).floor(timeframe) - BAR[timeframe]
+        j = int(index.searchsorted(bar_open))
+        if any(k in opened for k in (j - 1, j, j + 1)):
+            matched += 1
+        else:
+            unmatched.append(str(ts))
+    return matched, unmatched
+
+
 def random_book(df, n, start, timeframe, mode, seeds=20):
     """Long entries at `n` random bars per seed, through the same exit simulator."""
     pnls, hi = [], len(df) - MAX_HOLD_CANDLES[timeframe] - 1
@@ -98,8 +118,8 @@ def main() -> int:
     q = "SELECT timestamp, variants FROM cycle_log WHERE mode=? AND variants IS NOT NULL"
     params = [args.mode]
     if args.start:
-        q += " AND timestamp >= ?"
-        params.append(args.start)
+        q += f" AND {ts_sql('timestamp')} >= ?"
+        params.append(norm_ts(args.start))
     rows = sqlite3.connect(args.db).execute(q + " ORDER BY timestamp", params).fetchall()
     if not rows:
         print(f"no {args.mode} cycles with variants in {args.db}")
@@ -126,12 +146,29 @@ def main() -> int:
     for b in books:
         sigs = signals_for_book(rows, df.index, b, tf)
         r = simulate_sequence(df.index, sigs, gate, sim, age, cooldown_n=COOLDOWN[tf])
+        if b == "base":
+            base_opened = r["opened_i"]
         s = summarise(r["taken"])
         result[b] = {"signals": len(sigs), **s, "total": sum(r["taken"]),
                      "unresolved": r["unresolved"], "trades": r["trades"]}
         print(f"{b:15s} signals={len(sigs):4d}  trades={s['n']:3d}  mean={s['mean']:+.3f}pp  "
               f"total={sum(r['taken']):+.2f}pp  win={s['win_rate']:.1f}%  open={r['unresolved']}")
-    n_rand = max((v["n"] for v in result.values()), default=0) or 10
+    if "base" in result:
+        con = sqlite3.connect(args.db)
+        pos = con.execute("SELECT opened_at, pyramid_entry FROM paper_positions WHERE mode=?"
+                          + (f" AND {ts_sql('opened_at')} >= ?" if args.start else "")
+                          + " ORDER BY opened_at",
+                          [args.mode] + ([norm_ts(args.start)] if args.start else [])).fetchall()
+        live = [ts for ts, pyr in pos if not pyr]
+        matched, unmatched = fidelity(base_opened, df.index, live, tf)
+        result["fidelity"] = {"live_positions": len(live), "matched": matched,
+                              "unmatched": unmatched,
+                              "pyramids_excluded": sum(1 for _, pyr in pos if pyr),
+                              "holds": not unmatched}
+        print(f"fidelity: {matched}/{len(live)} live positions matched within ±1 bar"
+              + (f"; UNMATCHED {unmatched} — annotate each (macro-close, breaker) or "
+                 "H-V2 is discarded" if unmatched else ""))
+    n_rand = max((v["n"] for v in result.values() if "n" in v), default=0) or 10
     rnd = summarise(random_book(df, n_rand, start, tf, args.mode))
     result["random_long"] = rnd
     print(f"{'random_long':15s} {'':13s}trades={rnd['n']:3d}  mean={rnd['mean']:+.3f}pp  "

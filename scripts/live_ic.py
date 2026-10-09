@@ -42,6 +42,24 @@ PLACEHOLDERS = {"funding_rate": (0.0,), "ls_ratio": (1.0, 0.0), "basis_pct": (0.
 BOOKS = ("base", "rel_engine_dir", "rel_ic_dir")
 
 
+def norm_ts(ts):
+    """'YYYY-MM-DD HH:MM:SS' in UTC, from any form the run's tables or manifest carry.
+
+    cycle_log and signal_blocks store '2026-10-09 17:01:03'; paper_positions and the
+    shadow tables store '2026-10-09T16:01:03.213149+00:00'. Compared as raw strings, ' '
+    sorts before 'T', so a start in one form silently drops or admits a whole day of the
+    other. Every --start filter compares ts_sql(column) >= norm_ts(start).
+    """
+    t = pd.Timestamp(ts)
+    if t.tzinfo is not None:
+        t = t.tz_convert("UTC").tz_localize(None)
+    return t.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def ts_sql(col):
+    return f"substr(replace({col}, 'T', ' '), 1, 19)"
+
+
 def load_cycles(db, start=None):
     """Hourly futures frame: fields (placeholders → NaN), net score per book, and the
     forward 24h return. Missing hours stay as empty rows, so a shift never pairs a cycle
@@ -54,8 +72,8 @@ def load_cycles(db, start=None):
          f"FROM cycle_log WHERE mode='futures'")
     params = []
     if start:
-        q += " AND timestamp >= ?"
-        params.append(start)
+        q += f" AND {ts_sql('timestamp')} >= ?"
+        params.append(norm_ts(start))
     df = pd.read_sql(q + " ORDER BY timestamp", con, params=params)
     ts = pd.to_datetime(df["timestamp"].str.replace("T", " ").str[:19])
     df.index = ts.dt.floor("h")

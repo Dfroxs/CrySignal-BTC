@@ -23,6 +23,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.live_ic import norm_ts, ts_sql  # noqa: E402
+
 MIN_PER_GROUP = 20
 N_BOOT = 5000
 SEED = 2026
@@ -103,8 +107,8 @@ def main() -> int:
     con = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
     q = ("SELECT timestamp, provider, model, verdict, mode, signal_type, entry_price, "
          "stop_loss, take_profit, atr, error FROM shadow_opinions")
-    ops = pd.read_sql(q + (" WHERE timestamp >= ?" if args.start else ""), con,
-                      params=[args.start] if args.start else [])
+    ops = pd.read_sql(q + (f" WHERE {ts_sql('timestamp')} >= ?" if args.start else ""), con,
+                      params=[norm_ts(args.start)] if args.start else [])
     errors = ops["error"].notna().groupby(ops["provider"]).sum().to_dict()
     ops = ops[ops["error"].isna()].copy()
     ops["ts"] = pd.to_datetime(ops["timestamp"].str.replace("T", " ").str[:19])
