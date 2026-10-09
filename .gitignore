@@ -228,6 +228,12 @@ data/backups/
 data/*_cache.json
 data/threshold_state.json
 data/spot_threshold_state.json
+data/paper_run_manifest.run*.json
+data/alarm_state.json
+data/llm_usage.jsonl
+data/qa_offset.json
+data/qa_usage.json
+data/*.log
 
 # Harness-managed worktrees. Never tracked — a subagent running `git add -A`
 # would otherwise commit an entire second checkout into the repository.
