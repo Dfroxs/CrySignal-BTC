@@ -1,6 +1,6 @@
 # Paper Run — Operations Note
 
-**Rewritten 2026-10-04, when run 2 started. Read this first when you come back.**
+**Rewritten 2026-10-09, when run 3 started. Read this first when you come back.**
 
 ---
 
@@ -10,35 +10,40 @@
 bash scripts/morning_check.sh
 ```
 
-Both bots, one command, exits non-zero if anything needs attention. Expect
-`>>> semua bersih <<<`. If something is flagged, the line names it; the rest of this
-document explains the context.
+Both bots, one command, exits non-zero if anything needs attention. From run 3 the VPS
+also sends its own **daily Telegram report at 03:30 UTC** (`agents/ops_report.py`, user
+crontab). Rules decide the anomalies; an LLM only writes the summary.
 
-**Checkpoints, as of 2026-10-08 19:50 UTC** (both bots checked; `morning_check.sh` clean):
+## Run 3 — what it is for, and the one date that matters
 
-1. ✅ **nakhoda-alloc crosses a UTC midnight on its own.** Unprompted rebalances at
-   ~00:01–00:02 UTC on 10-05, 10-06, 10-07 and 10-08, none triggered by a restart.
-2. ✅ **spotsignal run 2 completes full days.** 136 cycles since 07:37 UTC 2026-10-04,
-   `contributions` NULL on **0** of them.
-3. ✅ **spotsignal veto-reason fix — seen in production.** `⛔` survives in `reasons` on
-   35 futures and 12 spot cycles of run 2 (run 1: 3 of 201 vetoed cycles).
-4. ⏳ **spotsignal `_net_pnl` cost fix — still unproven in the field.** Run 2 has opened
-   **no positions yet**; the 3 rows in `paper_positions` all predate it. When the first
-   run-2 trade hits TP1, check that `pnl_pct` reflects a full round trip on both halves.
-   **This is the only checkpoint left open.**
+**Goal changed (owner, 2026-10-09):** collect data *and* improve toward profit. Zero
+positions is the anomaly, not a safe state. See CLAUDE.md.
 
-**Waiting on `develop`, for run 3 — do not deploy into run 2:**
-`notifier/telegram.py`, `run_bot.py`, `signals/market_data.py`, `signals/spot.py`,
-`signals/futures.py` — the unopenable-signal alert and the controller counting opens
-instead of fires. See `docs/superpowers/specs/2026-10-04-deadzone-results.md` for why,
-and note that neither is a route to profit: that experiment's H1 failed.
+**Scoring date: no hypothesis may be scored before day 30** of run 3 —
+`docs/superpowers/specs/2026-10-09-run3-prereg.md` (H-L live IC, H-V variants, H-B BTC
+vs random, H-S shadow agents). Interim looks are health only. Instruments:
+`scripts/live_ic.py`, `scripts/variant_books.py`, `scripts/shadow_eval.py`, and
+`scripts/entry_ic.py` for H-B.
 
-**allocbot's demo gate: two weeks elapsed 2026-10-08 04:17 UTC, clean** — zero `ERROR` /
-`Traceback` in its journal since 2026-09-24, no missed daily decision. (2026-10-01's
-rebalance was held ~20 min for a Tankan event and then ran — designed behaviour.) Read
-`../Nakhoda/docs/OOS-FINDING-2026-09-08.md` before treating this pass as permission to
-trade real money — the rule failed out of domain and its timing is indistinguishable from
-matched random entry outside crypto. The pass proves the plumbing, not the edge.
+**What changed from run 2** (all on `main` at promotion; see CHANGELOG 2026-10-09):
+
+| change | why | evidence |
+|---|---|---|
+| re-entry anchor ages out after 168h | a 09-12 WIN locked spot out for 3 weeks | design decision — its test was INCONCLUSIVE |
+| futures trail 1.5 → 3.5×ATR, stop/target ×2 | shorts were not late; the trail killed them | **pre-registered PASS**, +0.243pp, still −0.05pp absolute |
+| controller lowers a mode that never opened; state versioned | futures could never be lowered; run-2 fire timestamps would have read as opens | bug fix |
+| `NameError` in the re-entry guard | would have killed Phase 3 on every worse-price signal | bug fix |
+| live score variants (`cycle_log.variants`) | funding/L/S/basis scored 0 of 92 cycles — absolute bands never fire | logged only, scored by H-V |
+| shadow agents (`shadow_opinions`) | Claude + DeepSeek judge each signal | logged only, scored by H-S |
+| daily ops report | morning_check automated on the host | — |
+
+**The VPS now holds LLM API keys** (`ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY` in `.env`,
+mode 600). Still **no exchange keys**: spotsignal places no orders. If a key leaks,
+revoke it in its console and replace it in `.env`.
+
+**allocbot's demo gate: two weeks elapsed 2026-10-08 04:17 UTC, clean.** Read
+`../Nakhoda/docs/OOS-FINDING-2026-09-08.md` before treating that as permission to trade
+real money. The pass proves the plumbing, not the edge.
 
 ---
 
@@ -49,8 +54,8 @@ matched random entry outside crypto. The pass proves the plumbing, not the edge.
 | Repo | `~/playground/CrySignal-BTC` | `~/playground/Nakhoda` |
 | Service | `spotsignal.service` (system) | `nakhoda-alloc.service` (**user scope**) |
 | Runs as | `dmonk` | `dmonk` |
-| Started | **run 2: 2026-10-04 07:37 UTC** | 2026-09-24 04:17 UTC |
-| Touches an exchange? | **No.** Zero API keys, zero order calls. Paper positions live in SQLite. | **Yes** — real orders on OKX **Demo** (virtual money) |
+| Started | **run 3: 2026-10-09 (see manifest)** · run 2: 2026-10-04 07:37 | 2026-09-24 04:17 UTC |
+| Touches an exchange? | **No.** No exchange keys, zero order calls (LLM keys only, for the agents). Paper positions live in SQLite. | **Yes** — real orders on OKX **Demo** (virtual money) |
 | Strategy | 22 conditions, 5 veto gates, adaptive threshold, BTC only | Donchian 20/10 across 10 coins, daily, no stops |
 
 Host `45.151.155.178` — Kamatera, Singapore, Ubuntu 24.04, **960 MB RAM, 1 core**.
