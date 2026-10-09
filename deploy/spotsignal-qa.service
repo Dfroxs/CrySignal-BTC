@@ -1,0 +1,23 @@
+# Owner Q&A over Telegram (agents/qa_bot.py). USER unit — no sudo:
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/spotsignal-qa.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now spotsignal-qa
+#   journalctl --user -u spotsignal-qa -f
+# Survives reboot because the host has `loginctl enable-linger`.
+[Unit]
+Description=SpotSignal owner Q&A bot (Telegram long-poll, read-only DB)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/playground/CrySignal-BTC
+ExecStart=%h/playground/CrySignal-BTC/venv/bin/python -m agents.qa_bot
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=30
+MemoryMax=200M
+Nice=10
+
+[Install]
+WantedBy=default.target

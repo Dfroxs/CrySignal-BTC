@@ -4,6 +4,39 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — feat: owner Q&A over Telegram (`agents/qa_bot.py`)
+
+The owner can now ask the bot a question in its Telegram chat ("kenapa tidak ada posisi
+hari ini?") and get a short Indonesian answer, at most 150 words, written by an LLM from
+the bot's own database. It is a separate long-poll process (`getUpdates`, 50 s) and
+never touches trading: nothing it does opens, closes or sizes a position.
+
+- **Only the owner's chat.** Messages from any chat id other than `TELEGRAM_CHAT_ID`
+  are dropped silently. The model never writes SQL or code that gets executed.
+- **Facts built by code, read-only.** `collect_db_facts`/`anomalies` from
+  `agents/ops_report.py`, plus the last 24 cycles per mode (type, strength,
+  threshold, and the engine's own `⛔` veto line only), open positions, the last 10
+  closed ones, and `signal_blocks` by mode and gate over 24h and 7d. No news or RSS
+  text.
+- **Pre-registration guard.** The facts carry no shadow verdicts, variant scores,
+  contributions or IC figures (`build_facts` raises if one of those keys ever gets
+  in). Until 2026-11-08 (day 30), the fixed system prompt tells the model to say
+  they are locked.
+- **Limits.** 30 LLM questions per UTC day (`data/qa_usage.json`), 500 characters per
+  question, and backlog messages older than an hour are skipped. Any `LLMError`
+  becomes a short apology, and the answer is HTML-escaped. Token usage is logged to
+  stdout (the journal).
+- **Commands.** `/status` gives a deterministic status with no LLM; `/help` shows usage.
+- **Offset** persisted in `data/qa_offset.json` *before* the message is handled, so a
+  restart never re-answers and a crashing message is not retried forever.
+- **Deploy:** `deploy/spotsignal-qa.service`, a **user** unit (`systemctl --user`, no
+  sudo, `Restart=always`, `MemoryMax=200M`). Install steps are in the module docstring.
+  Not deployed. Measured RSS: ~25 MB idle, ~90 MB once the Anthropic SDK is loaded.
+
+Suite 220 → 230.
+
+---
+
 ## 2026-10-09 — fix: shadow agents run in a background thread
 
 A live retest in DeepSeek's peak hours (06:08 UTC, Friday) timed out at the new 90 s
