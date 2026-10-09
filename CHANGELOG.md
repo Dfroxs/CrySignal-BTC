@@ -4,6 +4,17 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — feat: futures entry gates can be disabled by config (empty: no change)
+
+On `develop`, ready for the futures-gates prereg result. `FUTURES_CONFIG["entry"]
+["disabled_gates"]`, default `[]`, switches gates off for futures first entries **and**
+flips. `run_bot._fut_gate_on(name)` guards each of the five tested gates in both chains,
+and `backtest._failing_gates` drops the same names for futures, so replay and live stay
+equal. Spot never reads the list. The list is filled only by a pre-registered FAIL.
+Suite 259 → 261.
+
+---
+
 ## 2026-10-09 — fix: backtest scores each candle exactly as live would
 
 On `develop`. Local only: `backtest.py` is never run on the server.

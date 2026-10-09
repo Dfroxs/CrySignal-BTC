@@ -83,6 +83,9 @@ FUTURES_CONFIG = {
         "reentry_price_check":    True,       # TA-driven re-entry quality gate
         "fakeout_wick_ratio":     0.60,       # reject on >60% upper/lower wick
         "max_aggregate_risk_pct": 8.0,        # max total risk % across all futures positions
+        # Futures entry gates switched off (first entries AND flips; live + backtest).
+        # Filled only by a pre-registered FAIL — 2026-10-09-futures-gates-prereg.md.
+        "disabled_gates":         [],
     },
     # 1.5 → 3.5 and stop/target distance × 2.0: PASSED its pre-registered paired test on
     # 2022-01 → 2025-10 (417 signals, +0.243pp, 90% CI [+0.054, +0.436], 4/4 windows,

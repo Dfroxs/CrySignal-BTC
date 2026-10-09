@@ -84,6 +84,13 @@ _last_atr_fut  = 0  # cached for mid-cycle vol-exit checks (1H scale)
 _FROM_CONFIG = object()   # sentinel: read RISK_CONFIG["pyramid"]["reentry_max_age_hours"]
 
 
+def _fut_gate_on(name):
+    """False when `name` is in FUTURES_CONFIG["entry"]["disabled_gates"]: a futures entry
+    gate switched off by a pre-registered FAIL (2026-10-09-futures-gates-prereg.md).
+    The same list is read by backtest._failing_gates, so replay and live agree."""
+    return name not in FUTURES_CONFIG.get("entry", {}).get("disabled_gates", ())
+
+
 def _check_reentry_quality(signal, mode, max_age_hours=_FROM_CONFIG, now=None):
     """TA-driven re-entry guard: skip if price is worse and confidence didn't improve.
 
@@ -759,17 +766,17 @@ def run_cycle():
                 elif not _confidence_at_least(actual_conf, min_conf):
                     _block(phase3_actions, "futures", futures_signal, "flip_confidence",
                            f"FUT flip requires ≥{min_conf} confidence (got {actual_conf}) — skipping open")
-                elif fakeout_warn:
+                elif fakeout_warn and _fut_gate_on("fakeout_first"):
                     _block(phase3_actions, "futures", futures_signal, "flip_fakeout", fakeout_warn)
-                elif flip_psy_warn:
+                elif flip_psy_warn and _fut_gate_on("psy_sl_first"):
                     _block(phase3_actions, "futures", futures_signal, "flip_psy_sl", flip_psy_warn)
-                elif flip_sr_warn:
+                elif flip_sr_warn and _fut_gate_on("sr_first"):
                     _block(phase3_actions, "futures", futures_signal, "flip_sr", flip_sr_warn)
-                elif _is_counter_trend_regime(futures_signal, futures_signal["type"]):
+                elif _fut_gate_on("regime_counter") and _is_counter_trend_regime(futures_signal, futures_signal["type"]):
                     direction_word = "bullish" if futures_signal["type"] == "SELL" else "bearish"
                     _block(phase3_actions, "futures", futures_signal, "flip_regime_counter",
                            f"FUT {futures_signal['type']} flip blocked — counter-trend {direction_word} regime")
-                elif not _trend_confluence_for_direction(futures_signal, futures_signal["type"]):
+                elif _fut_gate_on("trend_confluence") and not _trend_confluence_for_direction(futures_signal, futures_signal["type"]):
                     _block(phase3_actions, "futures", futures_signal, "flip_trend_confluence",
                            f"FUT {futures_signal['type']} flip blocked — trend confluence < 2/3")
                 else:
@@ -810,17 +817,17 @@ def run_cycle():
                 elif not _confidence_at_least(actual_conf, min_conf):
                     _block(phase3_actions, "futures", futures_signal, "confidence_first",
                            f"FUT {futures_signal['type']} requires ≥{min_conf} confidence (got {actual_conf}) — skipping")
-                elif fakeout_warn:
+                elif fakeout_warn and _fut_gate_on("fakeout_first"):
                     _block(phase3_actions, "futures", futures_signal, "fakeout_first", fakeout_warn)
-                elif fut_psy_warn:
+                elif fut_psy_warn and _fut_gate_on("psy_sl_first"):
                     _block(phase3_actions, "futures", futures_signal, "psy_sl_first", fut_psy_warn)
-                elif fut_sr_warn:
+                elif fut_sr_warn and _fut_gate_on("sr_first"):
                     _block(phase3_actions, "futures", futures_signal, "sr_first", fut_sr_warn)
-                elif _is_counter_trend_regime(futures_signal, futures_signal["type"]):
+                elif _fut_gate_on("regime_counter") and _is_counter_trend_regime(futures_signal, futures_signal["type"]):
                     direction_word = "bullish" if futures_signal["type"] == "SELL" else "bearish"
                     _block(phase3_actions, "futures", futures_signal, "regime_counter",
                            f"FUT {futures_signal['type']} blocked — counter-trend {direction_word} regime")
-                elif not _trend_confluence_for_direction(futures_signal, futures_signal["type"]):
+                elif _fut_gate_on("trend_confluence") and not _trend_confluence_for_direction(futures_signal, futures_signal["type"]):
                     _block(phase3_actions, "futures", futures_signal, "trend_confluence",
                            f"FUT {futures_signal['type']} blocked — trend confluence < 2/3")
                 else:

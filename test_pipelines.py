@@ -3670,6 +3670,39 @@ def test_gate_ic_judges_each_gate_on_the_signals_only_it_blocked():
     assert res["sr_first"]["verdict"] == "INCONCLUSIVE"
     assert res["psy_sl_first"]["n_only"] == 0, "unresolved shadows are not P&L"
 
+_FUT_GATES = ("fakeout_first", "regime_counter", "trend_confluence", "psy_sl_first", "sr_first")
+
+def test_futures_gates_can_be_disabled_by_config_in_backtest():
+    """A gate the futures-gates prereg FAILs is switched off through one config list, read
+    by live and backtest alike. Spot is never affected."""
+    from backtest import _failing_gates
+    from config import FUTURES_CONFIG
+    w = _gate_window()
+    entry = FUTURES_CONFIG["entry"]
+    saved = list(entry.get("disabled_gates", []))
+    try:
+        entry["disabled_gates"] = []
+        assert "fakeout_first" in _failing_gates(_gate_signal(), "futures", w)
+        entry["disabled_gates"] = ["fakeout_first"]
+        assert "fakeout_first" not in _failing_gates(_gate_signal(), "futures", w)
+        bad = _gate_signal(); bad["_regime"] = {"regime": "TRENDING", "trend_dir": "BEARISH"}
+        assert "regime_counter" in _failing_gates(bad, "spot", w), "spot must ignore the list"
+    finally:
+        entry["disabled_gates"] = saved
+
+def test_run_bot_consults_the_disabled_list_for_every_futures_gate():
+    import inspect, run_bot
+    src = inspect.getsource(run_bot.run_cycle)
+    for g in _FUT_GATES:
+        assert src.count(f'_fut_gate_on("{g}")') == 2, f"{g}: must be checked in the open AND flip chains"
+    from config import FUTURES_CONFIG
+    saved = list(FUTURES_CONFIG["entry"].get("disabled_gates", []))
+    try:
+        FUTURES_CONFIG["entry"]["disabled_gates"] = ["sr_first"]
+        assert run_bot._fut_gate_on("sr_first") is False and run_bot._fut_gate_on("fakeout_first") is True
+    finally:
+        FUTURES_CONFIG["entry"]["disabled_gates"] = saved
+
 def test_synth_entries_respects_stride_and_warmup():
     from scripts.exit_ic import synth_entries
     df = _exit_fixture([1000] * 260)
@@ -5103,6 +5136,8 @@ if __name__ == "__main__":
 
     print("\n── 39. gate_ic.py — futures gates under the new exit ──")
     run("each gate judged on only-blocked",       test_gate_ic_judges_each_gate_on_the_signals_only_it_blocked)
+    run("futures gates disable by config (bt)",   test_futures_gates_can_be_disabled_by_config_in_backtest)
+    run("run_bot checks disabled list per gate",  test_run_bot_consults_the_disabled_list_for_every_futures_gate)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

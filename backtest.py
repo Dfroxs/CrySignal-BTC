@@ -310,6 +310,9 @@ def _failing_gates(signal, mode, window, last_resolved=None,
                signal.get("strength", 0) < prev_strength + 0.3:
                 fails.append("reentry_first")
 
+    if mode == "futures":
+        off = set(FUTURES_CONFIG.get("entry", {}).get("disabled_gates", ()))
+        fails = [g for g in fails if g not in off]
     return fails
 
 
