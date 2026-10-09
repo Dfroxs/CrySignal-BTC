@@ -35,9 +35,9 @@ exploratory 40-day scan, runs 1–3 and H-B.
 
 ## Transform (fixed now)
 
-The primary form of each field is its **trailing 168h z-score**: (x − mean) / std over
-the previous 168 hours, excluding hour t's own value from neither side of the fit and
-requiring 120 valid hours. This is the relative-band idea `signals/variants.py` already
+The primary form of each field is its **trailing 168h z-score**: (x_t − mean) / std,
+with mean and std taken over hours t−167 … t inclusive. All of those hours are closed
+at t. At least 120 of them must be valid. This is the relative-band idea `signals/variants.py` already
 uses. It removes the multi-year drift in funding and basis levels that would otherwise
 dominate a rank correlation. The raw level is reported, but descriptive only.
 
