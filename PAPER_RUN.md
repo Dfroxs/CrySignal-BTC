@@ -9,6 +9,12 @@ Ops-report fixes followed at `01d3e71` without a bot restart: the report runs fr
 as its own process, so pulling a commit that touches only `agents/ops_report.py` does
 not change what the running bot executes. **Day 30 = 2026-11-08.**
 
+**Restart 2026-10-09 06:15 UTC at `9b61770`** (notifier, shadow and docs only; no
+signal, gate, config or trading change): compact Telegram messages; shadow agents judge
+the managed trade per mode and run in a background thread. **H-S counts only shadow
+opinions with `timestamp >= 2026-10-09T06:16:00Z`** (prereg amendment). None existed
+before it.
+
 ---
 
 ## New session? Do this first
