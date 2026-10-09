@@ -24,6 +24,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.live_ic import norm_ts, ts_sql  # noqa: E402
+
 MIN_POSITIONS = 8
 MIN_OPINIONS = 30
 N_BOOT = 5000
@@ -70,8 +74,8 @@ def main() -> int:
     q = ("SELECT o.provider, o.position_id, o.verdict, o.pnl_if_closed_pct, o.error, "
          "p.pnl_pct AS final_pnl FROM shadow_exit_opinions o "
          "JOIN paper_positions p ON p.id = o.position_id WHERE p.outcome IS NOT NULL")
-    df = pd.read_sql(q + (" AND o.timestamp >= ?" if args.start else ""), con,
-                     params=[args.start] if args.start else [])
+    df = pd.read_sql(q + (f" AND {ts_sql('o.timestamp')} >= ?" if args.start else ""), con,
+                     params=[norm_ts(args.start)] if args.start else [])
     errors = df["error"].notna().groupby(df["provider"]).sum().to_dict()
     df = df[df["error"].isna()].dropna(subset=["pnl_if_closed_pct", "final_pnl"])
     res = evaluate_exits(df)
