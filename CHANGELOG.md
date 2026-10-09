@@ -4,6 +4,23 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — fix: ops report — run-scoped checks, backup by time
+
+Found by the first dry run on the VPS, minutes before run 3 started. The bot is not
+affected: the report runs from cron as its own process.
+
+### Fixed
+- **Variants-NULL share and "no new positions" now start at the run's `started_at`**
+  (from the manifest), as `morning_check.sh` already does for contributions. Over a
+  flat 24h window, run 2's rows (which have no variants) read as a fault for a whole day
+  after the restart. "No new positions" now fires only once the run is ≥ 48h old and
+  names how long it has been.
+- **The newest backup is chosen by modification time, among `db-YYYYMMDD.db` only.**
+  By name, the VPS's old `db-26-08-30-0503.db` sorted after today's backup and was
+  reported as the latest. Suite 194 → 197.
+
+---
+
 ## 2026-10-09 — feat: shadow agents (Claude + DeepSeek), logged and never traded
 
 For **run 3**, on `develop`.

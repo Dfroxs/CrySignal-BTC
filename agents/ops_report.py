@@ -50,7 +50,9 @@ def _ts(col):
     return f"datetime(substr({col}, 1, 19))"
 
 
-def collect_db_facts(db_path, now):
+def collect_db_facts(db_path, now, run_start=None):
+    """Facts for the last 24h. Run-scoped checks (variants, positions) start at the
+    later of 24h ago and `run_start`: the previous run's rows are not this run's faults."""
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     q = lambda sql, *p: con.execute(sql, p).fetchall()
     d24 = (now - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
@@ -66,14 +68,20 @@ def collect_db_facts(db_path, now):
     f["last_cycle_age_h"] = (round((now.replace(tzinfo=None) - datetime.fromisoformat(last))
                                    .total_seconds() / 3600, 2) if last else None)
     cols = {r[1] for r in q("PRAGMA table_info(cycle_log)")}
+    run_from = max(d24, run_start.strftime("%Y-%m-%d %H:%M:%S")) if run_start else d24
     if "variants" in cols:
-        n, nulls = q(f"SELECT COUNT(*), SUM(variants IS NULL) FROM cycle_log WHERE {since}", d24)[0]
+        n, nulls = q(f"SELECT COUNT(*), SUM(variants IS NULL) FROM cycle_log WHERE {since}",
+                     run_from)[0]
         f["variants_null_share_24h"] = (nulls or 0) / n if n else None
     else:
         f["variants_null_share_24h"] = None
     opened = f"{_ts('opened_at')} >= datetime(?)"
     f["opened_24h"] = q(f"SELECT COUNT(*) FROM paper_positions WHERE {opened}", d24)[0][0]
     f["opened_7d"] = q(f"SELECT COUNT(*) FROM paper_positions WHERE {opened}", d7)[0][0]
+    f["run_age_h"] = (round((now - run_start).total_seconds() / 3600, 2) if run_start else None)
+    f["opened_since"] = (q(f"SELECT COUNT(*) FROM paper_positions WHERE {opened}",
+                           run_start.strftime("%Y-%m-%d %H:%M:%S"))[0][0]
+                         if run_start else f["opened_7d"])
     f["open_positions"] = q("SELECT COUNT(*) FROM paper_positions WHERE closed_at IS NULL")[0][0]
     f["closed_24h"] = [{"mode": m, "outcome": o, "pnl_pct": p} for m, o, p in q(
         f"SELECT mode, outcome, pnl_pct FROM paper_positions WHERE closed_at IS NOT NULL "
@@ -110,7 +118,9 @@ def collect_host_facts(root, now, run=_run):
     if log.exists():
         tail = log.read_text(errors="replace").splitlines()[-400:]
         errs = sum(bool(re.search(r"error|traceback|exception", ln, re.I)) for ln in tail)
-    backups = sorted((root / "data" / "backups").glob("db-*.db"))
+    # Newest by TIME among db-YYYYMMDD.db: by name, an old 'db-26-08-30-0503.db' sorts last.
+    backups = sorted((p for p in (root / "data" / "backups").glob("db-*.db")
+                      if re.fullmatch(r"db-\d{8}\.db", p.name)), key=lambda p: p.stat().st_mtime)
     return {"spot_svc": run("systemctl is-active spotsignal") or "unknown",
             "alloc_svc": run("systemctl --user is-active nakhoda-alloc") or "unknown",
             "spot_log_errors": errs,
@@ -150,8 +160,13 @@ def anomalies(f):
     for prov, (n, errs) in (f.get("shadow_24h") or {}).items():
         if n and errs == n:
             out.append(f"agent shadow {prov} gagal di semua {n} panggilan — key/saldo?")
-    if f.get("opened_7d") == 0:
-        out.append("tidak ada posisi baru dalam 7 hari — data trade tidak bertambah")
+    age = f.get("run_age_h")
+    if age is None:
+        if f.get("opened_7d") == 0:
+            out.append("tidak ada posisi baru dalam 7 hari — data trade tidak bertambah")
+    elif age >= 48 and f.get("opened_since") == 0:
+        out.append(f"tidak ada posisi baru sejak run mulai ({age / 24:.1f} hari) — "
+                   "data trade tidak bertambah")
     return out
 
 
@@ -235,7 +250,13 @@ def main() -> int:
     from dotenv import load_dotenv
     load_dotenv(Path(args.root) / ".env")
     now = datetime.now(UTC)
-    facts = {**collect_db_facts(args.db, now), **collect_host_facts(args.root, now)}
+    run_start = None
+    try:
+        m = json.loads((Path(args.root) / "data" / "paper_run_manifest.json").read_text())
+        run_start = datetime.fromisoformat(m["started_at"])
+    except Exception:
+        pass                          # no manifest: plain 24h / 7-day windows
+    facts = {**collect_db_facts(args.db, now, run_start), **collect_host_facts(args.root, now)}
     send = (lambda t: print(t) or True) if args.dry_run else None
     return run_report(facts, send_fn=send, provider=args.provider, use_llm=not args.no_llm)
 

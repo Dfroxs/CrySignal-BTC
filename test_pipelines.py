@@ -3288,6 +3288,40 @@ def test_shadow_eval_verdict_follows_the_preregistration():
     assert evaluate(frame(40, 40, -1.0, 1.0))["anthropic"]["verdict"] == "FAIL"
     assert evaluate(frame(40, 19, 1.0, -1.0))["anthropic"]["verdict"] == "INCONCLUSIVE", "power guard"
 
+def test_ops_counts_run_checks_from_the_run_start_not_24h_back():
+    """Rows from the previous run legitimately have no variants. Measured over a flat
+    24h they read as a fault for a whole day after every restart."""
+    from datetime import timedelta
+    from agents.ops_report import collect_db_facts
+    h, saved, path, now = _ops_db()
+    try:
+        f = collect_db_facts(path, now, run_start=now - timedelta(hours=2, minutes=30))
+        assert f["variants_null_share_24h"] == 0.0, f["variants_null_share_24h"]
+        assert f["run_age_h"] == 2.5 and f["opened_since"] == 1, f
+    finally:
+        _restore_history_db(h, saved, path)
+
+def test_ops_no_new_positions_waits_for_two_days_of_run():
+    from agents.ops_report import anomalies
+    young = dict(_clean_facts(), opened_7d=0, opened_since=0, run_age_h=10.0)
+    old = dict(_clean_facts(), opened_7d=0, opened_since=0, run_age_h=120.0)
+    assert not any("posisi" in a for a in anomalies(young)), anomalies(young)
+    assert any("posisi" in a for a in anomalies(old)), anomalies(old)
+
+def test_ops_backup_is_the_newest_dated_file_by_time_not_by_name():
+    """'db-26-08-30-0503.db' sorts after 'db-20261009.db' by name; the VPS has both."""
+    import os, tempfile, time
+    from datetime import UTC, datetime
+    from pathlib import Path
+    from agents.ops_report import collect_host_facts
+    root = Path(tempfile.mkdtemp()); b = root / "data" / "backups"; b.mkdir(parents=True)
+    (b / "db-20261009.db").write_text("x"); time.sleep(0.01)
+    (b / "db-26-08-30-0503.db").write_text("x")
+    old = time.time() - 86400 * 30
+    os.utime(b / "db-26-08-30-0503.db", (old, old))
+    f = collect_host_facts(root, datetime(2026, 10, 9, tzinfo=UTC), run=lambda c: "")
+    assert f["backup_latest"] == "db-20261009.db", f["backup_latest"]
+
 def test_synth_entries_respects_stride_and_warmup():
     from scripts.exit_ic import synth_entries
     df = _exit_fixture([1000] * 260)
@@ -3795,6 +3829,9 @@ if __name__ == "__main__":
     run("render escapes model, survives w/o it",  test_ops_render_escapes_the_model_and_survives_without_it)
     run("report sends when the LLM fails",        test_ops_report_still_sends_when_the_llm_fails)
     run("ops flags an always-failing agent",      test_ops_reports_shadow_agents_and_flags_a_provider_that_always_fails)
+    run("ops run checks start at run start",      test_ops_counts_run_checks_from_the_run_start_not_24h_back)
+    run("ops no-positions waits 2 days of run",   test_ops_no_new_positions_waits_for_two_days_of_run)
+    run("ops backup newest by time, not name",    test_ops_backup_is_the_newest_dated_file_by_time_not_by_name)
 
     print("\n── 34. agents/shadow.py — shadow opinions, never traded ──")
     run("context is numbers, not text",           test_shadow_context_carries_numbers_not_text)
