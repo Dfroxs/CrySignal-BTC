@@ -63,6 +63,11 @@ an exact 1.5 on float noise. Nothing existed since 11:12 (0 signals, positions o
 opinions). **All run-3 hypotheses count from the manifest's `started_at =
 2026-10-09T12:34:20Z`** (previous one archived as `paper_run_manifest.run3-1112.json`).
 Day 30 is still 2026-11-08. The diff check now runs from `316e0dc`.
+
+**Restart 2026-10-09 17:14:32 UTC at `0c61921` (PR #19). Run 3 does NOT restart.**
+Notifier only: a signal blocked in Phase 3 now shows as `⛔ … blocked by <gate>, no
+position` instead of reading like a trade. The trading-path diff from `316e0dc` is empty and the
+manifest is unchanged (`started_at = 2026-10-09T12:34:20Z`).
 ---
 
 ## New session? Do this first
