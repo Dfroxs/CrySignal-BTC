@@ -4,6 +4,51 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — feat: compact Telegram messages (notifier only)
+
+On `develop`. Formatting only: what is sent, and when, is unchanged.
+
+### Changed
+- **The hourly card is now a few lines unless something can open.** It used to carry
+  technicals for both modes, HTF, headlines, performance, hypothetical sizing and a
+  verdict section on every cycle, 3,175 to 3,468 characters whatever happened. Now a
+  HOLD cycle is the price plus one line per mode, giving the leading side's score and
+  that mode's bar (`⏸ SPOT 4H · HOLD · BUY 3.00 · bar 4.30`): **127 characters**.
+  Setup (entry, SL, TP1/TP2, R/R), sizing (spot size or futures leverage, margin and
+  liquidation), the top 3 reasons and one or two context lines (trend, RSI, regime,
+  F&G, plus funding/L/S/OI for futures) appear only under a signal that clears the
+  confidence bar. Open positions are listed one line each.
+- **The hourly card now respects `will_open`.** The single-mode card already marked a
+  sub-bar BUY/SELL as unopenable, but the combined card the bot actually sends every
+  cycle still showed a WEAK BUY as `🟢 BUY` with `▶ ENTER BUY`. Both cards now share
+  one layout, and such a signal reads `🔇 … below the bar, no position will open`, with
+  no setup.
+- **Position opened** card: four lines (header, entry and R/R, SL, TP1/TP2).
+- **Position closed** card: the mode now prints in full (`SPOT`, not `SPO`), and the
+  running total for each mode that closed is added below the trades. Performance changes
+  only when a trade closes, so it lives here instead of in every hourly card. If the DB
+  read fails, the total is dropped and the close is still sent.
+- Dropped from the hourly card: decorative `━━━` headers, the full technicals and HTF
+  blocks, headlines, the per-hour performance block, SL/TP *estimates* for HOLDs, and the
+  disclaimer footer. `cycle_log` still records all of it.
+
+### Tests
+- Suite 194 → 205. Section 35 pins the new layout: length ceilings per case, required
+  fields, below-the-bar wording, HTML safety (balanced tags, escaped dynamic text) and
+  the close running total.
+- Rewritten deliberately because they pinned the old layout: `Gap`/`gap`, `TECHNICALS —`,
+  `Stop SL`/`TP1 50%`, `PERFORMANCE` and `OPEN POSITIONS` assertions in sections 2, 3 and 6.
+
+### Fixed (review)
+- A HOLD whose leading score cleared the bar was always labelled `held back (news/macro)`.
+  Usually it is a veto gate instead (no-chase, anti-FOMO, entry wick, short-term
+  momentum, counter-trend), which leaves a `⛔` reason. The line now quotes the first
+  such reason, trimmed to 45 characters and escaped:
+  `BUY 5.00 ≥ bar 3.80 · vetoed: Short-term down: 5-SMA slope -1.24×ATR (need`.
+  The news/macro wording remains only for when there is no `⛔` reason. Suite 205 → 207.
+
+---
+
 ## 2026-10-09 — fix: ops report — run-scoped checks, backup by time
 
 Found by the first dry run on the VPS, minutes before run 3 started. The bot is not

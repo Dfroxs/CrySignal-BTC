@@ -215,7 +215,7 @@ def test_compact_hold_spot():
     sig = make_signal("HOLD", "spot", score=3.5, buy_score=3.5, sell_score=1.0)
     out = _format_compact_signal_telegram(sig)
     assert "HOLD" in out
-    assert "Gap" in out
+    assert "BUY 3.50" in out and "bar 4.30" in out   # leading side vs the bar
     assert "_conflict" not in out
 
 def test_compact_hold_futures():
@@ -223,7 +223,7 @@ def test_compact_hold_futures():
     sig = make_signal("HOLD", "futures", score=3.8, buy_score=3.8, sell_score=2.0)
     out = _format_compact_signal_telegram(sig)
     assert "HOLD" in out
-    assert "Gap" in out
+    assert "BUY 3.80" in out and "bar 5.20" in out
 
 def test_compact_hold_gap_negative_no_crash():
     """Score exceeds threshold but forced HOLD by macro — gap is negative."""
@@ -269,25 +269,21 @@ def test_consolidated_both_hold():
     fut  = make_signal("HOLD", "futures", score=3.5, buy_score=3.5, sell_score=2.0)
     out  = _format_consolidated_telegram(spot, fut)
     assert "HOLD" in out
-    assert "gap" in out.lower()   # consolidated uses lowercase "gap"
+    assert "bar 4.30" in out and "bar 5.20" in out   # each mode vs its own bar
 
 def test_consolidated_spot_only():
     from notifier.telegram import _format_consolidated_telegram
     spot = make_signal("BUY", "spot", confidence="NORMAL")
     out  = _format_consolidated_telegram(spot, None)
     assert "SPOT 4H" in out
-    # Performance section always shows both mode labels — that's correct behavior
-    assert "TECHNICALS — SPOT 4H" in out
-    assert "TECHNICALS — FUTURES" not in out   # no futures technicals section
+    assert "FUTURES" not in out   # no futures line when there is no futures signal
 
 def test_consolidated_futures_only():
     from notifier.telegram import _format_consolidated_telegram
     fut = make_signal("SELL", "futures", confidence="STRONG")
     out = _format_consolidated_telegram(None, fut)
     assert "FUTURES SHORT 1H" in out
-    # Performance section always shows both mode labels — that's correct behavior
-    assert "TECHNICALS — FUTURES" in out
-    assert "TECHNICALS — SPOT" not in out   # no spot technicals section
+    assert "SPOT" not in out   # no spot line when there is no spot signal
 
 def test_consolidated_verdict_spot_bearish_spot_only():
     """Spot BUY-only gate — sell_score > buy_score on spot → BEARISH label in verdict."""
@@ -373,8 +369,9 @@ def test_compact_futures_short_with_entry():
     from notifier.telegram import _format_compact_signal_telegram
     sig = make_signal("SELL", "futures", confidence="STRONG")
     out = _format_compact_signal_telegram(sig)
-    assert "Stop SL" in out
-    assert "TP1 50%" in out
+    assert "SL" in out
+    assert "TP1" in out
+    assert "$96,200" in out, out   # SL rendered above the $95,000 entry
     # SL should be above entry for short
     sl_price = sig["stop_loss"]
     entry    = sig["entry_price"]
@@ -394,16 +391,17 @@ def test_consolidated_performance_section_no_crash():
     from notifier.telegram import _format_consolidated_telegram
     spot = make_signal("BUY",  "spot",    confidence="NORMAL")
     fut  = make_signal("SELL", "futures", confidence="STRONG")
-    # Should not raise even if DB has no records
+    # Should not raise even if DB has no records. Running P&L moved to the close
+    # notification (it only changes when a trade closes), so the hourly card omits it.
     out = _format_consolidated_telegram(spot, fut)
-    assert "PERFORMANCE" in out
+    assert "PERFORMANCE" not in out
 
 def test_consolidated_open_positions_section_no_crash():
     from notifier.telegram import _format_consolidated_telegram
     spot = make_signal("HOLD", "spot",    score=3.0, buy_score=3.0, sell_score=1.0)
     fut  = make_signal("HOLD", "futures", score=3.5, buy_score=3.5, sell_score=2.0)
     out  = _format_consolidated_telegram(spot, fut)
-    assert "OPEN POSITIONS" in out
+    assert "OPEN POSITIONS" not in out   # one line per open position, no section header
 
 
 # ── 7. engine.py TP2 calculation ──────────────────────────────────────────────
@@ -3573,6 +3571,223 @@ def test_tail_margin_sizes_to_the_longest_rule_not_baseline():
     assert _tail_margin(rules_mixed, "4h") == 100 + 2, _tail_margin(rules_mixed, "4h")
 
 
+# ── 35. Telegram messages are short enough to read on a phone ────────────────
+# The hourly card ran to ~3,200–3,500 characters: technicals for both modes, HTF,
+# headlines, performance and hypothetical sizing on every HOLD. A HOLD cycle is now
+# the price and one line per mode; detail appears only when a position can open.
+
+import contextlib as _ctx
+import re as _re
+
+
+@_ctx.contextmanager
+def _tg_db(open_positions=(), closed_pnl=None):
+    """Pin the two DB reads the formatters make, so a local database cannot leak
+    into a layout assertion."""
+    from trading import history as h
+    saved = h.get_open_positions, h.get_closed_pnl
+    h.get_open_positions = lambda *a, **k: list(open_positions)
+    if closed_pnl is not None:
+        h.get_closed_pnl = closed_pnl
+    try:
+        yield
+    finally:
+        h.get_open_positions, h.get_closed_pnl = saved
+
+
+def _assert_html_safe(out):
+    """Only the tags Telegram's HTML mode accepts, balanced; every & an entity."""
+    for tag in ("b", "i", "code"):
+        assert out.count(f"<{tag}>") == out.count(f"</{tag}>"), f"unbalanced <{tag}>: {out}"
+    bare = _re.sub(r"</?(b|i|code)>", "", out)
+    assert "<" not in bare and ">" not in bare, f"raw angle bracket: {bare}"
+    assert not _re.search(r"&(?!(amp|lt|gt|quot);)", bare), f"raw ampersand: {bare}"
+
+
+def _hold_s():
+    return make_signal("HOLD", "spot", score=3.0, buy_score=3.0, sell_score=1.0)
+
+
+def _hold_f():
+    return make_signal("HOLD", "futures", score=3.5, buy_score=3.5, sell_score=2.0)
+
+
+def test_tg_a_hold_cycle_is_three_lines():
+    from notifier.telegram import _format_consolidated_telegram
+    with _tg_db():
+        out = _format_consolidated_telegram(_hold_s(), _hold_f())
+    lines = [l for l in out.splitlines() if l.strip()]
+    assert len(lines) <= 3, out
+    assert len(out) <= 300, (len(out), out)
+    assert "$95,000" in out
+    assert "SPOT 4H" in out and "FUTURES 1H" in out
+    assert "BUY 3.00" in out and "bar 4.30" in out
+    assert "BUY 3.50" in out and "bar 5.20" in out
+    assert "━" not in out, "decorative separators are gone"
+    _assert_html_safe(out)
+
+
+def test_tg_a_signal_below_the_bar_carries_no_trade_setup():
+    """The hourly card used to show a WEAK BUY as `🟢 BUY` with `ENTER BUY` — the very
+    claim will_open() exists to stop. It must read as unopenable, with no SL/TP."""
+    from notifier.telegram import _format_consolidated_telegram
+    with _tg_db():
+        out = _format_consolidated_telegram(make_signal("BUY", "spot", confidence="WEAK"), _hold_f())
+    assert "below the bar" in out and "no position will open" in out, out
+    assert "🟢" not in out and "ENTER" not in out, out
+    assert "$93,800" not in out and "SL" not in out, "an unopenable signal shows no setup"
+    assert len(out) <= 350, (len(out), out)
+    _assert_html_safe(out)
+
+
+def test_tg_an_openable_buy_shows_its_setup():
+    from notifier.telegram import _format_consolidated_telegram
+    with _tg_db():
+        out = _format_consolidated_telegram(make_signal("BUY", "spot", confidence="NORMAL"), _hold_f())
+    assert "🟢" in out and "BUY" in out and "no position" not in out
+    for px in ("$95,000", "$93,800", "$98,000", "$101,000"):
+        assert px in out, (px, out)
+    assert "R/R" in out
+    assert "✓ Price above EMA 200" in out, "top reasons appear when it is actionable"
+    assert len(out) <= 750, (len(out), out)
+    _assert_html_safe(out)
+
+
+def test_tg_a_futures_sell_shows_leverage_and_liquidation():
+    from notifier.telegram import _format_consolidated_telegram
+    with _tg_db():
+        out = _format_consolidated_telegram(_hold_s(), make_signal("SELL", "futures", confidence="STRONG"))
+    assert "🔴" in out and "SELL" in out and "FUTURES SHORT 1H" in out
+    assert "$96,200" in out, "short SL sits above entry"
+    assert "Liq" in out and "Funding" in out, out
+    assert len(out) <= 800, (len(out), out)
+    _assert_html_safe(out)
+
+
+def test_tg_both_modes_firing_stays_under_a_phone_screen():
+    from notifier.telegram import _format_consolidated_telegram
+    with _tg_db():
+        out = _format_consolidated_telegram(make_signal("BUY", "spot", confidence="STRONG"),
+                                            make_signal("BUY", "futures"))
+    assert len(out) <= 1300, (len(out), out)
+    _assert_html_safe(out)
+
+
+def test_tg_dynamic_text_is_escaped():
+    from notifier.telegram import _format_consolidated_telegram, _format_compact_signal_telegram
+    sig = make_signal("BUY", "spot", confidence="NORMAL")
+    sig["reasons"] = ["✓ RSI < 30 & <b>rising</b>"]
+    sig["fear_greed_label"] = "Fear & <Greed>"
+    sig["regime"] = "<TREND>"
+    with _tg_db():
+        for out in (_format_consolidated_telegram(sig, _hold_f()), _format_compact_signal_telegram(sig)):
+            assert "RSI &lt; 30 &amp; &lt;b&gt;rising" in out, out
+            _assert_html_safe(out)
+
+
+def test_tg_every_case_is_html_safe():
+    from notifier.telegram import _format_consolidated_telegram, _format_compact_signal_telegram
+    sigs = [make_signal(t, m, confidence=c) for t in ("BUY", "SELL") for m in ("spot", "futures")
+            for c in ("WEAK", "NORMAL", "STRONG")] + [_hold_s(), _hold_f(),
+            make_signal("HOLD", "spot", score=4.0, buy_score=1.5, sell_score=4.0),
+            make_signal("HOLD", "futures", score=6.5, buy_score=6.5, sell_score=2.0),
+            make_signal("HOLD", "futures", score=2.0, buy_score=2.0, sell_score=2.0)]
+    with _tg_db():
+        for s in sigs:
+            _assert_html_safe(_format_compact_signal_telegram(s))
+            _assert_html_safe(_format_consolidated_telegram(s, _hold_f()))
+
+
+def test_tg_a_hold_says_why_when_it_is_not_just_short_of_the_bar():
+    from notifier.telegram import _format_compact_signal_telegram
+    with _tg_db():
+        bearish = _format_compact_signal_telegram(make_signal("HOLD", "spot", score=4.0, buy_score=1.5, sell_score=4.0))
+        held = _format_compact_signal_telegram(make_signal("HOLD", "futures", score=6.5, buy_score=6.5, sell_score=2.0))
+        flat = _format_compact_signal_telegram(make_signal("HOLD", "futures", score=2.0, buy_score=2.0, sell_score=2.0))
+    assert "BUY-only" in bearish, bearish
+    assert "news/macro" in held, held
+    assert "no direction" in flat, flat
+
+
+def test_tg_a_vetoed_hold_names_the_veto_not_news():
+    """Veto gates (no-chase, anti-FOMO, wick, momentum, counter-trend) turn a scored
+    BUY into HOLD and append a ⛔ reason. Calling that 'news/macro' misinforms."""
+    from notifier.telegram import _format_compact_signal_telegram
+    sig = make_signal("HOLD", "spot", score=5.0, buy_score=5.0, sell_score=1.0)
+    sig["_threshold"] = 3.8
+    sig["reasons"] = ["✓ MACD bullish crossover",
+                      "  ⛔ Short-term down: 5-SMA slope -1.24×ATR (need ≥ −0.5 for BUY)"]
+    with _tg_db():
+        out = _format_compact_signal_telegram(sig)
+    assert "vetoed: Short-term down: 5-SMA slope" in out, out
+    assert "news/macro" not in out and "⛔" not in out, out
+    assert len(out) <= 200, (len(out), out)
+    _assert_html_safe(out)
+
+    sig["reasons"] = ["⛔ Entry wick <b>& chase</b> " + "x" * 80]
+    with _tg_db():
+        out = _format_compact_signal_telegram(sig)
+    assert "vetoed: Entry wick &lt;b&gt;&amp; chase" in out, out
+    assert len(out) <= 200, (len(out), out)
+    _assert_html_safe(out)
+
+
+def test_tg_a_hold_above_the_bar_without_a_veto_still_says_news_macro():
+    from notifier.telegram import _format_compact_signal_telegram
+    sig = make_signal("HOLD", "futures", score=6.5, buy_score=6.5, sell_score=2.0)
+    with _tg_db():
+        out = _format_compact_signal_telegram(sig)
+    assert "held back (news/macro)" in out and "vetoed" not in out, out
+
+
+def test_tg_open_positions_are_one_line_each():
+    from notifier.telegram import _format_consolidated_telegram
+    pos = {"id": 42, "type": "BUY", "mode": "spot", "entry_price": 95000.0, "stop_loss": 93800.0,
+           "trailing_stop": 95000.0, "take_profit": 98000.0, "tp2": 101000.0, "partial_closed": 1,
+           "opened_at": "2026-10-09 08:01:00", "pyramid_entry": 0}
+    with _tg_db(open_positions=[pos]):
+        out = _format_consolidated_telegram(_hold_s(), _hold_f())
+    lines = [l for l in out.splitlines() if l.strip()]
+    assert len(lines) <= 4, out
+    assert "#42" in out and "$95,000" in out and "TP1 ✓" in out, out
+    _assert_html_safe(out)
+
+
+def test_tg_position_open_card_is_compact_and_complete():
+    from notifier.telegram import _format_open_notification
+    out = _format_open_notification(make_signal("BUY", "spot"), 42, "spot")
+    for want in ("SPOT", "BUY", "#42", "$95,000", "$93,800", "$98,000", "$101,000"):
+        assert want in out, (want, out)
+    assert len(out) <= 220, (len(out), out)
+    _assert_html_safe(out)
+    pyr = _format_open_notification(make_signal("BUY", "spot"), 43, "spot", pyramid_entry=2)
+    assert "Pyramid" in pyr and "#2" in pyr, pyr
+    fut = _format_open_notification(make_signal("SELL", "futures"), 7, "futures")
+    assert "FUTURES" in fut and "SELL" in fut and "$96,200" in fut, fut
+    _assert_html_safe(fut)
+
+
+def test_tg_position_close_names_mode_outcome_pnl_and_running_total():
+    from notifier.telegram import _format_close_notification
+    closed = [{"type": "BUY", "mode": "spot", "pnl": 2.41, "outcome": "TP2", "entry": 95000.0, "exit": 97290.0},
+              {"type": "SELL", "mode": "futures", "pnl": -1.27, "outcome": "SL", "entry": 95000.0, "exit": 96200.0}]
+    totals = {"spot": (3.5, 4, 0.875), "futures": (-1.27, 1, -1.27)}
+    with _tg_db(closed_pnl=lambda mode=None: totals[mode]):
+        out = _format_close_notification(closed)
+    assert "SPOT" in out and "SPO " not in out and "FUTURES" in out, out
+    for want in ("+2.41%", "-1.27%", "TP2", "stop loss", "$95,000", "$97,290", "$96,200"):
+        assert want in out, (want, out)
+    assert "+3.50%" in out and "4 trades" in out, "running total for the mode that closed"
+    assert len(out) <= 400, (len(out), out)
+    _assert_html_safe(out)
+
+    def boom(mode=None):
+        raise RuntimeError("db gone")
+    with _tg_db(closed_pnl=boom):
+        out = _format_close_notification(closed[:1])
+    assert "+2.41%" in out, "a DB failure drops the total, never the close"
+
+
 if __name__ == "__main__":
     print("\n══ Pipeline Dummy-Data Tests ══\n")
 
@@ -3842,6 +4057,21 @@ if __name__ == "__main__":
     run("run_bot calls it inside a guard",        test_run_bot_calls_the_shadow_agents_inside_a_guard)
     run("eval signs forward return by side",      test_shadow_eval_signs_the_forward_return_by_direction)
     run("eval verdict follows the prereg",        test_shadow_eval_verdict_follows_the_preregistration)
+
+    print("\n── 35. Telegram messages fit a phone ──")
+    run("HOLD cycle is three lines",              test_tg_a_hold_cycle_is_three_lines)
+    run("below the bar: no setup, no go marker",  test_tg_a_signal_below_the_bar_carries_no_trade_setup)
+    run("openable BUY shows its setup",           test_tg_an_openable_buy_shows_its_setup)
+    run("futures SELL: leverage + liquidation",   test_tg_a_futures_sell_shows_leverage_and_liquidation)
+    run("both firing stays short",                test_tg_both_modes_firing_stays_under_a_phone_screen)
+    run("dynamic text escaped",                   test_tg_dynamic_text_is_escaped)
+    run("every case HTML-safe",                   test_tg_every_case_is_html_safe)
+    run("HOLD says why (BUY-only/news/flat)",     test_tg_a_hold_says_why_when_it_is_not_just_short_of_the_bar)
+    run("vetoed HOLD names the ⛔ veto",           test_tg_a_vetoed_hold_names_the_veto_not_news)
+    run("above bar, no veto → news/macro",        test_tg_a_hold_above_the_bar_without_a_veto_still_says_news_macro)
+    run("open positions one line each",           test_tg_open_positions_are_one_line_each)
+    run("position open card compact + complete",  test_tg_position_open_card_is_compact_and_complete)
+    run("position close: mode, outcome, total",   test_tg_position_close_names_mode_outcome_pnl_and_running_total)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
