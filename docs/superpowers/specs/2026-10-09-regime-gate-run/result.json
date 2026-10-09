@@ -1,0 +1,199 @@
+{
+ "engine": "as deployed (316e0dc config)",
+ "symbols": [
+  "BTC",
+  "ETH",
+  "SOL",
+  "BNB",
+  "OKB",
+  "ICP",
+  "SUSHI",
+  "NEAR",
+  "UNI",
+  "DOGE"
+ ],
+ "windows": {
+  "primary": {
+   "regime_only": {
+    "n": 82,
+    "mean": -1.3673658536585365,
+    "ci90": [
+     -2.0643969512195124,
+     -0.6550993902439022
+    ]
+   },
+   "kept": {
+    "n": 474,
+    "mean": -0.3585548523206751,
+    "ci90": [
+     -0.7425305907172995,
+     0.04704282700421958
+    ]
+   },
+   "random_regime_mean": -0.37851585365853657,
+   "random_n": 1640,
+   "kept_minus_only": 1.0088110013378615,
+   "ci90": [
+    0.2012943346711948,
+    1.8498333796439232
+   ],
+   "H-RG1": "PASS",
+   "H-RG2": "FAIL",
+   "btc": {
+    "regime_only": {
+     "n": 23,
+     "mean": -0.7652173913043478,
+     "ci90": [
+      -1.799186956521739,
+      0.32578913043478264
+     ]
+    },
+    "kept": {
+     "n": 130,
+     "mean": -0.2870615384615384,
+     "ci90": [
+      -0.7107311538461539,
+      0.12129038461538465
+     ]
+    }
+   },
+   "per_symbol_regime_only_mean": {
+    "BTC": -0.765,
+    "ETH": -0.59,
+    "SOL": -2.227,
+    "BNB": null,
+    "OKB": -0.481,
+    "ICP": null,
+    "SUSHI": -9.97,
+    "NEAR": 0.931,
+    "UNI": -1.489,
+    "DOGE": -3.851
+   }
+  },
+  "confirmation": {
+   "regime_only": {
+    "n": 4,
+    "mean": 0.015000000000000124,
+    "ci90": [
+     -4.25475,
+     3.69825
+    ]
+   },
+   "kept": {
+    "n": 51,
+    "mean": -0.22172549019607843,
+    "ci90": [
+     -1.2198843137254902,
+     0.8046833333333339
+    ]
+   },
+   "random_regime_mean": -2.0569499999999996,
+   "random_n": 80,
+   "kept_minus_only": null,
+   "ci90": null,
+   "H-RG1": "INCONCLUSIVE",
+   "H-RG2": "INCONCLUSIVE",
+   "btc": {
+    "regime_only": {
+     "n": 0,
+     "mean": null,
+     "ci90": null
+    },
+    "kept": {
+     "n": 10,
+     "mean": -0.8976000000000001,
+     "ci90": [
+      -1.5853799999999998,
+      -0.18630999999999967
+     ]
+    }
+   },
+   "per_symbol_regime_only_mean": {
+    "BTC": null,
+    "ETH": null,
+    "SOL": 3.661,
+    "BNB": null,
+    "OKB": 3.81,
+    "ICP": null,
+    "SUSHI": null,
+    "NEAR": null,
+    "UNI": null,
+    "DOGE": -3.705
+   }
+  }
+ },
+ "gate_combos": {
+  "BTC": {
+   "regime_counter+trend_confluence": 61,
+   "psy_sl_first+regime_counter+trend_confluence": 7,
+   "regime_counter": 47,
+   "fakeout_first+regime_counter+trend_confluence": 16,
+   "breakout_chase+regime_counter": 10,
+   "breakout_chase+regime_counter+trend_confluence": 3,
+   "psy_sl_first+regime_counter": 1,
+   "fakeout_first+psy_sl_first+regime_counter+trend_confluence": 1,
+   "breakout_chase+psy_sl_first+regime_counter": 1
+  },
+  "ETH": {
+   "breakout_chase+regime_counter": 9,
+   "regime_counter": 74,
+   "regime_counter+trend_confluence": 52,
+   "breakout_chase+regime_counter+trend_confluence": 8,
+   "fakeout_first+regime_counter+trend_confluence": 18
+  },
+  "SOL": {
+   "fakeout_first+regime_counter+trend_confluence": 4,
+   "regime_counter": 12,
+   "breakout_chase+regime_counter": 2,
+   "regime_counter+trend_confluence": 11,
+   "breakout_chase+regime_counter+trend_confluence": 4
+  },
+  "BNB": {},
+  "OKB": {
+   "regime_counter": 48,
+   "regime_counter+trend_confluence": 77,
+   "fakeout_first+regime_counter+trend_confluence": 20,
+   "breakout_chase+regime_counter+trend_confluence": 6,
+   "breakout_chase+regime_counter": 3
+  },
+  "ICP": {},
+  "SUSHI": {
+   "breakout_chase+regime_counter+trend_confluence": 1,
+   "breakout_chase+regime_counter": 1,
+   "regime_counter": 2
+  },
+  "NEAR": {
+   "regime_counter": 3,
+   "breakout_chase+regime_counter": 1,
+   "breakout_chase+regime_counter+trend_confluence": 1,
+   "regime_counter+trend_confluence": 2
+  },
+  "UNI": {
+   "regime_counter": 3,
+   "breakout_chase+regime_counter+trend_confluence": 2,
+   "breakout_chase+regime_counter": 1,
+   "regime_counter+trend_confluence": 11,
+   "fakeout_first+regime_counter+trend_confluence": 4
+  },
+  "DOGE": {
+   "regime_counter": 34,
+   "fakeout_first+regime_counter+trend_confluence": 18,
+   "regime_counter+trend_confluence": 48,
+   "breakout_chase+regime_counter": 6,
+   "breakout_chase+regime_counter+trend_confluence": 6
+  }
+ },
+ "buys_normal_plus": {
+  "BTC": 716,
+  "ETH": 597,
+  "SOL": 265,
+  "BNB": 0,
+  "OKB": 732,
+  "ICP": 0,
+  "SUSHI": 7,
+  "NEAR": 47,
+  "UNI": 121,
+  "DOGE": 352
+ },
+ "overall": "INCONCLUSIVE"
+}

@@ -3621,6 +3621,25 @@ def test_tg_spot_card_levels_are_untouched():
     msg = _format_consolidated_telegram(sig, None)
     assert f"${sig['stop_loss']:,.0f}" in msg, msg
 
+def test_tg_card_says_blocked_when_a_phase3_gate_refused_the_signal():
+    """2026-10-09 13:01: a spot BUY NORMAL cleared the bar and the card showed entry, SL,
+    TP and size, but regime_bearish blocked it and nothing opened. run_bot._block()
+    now annotates the signal, and the card names the gate instead of a trade setup."""
+    import inspect
+    import run_bot
+    from notifier.telegram import _format_consolidated_telegram
+    sig = make_signal("BUY", "spot")
+    sig["confidence"] = "NORMAL"
+    run_bot._block([], "spot", sig, "regime_bearish", "Spot BUY blocked — bearish trend regime")
+    assert sig["_phase3_block"][0] == "regime_bearish"
+    msg = _format_consolidated_telegram(sig, None)
+    assert "blocked by <b>regime_bearish</b>" in msg and "no position" in msg, msg
+    assert f"${sig['stop_loss']:,.0f}" not in msg and "Size" not in msg, msg
+    assert msg.startswith("⏸"), "a blocked signal must not ring the 🔔 header"
+    ok = make_signal("BUY", "spot"); ok["confidence"] = "NORMAL"
+    assert f"${ok['stop_loss']:,.0f}" in _format_consolidated_telegram(ok, None)
+
+
 def test_backtest_htf_matches_what_live_computes_from_250_bars():
     """Live fetches 250 HTF bars per cycle and computes EMA200 over those alone (not
     converged: the seed still weighs ~8%). The backtest computed one series over the
@@ -5308,6 +5327,7 @@ if __name__ == "__main__":
     print("\n── 37. Futures card shows opened levels ──")
     run("futures card = levels it opens with",    test_tg_futures_card_shows_the_levels_the_position_opens_with)
     run("spot card levels untouched",             test_tg_spot_card_levels_are_untouched)
+    run("card says blocked after a Phase 3 gate",  test_tg_card_says_blocked_when_a_phase3_gate_refused_the_signal)
 
     print("\n── 38. Backtest HTF = live's 250-bar view ──")
     run("backtest HTF = live 250-bar EMA200",     test_backtest_htf_matches_what_live_computes_from_250_bars)
