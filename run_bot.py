@@ -914,10 +914,10 @@ def run_cycle():
         logger.warning("threshold state update failed: %s", e)
 
     # Shadow agents — Claude and DeepSeek judge each fired signal; logged, never traded
-    # (agents/shadow.py). Bounded by its own timeout and unable to raise into the cycle.
+    # (agents/shadow.py). Runs in a background thread: the cycle never waits for them.
     try:
         from agents.shadow import run_shadow
-        run_shadow(spot_signal, futures_signal)
+        run_shadow(spot_signal, futures_signal, background=True)
     except Exception as e:  # noqa: BLE001
         logger.warning("shadow agents skipped: %s", e)
 

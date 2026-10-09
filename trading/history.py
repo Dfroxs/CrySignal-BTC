@@ -574,9 +574,10 @@ _SHADOW_COLS = ("timestamp", "mode", "signal_type", "strength", "threshold", "co
                 "output_tokens")
 
 
-def log_shadow_opinion(rec):
-    """Store one agents/shadow.py record. Shadow opinions never feed back into trading."""
-    c = _conn()
+def log_shadow_opinion(rec, conn=None):
+    """Store one agents/shadow.py record. Shadow opinions never feed back into trading.
+    `conn` lets the background shadow thread write through its own connection."""
+    c = conn if conn is not None else _conn()
     c.execute(f"INSERT INTO shadow_opinions ({', '.join(_SHADOW_COLS)}) "
               f"VALUES ({', '.join('?' * len(_SHADOW_COLS))})",
               tuple(rec.get(k) for k in _SHADOW_COLS))

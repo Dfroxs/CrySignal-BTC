@@ -4,6 +4,28 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — fix: shadow agents run in a background thread
+
+A live retest in DeepSeek's peak hours (06:08 UTC, Friday) timed out at the new 90 s
+cap. `deepseek-v4-pro` thinks for longer than that when busy. Raising the cap while the
+cycle waited would have delayed every cycle by minutes, so the cycle no longer waits:
+`run_bot` calls `run_shadow(..., background=True)`, which deep-copies the signals,
+starts a non-daemon thread and returns immediately. The thread writes through its own
+SQLite connection (`log_shadow_opinion(rec, conn=...)`) after making sure the schema
+exists. Caps: 600 s per opinion, 620 s HTTP. Suite 218 → 220.
+
+---
+
+## 2026-10-09 — fix: give a thinking DeepSeek enough tokens to answer
+
+A live test on a spot signal: `deepseek-v4-pro` thought for 68 s, used its whole
+4,000-token `max_tokens` on reasoning, and returned an empty answer. Thinking tokens
+count against the limit. Shadow now allows 16,000 (only tokens used are billed), and
+`agents/llm.py` reports a length-truncated empty reply as "hit max_tokens while
+thinking", so the ops report shows the cause instead of "empty reply". Suite 216 → 218.
+
+---
+
 ## 2026-10-09 — fix: shadow agents judge the trade the bot will actually run
 
 For **run 3**, on `develop`. Raised by the owner: "untung 24 jam itu untuk spot atau

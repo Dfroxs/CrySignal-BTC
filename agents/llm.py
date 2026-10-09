@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 DEFAULT_MODELS = {"anthropic": "claude-opus-5-5", "deepseek": "deepseek-v4-pro"}
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-TIMEOUT_S = 100.0          # must outlast agents/shadow.TIMEOUT_S, so the shadow decides
+TIMEOUT_S = 620.0          # must outlast agents/shadow.TIMEOUT_S, so the shadow decides
 
 
 class LLMError(RuntimeError):
@@ -85,8 +85,11 @@ def _ask_deepseek(prompt, system, model, max_tokens, client):
                                               max_tokens=max_tokens)
     except Exception as exc:
         raise LLMError(f"deepseek: {exc}") from exc
-    text = (resp.choices[0].message.content or "").strip() if resp.choices else ""
+    choice = resp.choices[0] if resp.choices else None
+    text = (choice.message.content or "").strip() if choice else ""
     if not text:
+        if choice is not None and getattr(choice, "finish_reason", None) == "length":
+            raise LLMError(f"deepseek: hit max_tokens ({max_tokens}) while thinking, no answer")
         raise LLMError("deepseek: empty reply")
     u = getattr(resp, "usage", None)
     return LLMReply(text, "deepseek", resp.model, getattr(u, "prompt_tokens", 0),

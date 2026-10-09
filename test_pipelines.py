@@ -3326,7 +3326,9 @@ def test_shadow_waits_long_enough_for_a_thinking_model():
     prereg discards a provider above 20% errors. The HTTP timeout must outlast the
     shadow cap, or the SDK, not the shadow, decides when a call failed."""
     from agents import llm, shadow
-    assert shadow.TIMEOUT_S >= 90, shadow.TIMEOUT_S
+    # 90 s still timed out in DeepSeek's peak hours (06:08 UTC Friday). Shadow now runs
+    # in the background, so a long cap costs the cycle nothing.
+    assert shadow.TIMEOUT_S >= 600, shadow.TIMEOUT_S
     assert llm.TIMEOUT_S > shadow.TIMEOUT_S, (llm.TIMEOUT_S, shadow.TIMEOUT_S)
 
 def test_shadow_context_states_the_exit_the_bot_will_actually_use():
@@ -3401,6 +3403,63 @@ def test_shadow_eval_scores_the_trade_the_bot_would_have_run():
     out = trade_outcomes(ops, frames, sim)
     assert seen == [(4, "SELL", 102.0, "1h", "futures")], seen
     assert out[0] == 1.5 and out[1] != out[1], "no frame for spot → NaN"
+
+def test_shadow_gives_a_thinking_model_room_to_answer():
+    """deepseek-v4-pro spent its whole 4,000-token budget thinking on a spot signal and
+    returned an empty answer (2026-10-09). Thinking tokens count against max_tokens."""
+    from types import SimpleNamespace as NS
+    from agents.shadow import opinions_for
+    seen = []
+    def ask(prompt, system=None, provider=None, max_tokens=None, **k):
+        seen.append(max_tokens)
+        return NS(text='{"verdict": "AGREE", "confidence": 50, "reason": "r"}', provider=provider,
+                  model="m", input_tokens=1, output_tokens=1)
+    opinions_for(_shadow_signal(), providers=("deepseek",), ask_fn=ask)
+    assert seen and seen[0] >= 16000, seen
+
+def test_llm_deepseek_names_a_reply_cut_off_by_the_token_limit():
+    from types import SimpleNamespace as NS
+    from agents.llm import LLMError, ask
+    class Cut:
+        def __init__(self):
+            self.chat = NS(completions=NS(create=lambda **kw: NS(
+                model=kw["model"], usage=NS(prompt_tokens=900, completion_tokens=4000),
+                choices=[NS(finish_reason="length", message=NS(content=""))])))
+    try:
+        ask("x", provider="deepseek", client=Cut())
+    except LLMError as e:
+        assert "max_tokens" in str(e), e
+        return
+    raise AssertionError("an empty, length-truncated reply was accepted")
+
+def test_shadow_in_background_does_not_hold_up_the_cycle():
+    """The cycle must not wait for a slow provider: run_shadow(background=True) returns
+    at once, and the opinions land later through the thread's own DB connection."""
+    import time
+    from types import SimpleNamespace as NS
+    from agents import shadow
+    h, saved, path = _temp_history_db()
+    try:
+        def slow(prompt, system=None, provider=None, **k):
+            time.sleep(1.0)
+            return NS(text='{"verdict": "AGREE", "confidence": 50, "reason": "r"}',
+                      provider=provider, model="m", input_tokens=1, output_tokens=1)
+        t0 = time.time()
+        n = shadow.run_shadow(None, _shadow_signal(), providers=("anthropic", "deepseek"),
+                              ask_fn=slow, background=True)
+        assert n == 1 and time.time() - t0 < 0.5, "the cycle waited for the agents"
+        for t in list(shadow._threads):
+            t.join(10)
+        rows = h._conn().execute("SELECT provider, verdict FROM shadow_opinions "
+                                 "ORDER BY provider").fetchall()
+        assert [tuple(r) for r in rows] == [("anthropic", "AGREE"), ("deepseek", "AGREE")], rows
+    finally:
+        _restore_history_db(h, saved, path)
+
+def test_run_bot_runs_the_shadow_agents_in_the_background():
+    import inspect, run_bot
+    src = inspect.getsource(run_bot.run_cycle)
+    assert "run_shadow(spot_signal, futures_signal, background=True)" in src
 
 def test_synth_entries_respects_stride_and_warmup():
     from scripts.exit_ic import synth_entries
@@ -4143,6 +4202,10 @@ if __name__ == "__main__":
     run("record stores the judged levels",        test_shadow_record_stores_the_levels_it_was_judged_on)
     run("old shadow table gains level columns",   test_shadow_table_gains_level_columns_on_an_old_database)
     run("eval scores the simulated trade",        test_shadow_eval_scores_the_trade_the_bot_would_have_run)
+    run("thinking model gets room to answer",     test_shadow_gives_a_thinking_model_room_to_answer)
+    run("deepseek names a token-limit cutoff",    test_llm_deepseek_names_a_reply_cut_off_by_the_token_limit)
+    run("background shadow doesn't hold cycle",   test_shadow_in_background_does_not_hold_up_the_cycle)
+    run("run_bot runs shadow in background",      test_run_bot_runs_the_shadow_agents_in_the_background)
     run("eval signs forward return by side",      test_shadow_eval_signs_the_forward_return_by_direction)
     run("eval verdict follows the prereg",        test_shadow_eval_verdict_follows_the_preregistration)
 

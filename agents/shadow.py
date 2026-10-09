@@ -19,21 +19,25 @@ Configured by `SHADOW_PROVIDERS` (default "anthropic,deepseek"; empty disables).
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import math
 import os
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
 
-# deepseek-v4-pro thinks by default (~32 s, ~2,300 output tokens per opinion, measured
-# 2026-10-09). 45 s would turn its slow hours into timeouts and trip the prereg's 20%
-# error discard. Shadow runs after Phase 3, so the cost is a later Telegram message.
-TIMEOUT_S = 90.0
+# deepseek-v4-pro thinks by default: 32 s off-peak, and more than 90 s in its peak hours
+# (06:08 UTC Friday, 2026-10-09). Shadow runs in a background thread (run_bot passes
+# background=True), so a long cap costs the cycle nothing and stops slow hours turning
+# into timeouts that would trip the prereg's 20% error discard.
+TIMEOUT_S = 600.0
+_threads = []             # background shadow threads, for tests and a clean shutdown
 _LABELS = {"BULLISH", "BEARISH", "NEUTRAL", "BUY", "SELL", "HOLD", "WEAK", "NORMAL",
            "STRONG", "TRENDING", "RANGING", "VOLATILE", "futures", "spot"}
 
@@ -155,7 +159,9 @@ def _base_record(signal, provider):
 def _one(signal, provider, prompt, ask_fn):
     rec, t0 = _base_record(signal, provider), time.time()
     try:
-        reply = ask_fn(prompt, system=SYSTEM, provider=provider, max_tokens=4000)
+        # Thinking tokens count against max_tokens: deepseek-v4-pro spent a 4,000 budget
+        # thinking and returned nothing (2026-10-09). Only tokens used are billed.
+        reply = ask_fn(prompt, system=SYSTEM, provider=provider, max_tokens=16000)
         rec.update(model=reply.model, input_tokens=reply.input_tokens,
                    output_tokens=reply.output_tokens)
         o = parse_opinion(reply.text)
@@ -188,25 +194,45 @@ def opinions_for(signal, providers=None, ask_fn=None, timeout=TIMEOUT_S):
     return out
 
 
-def run_shadow(spot_signal, futures_signal, providers=None, ask_fn=None, log_fn=None):
+def run_shadow(spot_signal, futures_signal, providers=None, ask_fn=None, log_fn=None,
+               background=False):
     """Entry point for run_bot. Returns how many signals were put to the agents.
 
     Skips HOLD and cached spot replays (the 4H verdict repeated hourly, already judged
-    when it was fresh).
+    when it was fresh). With `background=True` the work runs in its own non-daemon
+    thread and this returns at once. The signals are deep-copied first, so the cycle may
+    go on using its own, and the thread writes through its own SQLite connection rather
+    than sharing the bot's.
     """
-    if log_fn is None:
-        from trading.history import log_shadow_opinion as log_fn
     providers = providers if providers is not None else _providers()
-    if not providers:
+    sigs = [copy.deepcopy(s) for s in (spot_signal, futures_signal)
+            if s and s.get("type") not in (None, "HOLD") and not s.get("_cached")]
+    if not providers or not sigs:
         return 0
-    n = 0
-    for sig in (spot_signal, futures_signal):
-        if not sig or sig.get("type") in (None, "HOLD") or sig.get("_cached"):
-            continue
-        n += 1
-        for rec in opinions_for(sig, providers=providers, ask_fn=ask_fn):
-            try:
-                log_fn(rec)
-            except Exception as exc:
-                logger.warning("shadow opinion not stored: %s", exc)
-    return n
+
+    def work():
+        conn, log = None, log_fn
+        if log is None:
+            import sqlite3
+            from trading import history
+            history._conn()           # make sure the schema (and migrations) exist first
+            conn = sqlite3.connect(history.SIGNAL_HISTORY_DB, timeout=30)
+            log = lambda rec: history.log_shadow_opinion(rec, conn=conn)
+        try:
+            for sig in sigs:
+                for rec in opinions_for(sig, providers=providers, ask_fn=ask_fn):
+                    try:
+                        log(rec)
+                    except Exception as exc:
+                        logger.warning("shadow opinion not stored: %s", exc)
+        finally:
+            if conn is not None:
+                conn.close()
+
+    if background:
+        t = threading.Thread(target=work, name="shadow-agents", daemon=False)
+        t.start()
+        _threads[:] = [x for x in _threads if x.is_alive()] + [t]
+    else:
+        work()
+    return len(sigs)
