@@ -4,6 +4,43 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — feat: Q&A bot gets project knowledge, chat memory and engine reasons; Sonnet 5.5
+
+The owner reported that the Q&A bot did not understand context. It had none: a 12-line
+system prompt, a facts snapshot with every engine reason line dropped except the ⛔ veto,
+no memory of the previous question, and no view of a message the owner replied to.
+Follow-ups like "kenapa?" arrived with no referent, and "why HOLD?" could only be answered
+with `strength < threshold`.
+
+### Added
+- **`agents/qa_knowledge.md`**: how the bot works, in Indonesian. Covers the pipeline,
+  threshold and confidence (including the 1.0–1.2× dead zone), what every gate name
+  means, exits, what STEP 1 found, the run-3 lock and how to read each FAKTA field.
+  It is appended to the system prompt, which stays fixed text and is never built from
+  input.
+- **Engine reason lines** for the newest 3 cycles per mode (16 lines, 160 chars each),
+  plus `buy`, `sell`, `price` and `gap` (threshold − strength) on all 24 recent cycles.
+  News/RSS headlines never reach `reasons`. Contributions, variants and verdicts stay out
+  until 2026-11-08, and the tripwire is unchanged.
+- **Chat memory**: the last 6 exchanges within 60 minutes (`data/qa_history.json`,
+  gitignored) are quoted as RIWAYAT.
+- **Reply context**: when the owner replies to a bot message, its text is quoted as
+  PESAN YANG DIBALAS. Quoted data has `<<<`/`>>>` neutralised so it cannot close its own
+  quote.
+
+### Changed
+- `QA_LLM_MODEL` default: `claude-haiku-4-5` → **`claude-sonnet-5-5`** (owner, 2026-10-09).
+  It goes through the existing non-Haiku path (effort low, server-side fallback). Its
+  price ($2/$10) is added to `PRICES_USD_PER_MTOK`. The shadow agents' model is untouched.
+- The answer limit was relaxed from 150 words to "usually under 200, longer when asked".
+- Live check on a copy of the VPS database with a follow-up question: Sonnet named the
+  0.2-point gap, the reason lines on each side, and the `confidence_first` /
+  `fakeout_first` blocks, and used the previous exchange. 11.4k input tokens, about
+  $0.03 per question.
+- Suite 267 → 269.
+
+---
+
 ## 2026-10-09 — fix: shadow prompt crashed on real (numpy) signals; outages sent as null
 
 ### Fixed

@@ -233,6 +233,7 @@ data/alarm_state.json
 data/llm_usage.jsonl
 data/qa_offset.json
 data/qa_usage.json
+data/qa_history.json
 data/*.log
 
 # Harness-managed worktrees. Never tracked — a subagent running `git add -A`
