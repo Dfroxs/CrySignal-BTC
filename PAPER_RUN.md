@@ -15,6 +15,14 @@ the managed trade per mode and run in a background thread. **H-S counts only sha
 opinions with `timestamp >= 2026-10-09T06:16:00Z`** (prereg amendment). None existed
 before it.
 
+**Restart 2026-10-09 07:15 UTC at `10b9628`** (agents only; trading path diff empty):
+exit shadow (`shadow_exit_opinions`, scored by H-X), richer ops report with LLM cost,
+**hourly alarm** (cron `10 * * * *`, `agents/alarm.py`, no LLM, state in
+`data/alarm_state.json`), and the **owner Q&A bot**: user service `spotsignal-qa`
+(`systemctl --user status spotsignal-qa`, `journalctl --user -u spotsignal-qa`), which
+answers only the owner's chat, has a read-only DB, and allows 30 questions a day.
+**H-X counts exit opinions with `timestamp >= 2026-10-09T07:16:00Z`.**
+
 ---
 
 ## New session? Do this first
