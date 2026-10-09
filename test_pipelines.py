@@ -3771,6 +3771,46 @@ def test_run_bot_consults_the_disabled_list_for_every_futures_gate():
     finally:
         FUTURES_CONFIG["entry"]["disabled_gates"] = saved
 
+def test_derivs_archive_pages_cover_the_span_without_overlap():
+    import scripts.archive_binance_derivs as ad
+    H = ad.HOUR_MS
+    w = ad.windows(0, 1200 * H)
+    assert w[0][0] == 0 and w[-1][1] == 1200 * H
+    assert all(e - s <= ad.PAGE * H for s, e in w), w
+    assert all(b[0] == a[1] + 1 for a, b in zip(w, w[1:])), "gap or overlap between pages"
+    assert ad.LOOKBACK_MS < 30 * 24 * H, "Binance rejects a startTime older than 30 days"
+
+def test_derivs_archive_never_rewrites_a_row_and_resumes_after_the_newest():
+    import tempfile
+    from pathlib import Path
+    import scripts.archive_binance_derivs as ad
+    H = ad.HOUR_MS
+    calls = []
+
+    class _S:
+        def get(self, url, params, timeout, headers):
+            calls.append(params)
+            class R:
+                status_code = 200
+                def json(_):
+                    return [{"timestamp": t, "longShortRatio": "2.0"}
+                            for t in (5 * H, 6 * H) if params["startTime"] <= t <= params["endTime"]]
+            return R()
+
+    with tempfile.TemporaryDirectory() as d:
+        out = Path(d)
+        path = out / "BTCUSDT_ls_global.csv"
+        path.write_text(f"timestamp,longShortRatio\n{5 * H},1.5\n")
+        ad.PAUSE_S, saved = 0, ad.PAUSE_S
+        try:
+            msg = ad.archive(_S(), "BTCUSDT", "ls_global", "x", out, 7 * H)
+        finally:
+            ad.PAUSE_S = saved
+        _, rows = ad.read_existing(path)
+        assert rows[5 * H]["longShortRatio"] == "1.5", "an archived row was overwritten"
+        assert rows[6 * H]["longShortRatio"] == "2.0" and "+1 rows" in msg, msg
+        assert calls[0]["startTime"] == 5 * H + 1, calls[0]
+
 def test_llm_haiku_request_omits_effort_and_fallbacks():
     """Haiku 4.5 rejects `effort` and has no server-side fallback; Opus 5.5 keeps both."""
     from agents.llm import ask
@@ -5339,6 +5379,10 @@ if __name__ == "__main__":
     run("each gate judged on only-blocked",       test_gate_ic_judges_each_gate_on_the_signals_only_it_blocked)
     run("futures gates disable by config (bt)",   test_futures_gates_can_be_disabled_by_config_in_backtest)
     run("run_bot checks disabled list per gate",  test_run_bot_consults_the_disabled_list_for_every_futures_gate)
+
+    print("\n── 40. archive_binance_derivs.py — keep the 30-day stats ──")
+    run("derivs pages cover span, no overlap",    test_derivs_archive_pages_cover_the_span_without_overlap)
+    run("derivs never rewrites, resumes after",   test_derivs_archive_never_rewrites_a_row_and_resumes_after_the_newest)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

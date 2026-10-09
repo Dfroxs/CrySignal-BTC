@@ -4,6 +4,42 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-10 — feat: archive Binance's 30-day derivatives stats; pre-register H-D
+
+Binance serves L/S ratios, open-interest history and taker ratios for 30 days only, so
+the one untested lead (BTC global L/S, IC +0.15/+0.26 in the exploratory scan) could
+never be backtested.
+
+- `scripts/archive_binance_derivs.py` appends the hourly `ls_global`, `ls_top_account`,
+  `ls_top_position`, `oi` and `taker` stats for BTC, ETH, SOL, BNB, XRP and DOGE to
+  `data/derivs/` (gitignored). It resumes after the newest row, never rewrites one, and its
+  first run backfills 29 days. It runs daily from cron on the VPS (03:40 UTC) and touches
+  nothing the bot reads, so run 3 is not affected.
+- `docs/superpowers/specs/2026-10-10-derivs-archive-prereg.md` (H-D) tests L/S momentum
+  across the five alts, with two screened fields (top-trader position L/S, OI 24h change).
+  BTC is scored only from run 3's start, because earlier BTC rows are in-design.
+  Scoring is on or after 2026-11-08.
+- Two tests (pages without gaps or overlap; never rewrites, resumes after the newest).
+
+---
+
+## 2026-10-10 — research: H-LO — limit-order futures entries INCONCLUSIVE; market entries stay
+
+Pre-registered (`cec377f`). The instrument `scripts/limit_ic.py` was committed (`df2f9e2`)
+before the scored run. BTC perp 1h, engine as deployed. Each market entry is paired with a
+post-only limit at the signal price, resting for one bar.
+
+- **Primary 2021–2024:** n=352, fill 96%, d̄ **+0.014pp [−0.041, +0.059]**,
+  INCONCLUSIVE. The 13 missed entries were runaway winners (+1.44pp on market), which
+  ate most of the 0.07pp saving.
+- **Confirmation:** +0.089pp [+0.070, +0.117], PASS, but on only 2 misses.
+- **Overall INCONCLUSIVE, so market entries stay.** The best case saves less than the
+  futures per-trade loss; costs are not what makes futures lose.
+- Results: `docs/superpowers/specs/2026-10-10-limit-entry-results.md`. Run-4 backlog
+  updated.
+
+---
+
 ## 2026-10-09 — research: H-RG — the spot regime gate selects (primary PASS); it stays
 
 Pre-registered (`e18840f`). The instrument `scripts/regime_ic.py` was committed
