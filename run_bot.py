@@ -921,6 +921,15 @@ def run_cycle():
     except Exception as e:  # noqa: BLE001
         logger.warning("shadow agents skipped: %s", e)
 
+    # Exit shadow — the same agents judge each OPEN position: CLOSE now or HOLD. Logged,
+    # never acted on (agents/exit_shadow.py). Background thread, like the entry shadow.
+    try:
+        from agents.exit_shadow import run_exit_shadow
+        _px = (futures_signal or {}).get("entry_price") or (spot_signal or {}).get("entry_price")
+        run_exit_shadow(get_open_positions(), _px, spot_signal, futures_signal, background=True)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("exit shadow skipped: %s", e)
+
     # Phase 4 — notifications (defensive: a Telegram hiccup should never
     # crash the cycle loop. The send helpers already catch HTTP errors, but
     # a malformed signal could still raise during formatting.)

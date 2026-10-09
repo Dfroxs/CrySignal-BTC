@@ -4,6 +4,28 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — feat: exit shadow — the agents judge open positions, CLOSE or HOLD
+
+For **run 3**, on `develop`. Never acted on.
+
+### Added
+- **`agents/exit_shadow.py`**: once per full cycle, for each open position, Claude and
+  DeepSeek answer CLOSE (now) or HOLD (let the bot's exits run), from numbers only. The
+  inputs are the position as the bot holds it (P&L if closed now by the bot's
+  `_calc_pnl`, hours held and left before the 72h cap, the trailing stop and targets
+  from the current price), the market now, and the mode's exit rules. It runs in a
+  background thread like the entry shadow and reuses `agents/shadow.py` helpers without
+  editing them, because that module is frozen for H-S. Stored in the new
+  `shadow_exit_opinions` table.
+- `run_bot.run_cycle` calls it after the entry shadow, inside its own guard.
+- **`scripts/exit_shadow_eval.py`** scores the new prereg addendum **H-X**. Each opinion
+  is valued as close-now P&L against the position's final P&L, signed by the verdict,
+  with a cluster bootstrap over positions and a guard of ≥ 8 positions and ≥ 30 opinions.
+- Live test on the Mac (a SELL 1.2% in profit after 10h): Claude said CLOSE (64),
+  DeepSeek HOLD (70). Disagreements like this are what H-X will score. Suite 220 → 225.
+
+---
+
 ## 2026-10-09 — fix: shadow agents run in a background thread
 
 A live retest in DeepSeek's peak hours (06:08 UTC, Friday) timed out at the new 90 s

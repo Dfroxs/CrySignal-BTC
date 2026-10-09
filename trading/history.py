@@ -136,6 +136,30 @@ def _init_tables():
             signal_id    INTEGER REFERENCES signals(id)
         );
 
+        -- Exit shadow: CLOSE/HOLD opinions on open positions (agents/exit_shadow.py).
+        -- Never acted on.
+        CREATE TABLE IF NOT EXISTS shadow_exit_opinions (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp          TEXT    NOT NULL,
+            position_id        INTEGER REFERENCES paper_positions(id),
+            mode               TEXT,
+            side               TEXT,
+            entry_price        REAL,
+            price              REAL,
+            pnl_if_closed_pct  REAL,
+            hours_held         REAL,
+            provider           TEXT    NOT NULL,
+            model              TEXT,
+            verdict            TEXT,
+            opinion_confidence INTEGER,
+            reason             TEXT,
+            error              TEXT,
+            latency_ms         INTEGER,
+            input_tokens       INTEGER,
+            output_tokens      INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_exit_shadow_pos ON shadow_exit_opinions(position_id);
+
         -- Shadow LLM opinions on fired signals (agents/shadow.py). Never traded.
         CREATE TABLE IF NOT EXISTS shadow_opinions (
             id                 INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -581,6 +605,21 @@ def log_shadow_opinion(rec, conn=None):
     c.execute(f"INSERT INTO shadow_opinions ({', '.join(_SHADOW_COLS)}) "
               f"VALUES ({', '.join('?' * len(_SHADOW_COLS))})",
               tuple(rec.get(k) for k in _SHADOW_COLS))
+    c.commit()
+
+
+_EXIT_COLS = ("timestamp", "position_id", "mode", "side", "entry_price", "price",
+              "pnl_if_closed_pct", "hours_held", "provider", "model", "verdict",
+              "opinion_confidence", "reason", "error", "latency_ms", "input_tokens",
+              "output_tokens")
+
+
+def log_exit_opinion(rec, conn=None):
+    """Store one agents/exit_shadow.py record. Exit opinions never close a position."""
+    c = conn if conn is not None else _conn()
+    c.execute(f"INSERT INTO shadow_exit_opinions ({', '.join(_EXIT_COLS)}) "
+              f"VALUES ({', '.join('?' * len(_EXIT_COLS))})",
+              tuple(rec.get(k) for k in _EXIT_COLS))
     c.commit()
 
 

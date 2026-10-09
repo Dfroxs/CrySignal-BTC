@@ -3461,6 +3461,93 @@ def test_run_bot_runs_the_shadow_agents_in_the_background():
     src = inspect.getsource(run_bot.run_cycle)
     assert "run_shadow(spot_signal, futures_signal, background=True)" in src
 
+def _open_position(mode="futures", side="SELL", hours=10, partial=0):
+    from datetime import UTC, datetime, timedelta
+    return {"id": 9, "mode": mode, "type": side, "entry_price": 82000.0, "stop_loss": 83800.0,
+            "take_profit": 77500.0, "trailing_stop": 83300.0, "tp1": 77500.0, "tp2": None,
+            "partial_closed": partial, "partial_pnl": None, "atr": 410.0, "size_factor": 1.0,
+            "opened_at": (datetime.now(UTC) - timedelta(hours=hours)).isoformat()}
+
+def test_exit_context_describes_the_position_as_the_bot_holds_it():
+    """The exit agent judges a live position: its P&L if closed now (same formula the
+    bot books), time held and left before the cap, and the distances to its own stop and
+    target from the CURRENT price. Numbers only."""
+    import json
+    from agents.exit_shadow import build_exit_context
+    from trading.paper import _calc_pnl
+    pos = _open_position()
+    ctx = build_exit_context(pos, 81000.0, _shadow_signal())
+    p = ctx["position"]
+    assert p["side"] == "SELL" and p["mode"] == "futures"
+    assert abs(p["pnl_if_closed_now_pct"] - _calc_pnl(pos, 81000.0)) < 1e-6   # context rounds to 6 dp
+    assert abs(p["hours_held"] - 10) < 0.05 and abs(p["hours_left_before_cap"] - 62) < 0.05
+    assert abs(p["stop_pct_from_price"] - (83300.0 - 81000.0) / 81000.0 * 100) < 1e-6
+    assert ctx["exit_rules"]["trailing_atr_mult"] == 3.5
+    assert "IGNORE PREVIOUS" not in json.dumps(ctx)
+
+def test_exit_opinion_parses_close_or_hold_only():
+    from agents.exit_shadow import parse_exit_opinion
+    o = parse_exit_opinion('{"verdict": "CLOSE", "confidence": 66, "reason": "momentum habis"}')
+    assert o == {"verdict": "CLOSE", "confidence": 66, "reason": "momentum habis"}
+    for bad in ('{"verdict": "AGREE", "confidence": 5, "reason": "x"}', "no json"):
+        try:
+            parse_exit_opinion(bad)
+        except ValueError:
+            continue
+        raise AssertionError(bad)
+
+def test_exit_shadow_records_each_open_position_in_the_background():
+    import time
+    from types import SimpleNamespace as NS
+    from agents import exit_shadow
+    h, saved, path = _temp_history_db()
+    try:
+        def ask(prompt, system=None, provider=None, **k):
+            time.sleep(0.5)
+            return NS(text='{"verdict": "HOLD", "confidence": 55, "reason": "tren masih jalan"}',
+                      provider=provider, model="m", input_tokens=3, output_tokens=2)
+        t0 = time.time()
+        n = exit_shadow.run_exit_shadow([_open_position(), _open_position("spot", "BUY")],
+                                        81000.0, None, _shadow_signal(),
+                                        providers=("anthropic", "deepseek"), ask_fn=ask,
+                                        background=True)
+        assert n == 2 and time.time() - t0 < 0.4, "the cycle waited for the exit agents"
+        for t in list(exit_shadow._threads):
+            t.join(10)
+        rows = h._conn().execute("SELECT position_id, mode, provider, verdict, price, "
+                                 "pnl_if_closed_pct FROM shadow_exit_opinions").fetchall()
+        assert len(rows) == 4 and {r[3] for r in rows} == {"HOLD"} and rows[0][4] == 81000.0, rows
+        assert exit_shadow.run_exit_shadow([], 81000.0, None, None, providers=("x",),
+                                           ask_fn=ask) == 0
+    finally:
+        _restore_history_db(h, saved, path)
+
+def test_exit_shadow_decision_value_and_verdict():
+    """Value of a CLOSE = close-now P&L − the position's final P&L; of a HOLD, the
+    reverse. Positive means following the agent would have done better than the bot's own
+    exits. Opinions on one position are correlated, so the CI resamples POSITIONS."""
+    import numpy as np, pandas as pd
+    from scripts.exit_shadow_eval import decision_values, evaluate_exits
+    df = pd.DataFrame({"verdict": ["CLOSE", "HOLD"], "pnl_if_closed_pct": [1.0, 1.0],
+                       "final_pnl": [-0.5, -0.5]})
+    assert list(decision_values(df)) == [1.5, -1.5]
+    rng = np.random.default_rng(1)
+    rows = []
+    for pid in range(10):
+        for _ in range(4):
+            rows.append({"provider": "anthropic", "position_id": pid, "verdict": "CLOSE",
+                         "pnl_if_closed_pct": 1.0 + rng.normal(0, .1), "final_pnl": -1.0})
+    assert evaluate_exits(pd.DataFrame(rows))["anthropic"]["verdict"] == "PASS"
+    thin = pd.DataFrame(rows[:12])                       # 3 positions
+    assert evaluate_exits(thin)["anthropic"]["verdict"] == "INCONCLUSIVE"
+
+def test_run_bot_runs_the_exit_shadow_in_the_background():
+    import inspect, run_bot
+    src = inspect.getsource(run_bot.run_cycle)
+    i = src.find("run_exit_shadow(")
+    assert i > 0 and "background=True" in src[i:i + 200], "run_cycle must call run_exit_shadow"
+    assert "try:" in src[max(0, i - 400):i]
+
 def test_synth_entries_respects_stride_and_warmup():
     from scripts.exit_ic import synth_entries
     df = _exit_fixture([1000] * 260)
@@ -4223,6 +4310,13 @@ if __name__ == "__main__":
     run("open positions one line each",           test_tg_open_positions_are_one_line_each)
     run("position open card compact + complete",  test_tg_position_open_card_is_compact_and_complete)
     run("position close: mode, outcome, total",   test_tg_position_close_names_mode_outcome_pnl_and_running_total)
+
+    print("\n── 36. agents/exit_shadow.py — exit opinions, never acted on ──")
+    run("exit context = the position as held",   test_exit_context_describes_the_position_as_the_bot_holds_it)
+    run("exit opinion: CLOSE or HOLD only",       test_exit_opinion_parses_close_or_hold_only)
+    run("each open position, in background",      test_exit_shadow_records_each_open_position_in_the_background)
+    run("decision value + clustered verdict",     test_exit_shadow_decision_value_and_verdict)
+    run("run_bot runs exit shadow in background", test_run_bot_runs_the_exit_shadow_in_the_background)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
