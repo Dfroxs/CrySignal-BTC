@@ -4,6 +4,26 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — tooling: project Claude skills `backtest-expert` and `residual-edge-analyzer`
+
+Two skills from `tradermonty/claude-trading-skills` (MIT, commit `eab8d5c`) are now in
+`.claude/skills/`. Upstream content is copied unchanged. Each `SKILL.md` ends with a
+"SpotSignal notes" section that ties it to this repo's discipline: pre-registration, the
+count-matched random baseline, the ~12–15 fires/year ceiling and the threshold-sweep trap.
+
+- **backtest-expert**: stress-test and bias methodology, plus a stdlib evaluator. Its
+  verdict has no baseline, so the notes say to use it as a checklist, never as a pass.
+- **residual-edge-analyzer**: regresses a dated return stream on declared baselines (BTC
+  buy-and-hold, a matched random book), with HAC errors and rolling stability. It answers
+  whether the paper book is more than BTC beta.
+- Both scripts were read in full before install. Neither makes network calls, needs keys,
+  or places orders. The other ~70 skills were rejected, one line each with the reason in
+  `.claude/skills/README.md`: equity-only, built for discretionary human journals, need an
+  FMP key, or are unvalidated regime heuristics.
+- No bot code, config or run is touched.
+
+---
+
 ## 2026-10-09 — research: H-F — basis and funding predict BTC 24h (bearish when high); taker does not
 
 Pre-registered (`4271d44`) before any data was fetched. Binance does serve years of mark,
