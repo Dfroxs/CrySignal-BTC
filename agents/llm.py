@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 DEFAULT_MODELS = {"anthropic": "claude-opus-5-5", "deepseek": "deepseek-v4-pro"}
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-TIMEOUT_S = 60.0
+TIMEOUT_S = 100.0          # must outlast agents/shadow.TIMEOUT_S, so the shadow decides
 
 
 class LLMError(RuntimeError):

@@ -3320,6 +3320,15 @@ def test_ops_backup_is_the_newest_dated_file_by_time_not_by_name():
     f = collect_host_facts(root, datetime(2026, 10, 9, tzinfo=UTC), run=lambda c: "")
     assert f["backup_latest"] == "db-20261009.db", f["backup_latest"]
 
+def test_shadow_waits_long_enough_for_a_thinking_model():
+    """deepseek-v4-pro thinks by default: 31.7 s and ~2,300 output tokens for one
+    opinion on 2026-10-09. A 45 s cap would turn its slow hours into timeouts, and the
+    prereg discards a provider above 20% errors. The HTTP timeout must outlast the
+    shadow cap, or the SDK, not the shadow, decides when a call failed."""
+    from agents import llm, shadow
+    assert shadow.TIMEOUT_S >= 90, shadow.TIMEOUT_S
+    assert llm.TIMEOUT_S > shadow.TIMEOUT_S, (llm.TIMEOUT_S, shadow.TIMEOUT_S)
+
 def test_synth_entries_respects_stride_and_warmup():
     from scripts.exit_ic import synth_entries
     df = _exit_fixture([1000] * 260)
@@ -4055,6 +4064,7 @@ if __name__ == "__main__":
     run("opinions stored per provider",           test_shadow_opinions_are_stored_per_provider)
     run("skips HOLD/cached, never raises",        test_shadow_skips_holds_and_cached_replays_and_never_raises)
     run("run_bot calls it inside a guard",        test_run_bot_calls_the_shadow_agents_inside_a_guard)
+    run("waits long enough for thinking model",   test_shadow_waits_long_enough_for_a_thinking_model)
     run("eval signs forward return by side",      test_shadow_eval_signs_the_forward_return_by_direction)
     run("eval verdict follows the prereg",        test_shadow_eval_verdict_follows_the_preregistration)
 

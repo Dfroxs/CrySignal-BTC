@@ -29,7 +29,10 @@ from datetime import UTC, datetime
 
 logger = logging.getLogger(__name__)
 
-TIMEOUT_S = 45.0
+# deepseek-v4-pro thinks by default (~32 s, ~2,300 output tokens per opinion, measured
+# 2026-10-09). 45 s would turn its slow hours into timeouts and trip the prereg's 20%
+# error discard. Shadow runs after Phase 3, so the cost is a later Telegram message.
+TIMEOUT_S = 90.0
 _LABELS = {"BULLISH", "BEARISH", "NEUTRAL", "BUY", "SELL", "HOLD", "WEAK", "NORMAL",
            "STRONG", "TRENDING", "RANGING", "VOLATILE", "futures", "spot"}
 

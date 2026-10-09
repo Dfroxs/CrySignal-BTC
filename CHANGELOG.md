@@ -4,6 +4,18 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — fix: shadow timeout 45 s → 90 s for a thinking DeepSeek
+
+`deepseek-v4-pro` thinks by default. One opinion measured on the Mac took 31.7 s and
+2,294 output tokens, against 3.9 s for Claude. A 45 s cap would have turned its slow
+hours into timeouts, and the run-3 prereg discards a provider above 20% errors. The
+shadow cap is now 90 s and the HTTP timeout 100 s (it must outlast the cap). Thinking is
+left on for both models, so the comparison stays like for like. Shadow runs after
+Phase 3, so the only cost is a later Telegram message. Shipped in run 3's first hour,
+before any shadow opinion had been recorded.
+
+---
+
 ## 2026-10-09 — feat: compact Telegram messages (notifier only)
 
 On `develop`. Formatting only: what is sent, and when, is unchanged.
