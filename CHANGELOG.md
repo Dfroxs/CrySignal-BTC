@@ -4,6 +4,23 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-10 — research: H-LO — limit-order futures entries INCONCLUSIVE; market entries stay
+
+Pre-registered (`cec377f`). The instrument `scripts/limit_ic.py` was committed (`df2f9e2`)
+before the scored run. BTC perp 1h, engine as deployed. Each market entry is paired with a
+post-only limit at the signal price, resting for one bar.
+
+- **Primary 2021–2024:** n=352, fill 96%, d̄ **+0.014pp [−0.041, +0.059]**,
+  INCONCLUSIVE. The 13 missed entries were runaway winners (+1.44pp on market), which
+  ate most of the 0.07pp saving.
+- **Confirmation:** +0.089pp [+0.070, +0.117], PASS, but on only 2 misses.
+- **Overall INCONCLUSIVE, so market entries stay.** The best case saves less than the
+  futures per-trade loss; costs are not what makes futures lose.
+- Results: `docs/superpowers/specs/2026-10-10-limit-entry-results.md`. Run-4 backlog
+  updated.
+
+---
+
 ## 2026-10-09 — research: H-RG — the spot regime gate selects (primary PASS); it stays
 
 Pre-registered (`e18840f`). The instrument `scripts/regime_ic.py` was committed

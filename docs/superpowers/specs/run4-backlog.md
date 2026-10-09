@@ -18,7 +18,7 @@ claim). Started 2026-10-09.
 
 | item | status | next step |
 |---|---|---|
-| Limit-order entries (maker fee, no entry slippage) | untested. Arithmetic says ~0.06pp per futures trade, and futures with the new exit is −0.05pp | pre-register a fill model (fill only if the next bar trades through the limit) on the BTC perp 1h data already downloaded |
+| Limit-order entries (maker fee, no entry slippage) | **H-LO INCONCLUSIVE** (2026-10-10): d̄ +0.014pp [−0.041, +0.059] primary, +0.089pp confirmation. The 4% of trades the limit misses are the runaway winners (+1.44pp) | **not licensed**. Even the best case (+0.09pp) leaves futures negative; revisit only if an entry ever shows edge |
 | z-score funding/basis condition {funding −1, basis −1} | H-F PASS on BTC, H-F2/H-F3 INCONCLUSIVE, so **not licensed** | only if run-3 live data (H-L) or a later window confirms it |
 
 ## Design decisions already shipped in run 3 (re-examine at day 30)
