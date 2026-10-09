@@ -67,6 +67,16 @@ RECENT_CLOSED = 10
 VETO_MARKER = "⛔"
 VETO_CHARS = 200
 LLM_MAX_TOKENS = 8000            # DeepSeek thinks inside max_tokens; 4000 can cut it off
+
+
+def qa_model(provider):
+    """The Q&A bot's own Claude model (owner's choice, 2026-10-09: Haiku). Separate from
+    LLM_MODEL_ANTHROPIC on purpose: the shadow agents read that one, and their test
+    (H-S, H-X) must not change model because the Q&A one did. Override with QA_LLM_MODEL.
+    DeepSeek keeps its provider default."""
+    if (provider or os.getenv("LLM_PROVIDER") or "anthropic").lower() != "anthropic":
+        return None
+    return os.getenv("QA_LLM_MODEL") or "claude-haiku-4-5"
 LOCK_UNTIL = datetime(2026, 11, 8, tzinfo=UTC)   # run 3 day 30
 
 # A tripwire, not the filter: the facts are built from fixed queries that never read
@@ -373,7 +383,7 @@ class QABot:
         prompt = build_prompt(self.facts(now), question)
         try:
             reply = self.ask_fn(prompt, system=system_prompt(now), provider=self.provider,
-                                max_tokens=LLM_MAX_TOKENS)
+                                model=qa_model(self.provider), max_tokens=LLM_MAX_TOKENS)
         except LLMError as exc:
             self.log(f"qa: LLM unavailable: {exc}")
             self.send("Maaf, AI sedang tidak tersedia. Coba lagi nanti, atau pakai /status.")

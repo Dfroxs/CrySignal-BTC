@@ -3703,6 +3703,37 @@ def test_run_bot_consults_the_disabled_list_for_every_futures_gate():
     finally:
         FUTURES_CONFIG["entry"]["disabled_gates"] = saved
 
+def test_llm_haiku_request_omits_effort_and_fallbacks():
+    """Haiku 4.5 rejects `effort` and has no server-side fallback; Opus 5.5 keeps both."""
+    from agents.llm import ask
+    fake = _FakeClaude()
+    ask("halo", provider="anthropic", model="claude-haiku-4-5", client=fake)
+    kw = fake.calls[0]
+    assert kw["model"] == "claude-haiku-4-5", kw
+    assert "output_config" not in kw and "fallbacks" not in kw and "betas" not in kw, kw
+
+def test_qa_uses_its_own_model_haiku_by_default():
+    """The owner chose Haiku for Q&A only. The shadow agents (H-S, H-X) and the daily
+    summary keep LLM_MODEL_ANTHROPIC, so changing the Q&A model cannot move a test."""
+    import inspect, os
+    import agents.qa_bot as qa
+    saved = os.environ.pop("QA_LLM_MODEL", None)
+    try:
+        assert qa.qa_model("anthropic") == "claude-haiku-4-5"
+        assert qa.qa_model("deepseek") is None, "deepseek keeps its provider default"
+        os.environ["QA_LLM_MODEL"] = "claude-sonnet-5-5"
+        assert qa.qa_model("anthropic") == "claude-sonnet-5-5"
+    finally:
+        os.environ.pop("QA_LLM_MODEL", None)
+        if saved is not None:
+            os.environ["QA_LLM_MODEL"] = saved
+    assert "model=qa_model(" in inspect.getsource(qa.QABot), "QABot must pass its own model"
+
+def test_llm_prices_cover_haiku_alias_and_snapshot():
+    from agents.llm import cost_usd
+    assert cost_usd("claude-haiku-4-5", 1_000_000, 1_000_000) == 6.0
+    assert cost_usd("claude-haiku-4-5-20251001", 1_000_000, 0) == 1.0
+
 def test_synth_entries_respects_stride_and_warmup():
     from scripts.exit_ic import synth_entries
     df = _exit_fixture([1000] * 260)
@@ -5038,6 +5069,9 @@ if __name__ == "__main__":
     run("refusal is an error",                    test_llm_refusal_is_an_error_not_a_summary)
     run("deepseek: openai shape",                 test_llm_deepseek_adapter_uses_the_openai_shape)
     run("missing key / provider is an error",     test_llm_missing_key_or_unknown_provider_is_an_error)
+    run("haiku omits effort and fallbacks",       test_llm_haiku_request_omits_effort_and_fallbacks)
+    run("Q&A uses its own model (haiku)",          test_qa_uses_its_own_model_haiku_by_default)
+    run("prices cover haiku alias + snapshot",    test_llm_prices_cover_haiku_alias_and_snapshot)
 
     print("\n── 33. agents/ops_report.py — daily operations agent ──")
     run("collects the last day from the DB",      test_ops_collects_the_last_day_from_the_database)

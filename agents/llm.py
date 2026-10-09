@@ -29,6 +29,8 @@ TIMEOUT_S = 620.0          # must outlast agents/shadow.TIMEOUT_S, so the shadow
 # for the same reason. A model missing here is priced None and flagged, never guessed.
 PRICES_USD_PER_MTOK = {
     "claude-opus-5-5": (4.00, 20.00),
+    "claude-haiku-4-5": (1.00, 5.00),
+    "claude-haiku-4-5-20251001": (1.00, 5.00),   # the snapshot id the API may report back
     "deepseek-v4-pro": (1.32, 3.96),
 }
 
@@ -64,18 +66,17 @@ def _ask_anthropic(prompt, system, model, max_tokens, client):
             raise LLMError("ANTHROPIC_API_KEY is not set")
         import anthropic
         client = anthropic.Anthropic(timeout=TIMEOUT_S, max_retries=2)
+    kwargs = dict(model=model, max_tokens=max_tokens, system=system or "",
+                  messages=[{"role": "user", "content": prompt}])
+    if not model.startswith("claude-haiku"):
+        # Thinking cannot be disabled on Opus 5.5; low effort keeps a summary cheap.
+        kwargs["output_config"] = {"effort": "low"}
+        # A declined request is re-run server-side on Anthropic's recommended model.
+        kwargs["betas"] = ["server-side-fallback-2026-07-01"]
+        kwargs["fallbacks"] = "default"
+    # Haiku 4.5 rejects `effort` and has no server-side fallback, so it gets neither.
     try:
-        resp = client.beta.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            system=system or "",
-            messages=[{"role": "user", "content": prompt}],
-            # Thinking cannot be disabled on Opus 5.5; low effort keeps a summary cheap.
-            output_config={"effort": "low"},
-            # A declined request is re-run server-side on Anthropic's recommended model.
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
-        )
+        resp = client.beta.messages.create(**kwargs)
     except Exception as exc:  # SDK error classes vary; the caller only needs "it failed"
         raise LLMError(f"anthropic: {exc}") from exc
     if resp.stop_reason == "refusal":

@@ -4,6 +4,21 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — feat: the Q&A bot answers with Claude Haiku 4.5 (owner's choice)
+
+- `agents/qa_bot.qa_model()`: the Q&A bot's own model, `QA_LLM_MODEL`, default
+  `claude-haiku-4-5`. It is deliberately separate from `LLM_MODEL_ANTHROPIC`, which the
+  shadow agents and the daily summary read, so changing the Q&A model cannot change the
+  model under test in H-S / H-X.
+- `agents/llm.py`: Haiku 4.5 rejects `effort` and has no server-side fallback, so a
+  `claude-haiku*` request sends neither. The test caught the old adapter sending both,
+  which would have been a 400. Opus 5.5 requests are unchanged.
+- Price table: Haiku 4.5 at $1 / $5 per MTok, under both the alias and the snapshot id
+  the API reports back (`claude-haiku-4-5-20251001`). A live call cost $0.0004.
+  Suite 261 → 264.
+
+---
+
 ## 2026-10-09 — docs: futures gates test — INCONCLUSIVE, no gate removed
 
 `2026-10-09-futures-gates-results.md`. All five gates are INCONCLUSIVE by the power
