@@ -42,10 +42,10 @@ def _get(session, path, params):
     raise RuntimeError(f"{path} failed after retries: {r.status_code} {r.text[:200]}")
 
 
-def klines(session, path, key, header, out):
+def klines(session, path, key, header, out, symbol="BTCUSDT"):
     rows, start, end = [], _ms(START), _ms(END)
     while start <= end:
-        batch = _get(session, path, {key: "BTCUSDT", "interval": "1h", "startTime": start,
+        batch = _get(session, path, {key: symbol, "interval": "1h", "startTime": start,
                                      "endTime": end, "limit": 1500})
         if not batch:
             break
@@ -59,10 +59,10 @@ def klines(session, path, key, header, out):
     return len(rows)
 
 
-def funding(session, out):
+def funding(session, out, symbol="BTCUSDT"):
     rows, start, end = [], _ms(START) - 8 * HOUR_MS, _ms(END)
     while start <= end:
-        batch = _get(session, "/fapi/v1/fundingRate", {"symbol": "BTCUSDT", "startTime": start,
+        batch = _get(session, "/fapi/v1/fundingRate", {"symbol": symbol, "startTime": start,
                                                        "endTime": end, "limit": 1000})
         if not batch:
             break
@@ -79,17 +79,19 @@ def funding(session, out):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
-    out = Path(ap.parse_args().out)
+    ap.add_argument("--symbol", default="BTCUSDT")
+    args = ap.parse_args()
+    out, sym = Path(args.out), args.symbol
     out.mkdir(parents=True, exist_ok=True)
     s = requests.Session()
     s.headers["User-Agent"] = "curl/8.4"
     ohlc = ["open_time", "open", "high", "low", "close"]
-    print("mark", klines(s, "/fapi/v1/markPriceKlines", "symbol", ohlc, out / "mark_1h.csv"))
-    print("index", klines(s, "/fapi/v1/indexPriceKlines", "pair", ohlc, out / "index_1h.csv"))
+    print("mark", klines(s, "/fapi/v1/markPriceKlines", "symbol", ohlc, out / "mark_1h.csv", sym))
+    print("index", klines(s, "/fapi/v1/indexPriceKlines", "pair", ohlc, out / "index_1h.csv", sym))
     print("perp", klines(s, "/fapi/v1/klines", "symbol",
                          ohlc + ["volume", "close_time", "quote_volume", "trades",
-                                 "taker_buy_volume"], out / "perp_1h.csv"))
-    print("funding", funding(s, out / "funding.csv"))
+                                 "taker_buy_volume"], out / "perp_1h.csv", sym))
+    print("funding", funding(s, out / "funding.csv", sym))
 
 
 if __name__ == "__main__":

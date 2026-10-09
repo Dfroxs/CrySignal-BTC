@@ -25,6 +25,7 @@ BLOCK = 168
 N_BOOT = 2000
 SEED = 2026
 MIN_OBS = 20_000
+CI_LO, CI_HI = 2.5, 97.5     # H-F: 95%; --recent (H-F3): 90%
 FIELDS = ("basis_pct", "funding_rate", "taker_ratio")
 # How the engine reads each field today: +1 = high is bullish, −1 = high is bearish.
 ENGINE_SIGN = {"basis_pct": +1, "funding_rate": -1, "taker_ratio": +1}
@@ -35,7 +36,9 @@ def load(data: Path) -> tuple[pd.DataFrame, dict]:
     """Hourly frame indexed by kline OPEN time. Every field is read at that kline's close,
     and the forward return runs from that close to the close 24 klines later."""
     rd = lambda n: pd.read_csv(data / n)
-    idx = pd.date_range(WINDOW_START, WINDOW_END, freq="h")
+    # A symbol listed after WINDOW_START starts at its first served hour (H-F2 prereg).
+    first = pd.to_datetime(rd("perp_1h.csv")["open_time"].min(), unit="ms")
+    idx = pd.date_range(max(WINDOW_START, first), WINDOW_END, freq="h")
     def kl(df, cols):
         df.index = pd.to_datetime(df["open_time"], unit="ms")
         return df[cols].astype(float).reindex(idx)
@@ -87,7 +90,7 @@ def block_ic(x, y, n_boot=N_BOOT, seed=SEED):
     x, y = x[m], y[m]
     rng = np.random.default_rng(seed)
     boot = [_ic(x[s], y[s]) for s in (_blocks(len(x), rng) for _ in range(n_boot))]
-    return _ic(x, y), float(np.percentile(boot, 2.5)), float(np.percentile(boot, 97.5)), len(x)
+    return _ic(x, y), float(np.percentile(boot, CI_LO)), float(np.percentile(boot, CI_HI)), len(x)
 
 
 def plain_ic(x, y):
@@ -109,11 +112,18 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data", type=Path, required=True)
     ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument("--recent", action="store_true",
+                    help="H-F3: restrict to 2025-01-01 → window end, 90%% interval")
     args = ap.parse_args()
+    global CI_LO, CI_HI, MIN_OBS
+    if args.recent:
+        CI_LO, CI_HI, MIN_OBS = 5.0, 95.0, 8_000
 
     df, health = load(args.data)
+    if args.recent:
+        df = df[df.index >= pd.Timestamp("2025-01-01")]
     y = df["fwd_24h"].values
-    print(f"H-F  BTCUSDT perp 1h  {df.index[0]} → {df.index[-1]}  hours={health['hours']}")
+    print(f"H-F  {args.data.name} perp 1h  {df.index[0]} → {df.index[-1]}  hours={health['hours']}")
     print(f"missing: mark {health['mark_missing']:.2%}  index {health['index_missing']:.2%}  "
           f"perp {health['perp_missing']:.2%}"
           f"{'   ⚠️ DISCARD per prereg' if health['discard'] else ''}\n")
