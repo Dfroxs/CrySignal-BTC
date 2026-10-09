@@ -2949,6 +2949,41 @@ def test_live_ic_health_reports_the_discard_conditions():
     assert hl["variants_null_share"] == 0.06 and hl["funding_placeholder_share"] == 0.11
     assert hl["discard"] is True, hl
 
+def test_trail_ic_widen_scales_stop_and_targets_from_entry():
+    """The candidate doubles the stop distance and keeps the same R geometry: TP1 and
+    TP2 move out by the same factor, on the correct side for each direction."""
+    from scripts.trail_ic import widen
+    b = widen({"type": "BUY", "entry_price": 100.0, "stop_loss": 99.0,
+               "take_profit": 102.5, "tp2": 105.0}, 2.0)
+    assert (b["stop_loss"], b["take_profit"], b["tp2"]) == (98.0, 105.0, 110.0), b
+    s = widen({"type": "SELL", "entry_price": 100.0, "stop_loss": 101.0,
+               "take_profit": 97.5}, 2.0)
+    assert (s["stop_loss"], s["take_profit"]) == (102.0, 95.0) and "tp2" not in s, s
+
+def test_trail_ic_verdict_follows_the_preregistration():
+    """PASS needs: n ≥ 100, mean diff > 0 with CI above 0, ≥ 3 of 4 windows positive,
+    and no direction (n ≥ 20) negative. Fail on mean ≤ 0; otherwise INCONCLUSIVE."""
+    from scripts.trail_ic import verdict
+    ok = dict(n=300, mean=0.2, ci=(0.05, 0.35), windows=[0.1, 0.2, -0.1, 0.3],
+              by_dir={"SELL": (200, 0.2), "BUY": (100, 0.1)})
+    assert verdict(**ok) == "PASS"
+    assert verdict(**dict(ok, n=99)) == "INCONCLUSIVE"
+    assert verdict(**dict(ok, mean=-0.01, ci=(-0.1, 0.05))) == "FAIL"
+    assert verdict(**dict(ok, ci=(-0.02, 0.35))) == "INCONCLUSIVE"
+    assert verdict(**dict(ok, windows=[0.1, -0.2, -0.1, 0.3])) == "INCONCLUSIVE"
+    assert verdict(**dict(ok, by_dir={"SELL": (200, 0.3), "BUY": (100, -0.1)})) == "INCONCLUSIVE"
+    assert verdict(**dict(ok, by_dir={"SELL": (290, 0.3), "BUY": (10, -0.5)})) == "PASS", \
+        "a direction with n < 20 is not judged"
+
+def test_trail_ic_pairs_only_signals_resolved_in_both_arms():
+    from scripts.trail_ic import paired
+    base = [{"outcome": "WIN", "pnl_pct": 1.0}, {"outcome": "OPEN", "pnl_pct": 0.0},
+            None, {"outcome": "LOSS", "pnl_pct": -1.0}]
+    cand = [{"outcome": "LOSS", "pnl_pct": -0.5}, {"outcome": "WIN", "pnl_pct": 2.0},
+            {"outcome": "WIN", "pnl_pct": 2.0}, {"outcome": "TIME_EXIT", "pnl_pct": 0.5}]
+    pairs = paired(base, cand)
+    assert pairs == [(0, 1.0, -0.5), (3, -1.0, 0.5)], pairs
+
 def test_synth_entries_respects_stride_and_warmup():
     from scripts.exit_ic import synth_entries
     df = _exit_fixture([1000] * 260)
@@ -3435,6 +3470,11 @@ if __name__ == "__main__":
     run("load drops placeholders, keeps gaps",    test_live_ic_load_drops_placeholders_and_respects_gaps)
     run("health reports discard conditions",      test_live_ic_health_reports_the_discard_conditions)
     run("reads a pre-variants database",          test_live_ic_reads_a_database_from_before_the_variants_column)
+
+    print("\n── 31. trail_ic.py — futures exit width ──")
+    run("widen keeps R geometry",                 test_trail_ic_widen_scales_stop_and_targets_from_entry)
+    run("verdict follows the prereg",             test_trail_ic_verdict_follows_the_preregistration)
+    run("pairs only both-resolved signals",       test_trail_ic_pairs_only_signals_resolved_in_both_arms)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
