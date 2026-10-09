@@ -4,6 +4,18 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-09 — docs: run-3 prereg amendment, the discard clause as meant
+
+The prereg's discard clause ("any change to `signals/`, `trading/`, `config.py` or
+`run_bot.py` on the server") was breached in letter by the 06:15 and 07:15 restarts,
+which added guarded agent hooks to `run_bot.py` and agent tables to `trading/history.py`.
+The trading path (`signals/`, `config.py`, `trading/paper.py`, `backtest.py`) is
+unchanged since `c0e8764`, which is evidenced in the amendment. The clause now names its
+purpose (signal, gate, exit, sizing, config changes discard the run) and the diff check
+to run before any restart. It was recorded before any hypothesis figure existed.
+
+---
+
 ## 2026-10-09 — fix: the futures card shows the levels the position opens with
 
 For the next restart, on `develop` (notifier only). The hourly card rendered the
