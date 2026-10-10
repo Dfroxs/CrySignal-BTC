@@ -4,6 +4,25 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-10 — docs: run-4 backlog — today's findings
+
+Added: FLIP/BREAKER_CLOSE send no Telegram close (correctness, Phase 3 so run 4);
+`psy_sl_first`'s fixed $1,000 step; spot `sr_first` as a data-yield candidate (H-SR
+INCONCLUSIVE, ~+1–1.5 BTC trades/month, not worth a run-3 restart); `psy_sl_first` stays;
+H-RGL pending 2026-11-11.
+
+---
+
+## 2026-10-10 — docs: H-SR / H-PSY results — both spot gates INCONCLUSIVE, both stay
+
+Scored as pre-registered (`2026-10-10-sr-psy-gates-results.md`). `sr_first`: primary
+kept − only +0.26pp [−0.53, +1.08]; confirmation flips (n=12, only +1.02 vs kept −0.52).
+`psy_sl_first`: primary +0.32pp [−0.69, +1.34], blocked BUYs no better than random;
+confirmation n=6. Neither fails overall, so both stay. Removing `sr_first` would add
+~50% spot entries and remains an owner data-yield decision (restarts run 3's window).
+
+---
+
 ## 2026-10-11 — fix: Telegram message format (notifier + agents only)
 
 An audit of every message the system sends, rendered from the test fixtures. Nothing in
