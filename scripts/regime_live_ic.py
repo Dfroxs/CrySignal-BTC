@@ -128,6 +128,14 @@ def simulate(df, bars, dedupe):
     return pnls, unresolved
 
 
+def random_pool(pool, blocked):
+    """Bearish bars the gate did NOT block (amendment 2026-10-10). With the blocked bars
+    in it, the random arm drew the tested bars themselves: the smoke run found all 3
+    bearish bars so far were blocked ones."""
+    b = set(blocked)
+    return [i for i in pool if i not in b]
+
+
 def summarise(p):
     a = np.asarray(p, float)
     if not len(a):
@@ -157,12 +165,13 @@ def counts(df, rp, blocks, start, end=END):
     for i in bars:
         k = "+".join(sorted(rp.gates(i))) or "(none)"
         combos[k] = combos.get(k, 0) + 1
-    lo = int(np.searchsorted(df.index.values, np.datetime64(pd.Timestamp(norm_ts(start)) - BAR)))
+    lo = max(bar_index(df, pd.Timestamp(norm_ts(start))), 0)   # first bar live scored in the run
     hi = bar_index(df, end)
     pool = [i for i in range(lo, min(hi, len(df) - 1) + 1) if _bear(rp.regime(i))]
     return {"blocks": len(blocks), "distinct_bars": len(bars), "mismatch": mism,
             "mismatch_share": len(mism) / len(bars) if bars else 0.0,
-            "gate_combos": combos, "bear_pool": len(pool), "_bars": bars, "_pool": pool}
+            "gate_combos": combos, "bear_pool": len(pool),
+            "bear_pool_unblocked": len(random_pool(pool, bars)), "_bars": bars, "_pool": pool}
 
 
 def score(df, rp, blocks, kept_ts, start, end=END):
@@ -179,16 +188,18 @@ def score(df, rp, blocks, kept_ts, start, end=END):
     only_bars = [i for i in bars if rp.gates(i) == [GATE_BT]]
     only, _ = simulate(df, only_bars, dedupe=True)
     kept, _ = simulate(df, distinct_bars(df, kept_ts), dedupe=True)
+    pool = random_pool(pool, bars)
     rnd = []
     for sd in range(SEEDS):
         pick = random.Random(SEED + sd).sample(pool, min(len(live), len(pool))) if live else []
         rnd += simulate(df, pick, dedupe=False)[0]
     s = summarise(live)
     rnd_mean = float(np.mean(rnd)) if rnd else float("nan")
+    v = verdict(s, rnd_mean) if len(pool) >= len(live) else "INCONCLUSIVE"
     res.update({"regime_live": s, "regime_live_unresolved": live_open,
-                "random_bear_mean": rnd_mean, "random_n": len(rnd),
+                "random_bear_mean": rnd_mean, "random_n": len(rnd), "random_pool": len(pool),
                 "regime_only_live": summarise(only), "kept_live": summarise(kept),
-                "H-RGL1": verdict(s, rnd_mean)})
+                "H-RGL1": v})
     return res
 
 

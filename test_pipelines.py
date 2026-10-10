@@ -3982,6 +3982,8 @@ def test_regime_live_verdict_and_lock_follow_the_prereg():
     assert verdict(s(12, 1.0, 0.2, 1.8), 0.0) == "CONTRADICTS"
     assert verdict(s(12, -1.0, -1.8, -0.2), float("nan")) == "INCONCLUSIVE"
     assert str(SCORE_FROM) == "2026-11-11 00:00:00"
+    from scripts.regime_live_ic import random_pool
+    assert random_pool([3, 5, 8, 9], [5, 9]) == [3, 8], "blocked bars must not be the random arm"
     assert not scorable(pd.Timestamp("2026-11-10 23:59")) and scorable(SCORE_FROM)
 
 def test_llm_haiku_request_omits_effort_and_fallbacks():

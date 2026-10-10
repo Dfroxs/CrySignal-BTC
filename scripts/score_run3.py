@@ -105,6 +105,8 @@ def main() -> int:
             print(f"  ✗ {name} exited {r.returncode}: {r.stderr[-500:]}")
     print(f"\nwritten → {args.out}   failed: {failed or 'none'}")
     print("H-D runs on the VPS: scripts/hd_eval.py --derivs data/derivs --fetch-klines, then --out")
+    print("H-RGL (2026-10-10-regime-live-prereg.md) scores from 2026-11-11: "
+          "scripts/regime_live_ic.py --db <db> --out <folder>/regime_live")
     return 1 if failed else 0
 
 

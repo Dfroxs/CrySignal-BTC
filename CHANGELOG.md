@@ -4,6 +4,22 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-10 — feat: pre-register H-RGL, the live regime gate priced against chance
+
+- **`docs/superpowers/specs/2026-10-10-regime-live-prereg.md`**: the spot BUYs that
+  `regime_bearish` blocks live (run 3, start → day 30), priced through the live spot
+  exit, against random bearish-regime bars. SUPPORTS / CONTRADICTS / INCONCLUSIVE, power
+  guard n ≥ 10, discard above 10% replay mismatch. Scored from 2026-11-11 (day 30 + 72h
+  hold). Neither verdict changes the gate during run 3.
+- **`scripts/regime_live_ic.py`**: refuses before 2026-11-11 except `--smoke` (counts
+  only). Committed before the smoke run (`96f5921`).
+- **Amendment after the smoke (counts only):** 3 of the window's 4 bearish bars were
+  blocked ones, so the random arm now draws only unblocked bearish bars, with a pool
+  guard. The smoke also caught a pool off by one bar, fixed before any outcome existed.
+- `score_run3.py` prints the H-RGL command. 4 tests; 286/286 pass.
+
+---
+
 ## 2026-10-10 — fix: Q&A bot misread three facts about the 0-position spot day
 
 Asked "should there have been a position?", the Q&A bot named `stale_cache` and

@@ -94,3 +94,22 @@ verdict.
 `scripts/regime_live_ic.py`, committed before the instrument is run. Before 2026-11-11
 it runs only with `--smoke`, which prints counts (blocks, distinct bars, replay
 mismatches, gate combinations) and never a price after a block, a P&L or a verdict.
+
+## Amendment 2026-10-10, after the smoke run (counts only, no outcome computed)
+
+The smoke run on the server database (`96f5921`, prices sha256 `21416d72cf0c…`) found
+4 blocks on 3 distinct bars and 0 replay mismatches. Of the window's **4 bearish-regime
+bars, 3 were blocked ones.** As registered, `random_bear` would mostly have drawn the
+tested bars themselves. (The smoke also exposed an instrument bug, fixed before any
+outcome existed: the pool started one bar after the first bar live scored, so the
+08:00 bar scored at 13:01 was a blocked bar outside the pool.)
+
+- **`random_bear` is drawn from bearish-regime bars in the window that the gate did
+  NOT block** (`random_pool`). Everything else about the arm is unchanged.
+- **Pool guard:** if that pool has fewer bars than n(`regime_live`), H-RGL1 is
+  INCONCLUSIVE.
+
+No criterion, threshold, window or arm definition changes otherwise. Expect the pool
+guard or the power guard to bind: the gate blocks most bearish bars on which the engine
+fires, so the comparison may well end INCONCLUSIVE at day 30, and then the one
+re-score allowed above applies.
