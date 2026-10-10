@@ -45,6 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 TELEGRAM_LIMIT = 4000
 MAX_CYCLE_AGE_H = 2.0
 MAX_VARIANT_NULL = 0.05
+BACKUP_DUE_UTC = (3, 15)         # cron backs up at 03:00 UTC; before this, yesterday's is newest
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +270,16 @@ def collect_host_facts(root, now, run=_run):
             "alloc_errors_24h": num(run(f"{j} | grep -ciE 'error|traceback|consecutive'")),
             "alloc_decisions_24h": num(run(f"{j} | grep -cE 'Rebalance|already at target'")),
             "backup_latest": backups[-1].name if backups else None,
-            "today": now.strftime("%Y%m%d")}
+            "today": now.strftime("%Y%m%d"),
+            "backup_due": _backup_due(now)}
+
+
+def _backup_due(now):
+    """The date of the newest backup that should exist by now. Between 00:00 and the
+    03:00 cron, today's has not been written yet; demanding it then raised a false
+    'backup hari ini tidak ada' on every Q&A question asked after midnight UTC."""
+    day = now if (now.hour, now.minute) >= BACKUP_DUE_UTC else now - timedelta(days=1)
+    return day.strftime("%Y%m%d")
 
 
 # ---------------------------------------------------------------------------
@@ -297,8 +307,9 @@ def anomalies(f):
         out.append(f"{f['alloc_errors_24h']} error allocbot dalam 24 jam")
     if f.get("alloc_decisions_24h") == 0:
         out.append("allocbot tidak membuat keputusan harian")
-    if f.get("backup_latest") != f"db-{f.get('today')}.db":
-        out.append(f"backup hari ini tidak ada (terbaru: {f.get('backup_latest')})")
+    due = f.get("backup_due") or f.get("today")
+    if (f.get("backup_latest") or "") < f"db-{due}.db":     # YYYYMMDD sorts as a date
+        out.append(f"backup {due} tidak ada (terbaru: {f.get('backup_latest')})")
     for mode, d in (f.get("variant_diff_24h") or {}).items():
         if d.get("broken"):
             out.append(f"varian rusak/hilang di {d['broken']} dari {d['cycles']} siklus {mode}")

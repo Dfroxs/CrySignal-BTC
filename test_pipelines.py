@@ -3372,6 +3372,20 @@ def test_ops_backup_is_the_newest_dated_file_by_time_not_by_name():
     f = collect_host_facts(root, datetime(2026, 10, 9, tzinfo=UTC), run=lambda c: "")
     assert f["backup_latest"] == "db-20261009.db", f["backup_latest"]
 
+def test_ops_backup_is_not_due_before_the_0300_cron():
+    """2026-10-10 01:54 UTC: the Q&A bot reported 'backup hari ini tidak ada' because
+    today's file was demanded from midnight, three hours before cron writes it."""
+    from datetime import UTC, datetime
+    from agents.ops_report import _backup_due, anomalies
+    assert _backup_due(datetime(2026, 10, 10, 1, 54, tzinfo=UTC)) == "20261009"
+    assert _backup_due(datetime(2026, 10, 10, 3, 30, tzinfo=UTC)) == "20261010"
+    night = dict(_clean_facts(), today="20261010", backup_due="20261009",
+                 backup_latest="db-20261009.db")
+    assert not any("backup" in a for a in anomalies(night)), anomalies(night)
+    late = dict(night, backup_due="20261010")
+    assert any("backup" in a for a in anomalies(late)), anomalies(late)
+    assert any("backup" in a for a in anomalies(dict(night, backup_latest=None)))
+
 def test_shadow_waits_long_enough_for_a_thinking_model():
     """deepseek-v4-pro thinks by default: 31.7 s and ~2,300 output tokens for one
     opinion on 2026-10-09. A 45 s cap would turn its slow hours into timeouts, and the
@@ -5374,6 +5388,7 @@ if __name__ == "__main__":
     run("ops run checks start at run start",      test_ops_counts_run_checks_from_the_run_start_not_24h_back)
     run("ops no-positions waits 2 days of run",   test_ops_no_new_positions_waits_for_two_days_of_run)
     run("ops backup newest by time, not name",    test_ops_backup_is_the_newest_dated_file_by_time_not_by_name)
+    run("ops backup not due before 03:00 cron",   test_ops_backup_is_not_due_before_the_0300_cron)
 
     print("\n── 34. agents/shadow.py — shadow opinions, never traded ──")
     run("context is numbers, not text",           test_shadow_context_carries_numbers_not_text)

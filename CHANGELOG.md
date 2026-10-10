@@ -4,6 +4,25 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-10 — fix: Q&A bot misread three facts about the 0-position spot day
+
+Asked "should there have been a position?", the Q&A bot named `stale_cache` and
+`regime_bearish` as suspect causes and reported a missing backup. Checked on the VPS,
+none of the three held up:
+
+- **Fix: false "backup hari ini tidak ada" between 00:00 and 03:00 UTC.**
+  `ops_report.anomalies` demanded today's `db-YYYYMMDD.db` from midnight, but cron writes
+  it at 03:00. New `backup_due` fact: yesterday's until 03:15 UTC, today's after. The
+  03:30 daily report was never affected; every Q&A answer in that window was.
+- **`agents/qa_knowledge.md`**: `stale_cache` is the 2nd–4th hourly replay of a 4H
+  analysis. One spot signal = 1 real gate block + up to 3 stale ones (24h to 01:01:
+  5 fresh signals, 4 `regime_bearish`, 1 `fakeout_first`, 8 stale). `regime_bearish`
+  reads ADX/DI on the signal's own timeframe (4H for spot), not EMA200 or HTF 1D/1W.
+  Backup timing and "today = UTC day" are noted too.
+- 1 test; 282/282 pass.
+
+---
+
 ## 2026-10-10 — feat: run-3 scoring instruments committed before day 30
 
 - **`scripts/score_run3.py`**: one command from a pulled DB and manifest. Before
