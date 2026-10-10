@@ -294,8 +294,10 @@ def anomalies(f):
     if not sum((f.get("cycles_24h") or {}).values()):
         out.append("tidak ada siklus dalam 24 jam — bot diam")
     age = f.get("last_cycle_age_h")
-    if age is None or age > MAX_CYCLE_AGE_H:
-        out.append(f"siklus terakhir {age} jam lalu (batas {MAX_CYCLE_AGE_H})")
+    if age is None:
+        out.append("tidak ada siklus tercatat di cycle_log")
+    elif age > MAX_CYCLE_AGE_H:
+        out.append(f"siklus terakhir {age:.1f} jam lalu (batas {MAX_CYCLE_AGE_H})")
     if f.get("futures_blind_24h"):
         out.append(f"{f['futures_blind_24h']} siklus futures tanpa data funding — Binance terdegradasi?")
     share = f.get("variants_null_share_24h")
@@ -309,7 +311,7 @@ def anomalies(f):
         out.append("allocbot tidak membuat keputusan harian")
     due = f.get("backup_due") or f.get("today")
     if (f.get("backup_latest") or "") < f"db-{due}.db":     # YYYYMMDD sorts as a date
-        out.append(f"backup {due} tidak ada (terbaru: {f.get('backup_latest')})")
+        out.append(f"backup {due} tidak ada (terbaru: {f.get('backup_latest') or 'tidak ada'})")
     for mode, d in (f.get("variant_diff_24h") or {}).items():
         if d.get("broken"):
             out.append(f"varian rusak/hilang di {d['broken']} dari {d['cycles']} siklus {mode}")
@@ -369,13 +371,49 @@ def _tok(n):
     return f"{n / 1e6:.2f}M" if n >= 1e6 else f"{n / 1e3:.1f}k" if n >= 1e3 else str(n)
 
 
+_TAG = re.compile(r"<(/?)([a-z-]+)[^>]*>")
+
+
+def fit_html(text, limit=TELEGRAM_LIMIT):
+    """`text` cut to at most `limit` characters without breaking Telegram's HTML parser.
+
+    A plain `text[:limit]` can end inside an entity (`&am`) or a tag (`<i`), or leave a
+    tag open; Telegram then rejects the whole message with 400 "can't parse entities"
+    and it is lost, not shortened. Cut, drop a trailing partial entity or tag, add "…",
+    and close whatever is still open."""
+    if len(text) <= limit:
+        return text
+    cut = text[:max(0, limit - 40)]                    # room for "…" and closing tags
+    cut = re.sub(r"&[#\w]*$", "", cut)
+    cut = re.sub(r"<[^>]*$", "", cut)
+    stack = []
+    for m in _TAG.finditer(cut):
+        if not m.group(1):
+            stack.append(m.group(2))
+        elif m.group(2) in stack:
+            del stack[len(stack) - 1 - stack[::-1].index(m.group(2))]
+    return cut + "…" + "".join(f"</{t}>" for t in reversed(stack))
+
+
+def _day(raw):
+    """'20261105' → '2026-11-05' for the header; anything else as given."""
+    raw = str(raw)
+    return f"{raw[:4]}-{raw[4:6]}-{raw[6:]}" if re.fullmatch(r"\d{8}", raw) else raw
+
+
+def fmt_thresholds(th, e=html.escape):
+    """'futures 5.45, spot 4.70': two decimals, as every other score line prints them."""
+    return ", ".join(f"{e(str(m))} {t:.2f}" if isinstance(t, (int, float))
+                     else f"{e(str(m))} {e(str(t))}" for m, t in th.items())
+
+
 def _capped(lines, cap=MAX_POSITION_LINES):
     return lines if len(lines) <= cap else lines[:cap] + [f"… +{len(lines) - cap} lagi"]
 
 
 def render(f, anoms, summary=None, source=None):
     e = html.escape
-    lines = [f"<b>📋 Laporan harian bot</b> · {e(str(f.get('today')))}"]
+    lines = [f"<b>📋 Laporan harian bot</b> · {e(_day(f.get('today')))}"]
     if anoms:
         lines.append(f"\n⚠️ <b>{len(anoms)} hal perlu diperiksa</b>")
         lines += [f"• {e(a)}" for a in anoms]
@@ -413,13 +451,12 @@ def render(f, anoms, summary=None, source=None):
                      f"${f.get('llm_usd_projected_month') or 0:.2f}"
                      + (f" / anggaran ${budget:.2f}" if budget else ""))
     if f.get("thresholds"):
-        lines.append("threshold: " + ", ".join(f"{e(m)} {t}" for m, t in f["thresholds"].items()))
+        lines.append("threshold: " + fmt_thresholds(f["thresholds"], e))
     if summary:
         lines.append(f"\n<b>Ringkasan AI</b> <i>({e(source or '')})</i>\n{e(summary)}")
     else:
         lines.append("\n<i>ringkasan AI tidak tersedia</i>")
-    text = "\n".join(lines)
-    return text if len(text) <= TELEGRAM_LIMIT else text[:TELEGRAM_LIMIT - 1] + "…"
+    return fit_html("\n".join(lines))
 
 
 def record_usage(path, reply, purpose, now=None):

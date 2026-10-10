@@ -4,6 +4,38 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-11 — fix: Telegram message format (notifier + agents only)
+
+An audit of every message the system sends, rendered from the test fixtures. Nothing in
+`signals/`, `trading/`, `config.py`, `backtest.py` or `run_bot.py` changed.
+
+- **Truncation could get a message rejected.** `ops_report.render` and
+  `qa_bot.render_status` cut at `text[:3999] + "…"`, which can end inside an entity
+  (`…harga &a…`) or a tag, or leave `<i>` open; Telegram answers 400 and the whole
+  message is lost. New `ops_report.fit_html` cuts, drops a partial entity/tag and closes
+  open tags. The Q&A answer escaped AFTER cutting to 3,800 characters, so `&` and quotes
+  could push it past the limit; it now escapes first, fits, and keeps its model/quota
+  footer.
+- **No more "None".** `siklus terakhir None jam lalu` → `tidak ada siklus tercatat di
+  cycle_log`; `terbaru: None` → `terbaru: tidak ada`; `/status` `terakhir None jam lalu`
+  → `terakhir tidak diketahui`, and `0.15 jam lalu` → `9 menit lalu` under two hours.
+- **Consistent numbers and dates.** Thresholds print with two decimals everywhere
+  (`spot 4.7` sat under `HOLD 2.00/4.70`); the daily report header reads `2026-11-05`,
+  not `20261105`; `/status` open positions no longer show ISO `T` timestamps.
+- **Hourly card:** a low-confidence BUY/SELL read `BUY WEAK 4.50 — below the bar` next
+  to lines saying `bar 4.30`. It now shows the bar it cleared and names what refused
+  it: `· bar 4.30 — confidence too low, no position will open`.
+- **Close card:** coloured by result, not side (`🔴 FUTURES SELL +3.10%` read as a
+  loss); a TP1-only update is headed `Partial take-profit`, not `Position closed`.
+- **`send_signal_alert` no longer raises.** A formatter error propagated into
+  run_bot's Phase 4 and skipped the position-open/close messages queued behind the
+  hourly card; it now logs and returns 0.
+
+Section 44, 7 tests. 295/295 pass. Takes effect on `spotsignal` restart (notifier) and
+`spotsignal-qa` restart (Q&A); the cron-run report picks it up on its next run.
+
+---
+
 ## 2026-10-10 — feat: pre-register H-SR and H-PSY, the spot S/R and psychology-SL gates
 
 - **`docs/superpowers/specs/2026-10-10-sr-psy-gates-prereg.md`**: `sr_first` and

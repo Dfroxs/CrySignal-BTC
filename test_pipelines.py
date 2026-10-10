@@ -4411,7 +4411,7 @@ def test_tg_a_signal_below_the_bar_carries_no_trade_setup():
     from notifier.telegram import _format_consolidated_telegram
     with _tg_db():
         out = _format_consolidated_telegram(make_signal("BUY", "spot", confidence="WEAK"), _hold_f())
-    assert "below the bar" in out and "no position will open" in out, out
+    assert "confidence too low" in out and "no position will open" in out, out
     assert "🟢" not in out and "ENTER" not in out, out
     assert "$93,800" not in out and "SL" not in out, "an unopenable signal shows no setup"
     assert len(out) <= 350, (len(out), out)
@@ -5232,6 +5232,118 @@ def test_qa_user_unit_restarts_and_runs_the_module():
     assert "User=" not in unit, "a user unit runs as its owner; User= breaks it"
 
 
+# ── 44. Telegram format fixes ─────────────────────────────────────────────────
+
+def test_fit_html_never_cuts_a_tag_or_entity_and_closes_what_is_open():
+    from agents.ops_report import fit_html
+    assert fit_html("<b>x</b>", 100) == "<b>x</b>", "short text untouched"
+    body = "<b>Ringkasan</b> <i>(" + "harga &amp; volume " * 400 + ")</i>"
+    for limit in range(200, 260):               # every cut position across an entity
+        out = fit_html(body, limit)
+        assert len(out) <= limit, (limit, len(out))
+        assert out.endswith("…</i>"), out[-30:]
+        _assert_html_safe(out)
+    out = fit_html("a" * 90 + "<code>$95,000</code> tail" * 10, 100)
+    _assert_html_safe(out)
+    assert len(out) <= 100
+
+
+def test_ops_render_over_the_limit_stays_parseable():
+    """Before: text[:3999] + '…' ended '…harga &a…' — a broken entity Telegram rejects,
+    so a long AI summary cost the whole daily report."""
+    from agents.ops_report import TELEGRAM_LIMIT, render
+    for pad in range(0, 12):
+        out = render(_clean_facts(), [], summary="x" * pad + "harga & volume " * 400, source="m")
+        assert len(out) <= TELEGRAM_LIMIT, len(out)
+        _assert_html_safe(out)
+        assert out.endswith("…"), out[-20:]
+
+
+def test_ops_and_status_never_render_none_and_print_thresholds_alike():
+    from agents.ops_report import anomalies, render
+    from agents.qa_bot import render_status
+    f = dict(_clean_facts(), last_cycle_age_h=None, backup_latest=None,
+             thresholds={"futures": 5.45, "spot": 4.7})
+    out = render(f, anomalies(f))
+    assert "None" not in out, out
+    assert "tidak ada siklus tercatat" in out and "terbaru: tidak ada" in out, out
+    assert "futures 5.45, spot 4.70" in out, out
+    assert "· 2026-11-05" in out.splitlines()[0], out.splitlines()[0]
+    st = {"now_utc": "2026-11-05 03:30", "anomalies": anomalies(f), "cycles_24h": {"futures": 24},
+          "last_cycle_age_h": None, "opened_24h": 0, "opened_7d": 1, "open_positions_count": 1,
+          "open_positions": [{"mode": "spot", "type": "BUY", "entry": 79123.4,
+                              "opened_at": "2026-11-04T08:01:00+00:00"}],
+          "recent_cycles": {"spot": [{"type": "HOLD", "strength": 2.0, "threshold": 4.7}]},
+          "thresholds": {"futures": 5.45, "spot": 4.7}}
+    out = render_status(st)
+    assert "None" not in out and "terakhir tidak diketahui" in out, out
+    assert "sejak 2026-11-04 08:01" in out and "T08" not in out, out
+    assert "spot 4.70" in out and "HOLD 2.00/4.70" in out, out
+    assert "terakhir 9 menit lalu" in render_status(dict(st, last_cycle_age_h=0.15))
+    assert "terakhir 3.5 jam lalu" in render_status(dict(st, last_cycle_age_h=3.5))
+    _assert_html_safe(out)
+
+
+def test_qa_long_answer_fits_after_escaping_and_keeps_its_footer():
+    """Before: html.escape(text[:3800]) — escaping '&' and quotes made it longer than
+    Telegram's limit, and the answer was rejected outright."""
+    from agents.qa_bot import TELEGRAM_LIMIT
+    h, saved, path, now, tmp = _qa_env()
+    try:
+        http = _QAHttp([[_qa_update(1, "jelaskan rinci")]])
+        _qa_bot(tmp, http, _QAAsk(text='P&L "naik" ' * 600), path).poll_once()
+        (out,) = http.sent()
+        assert len(out) <= TELEGRAM_LIMIT, len(out)
+        assert "claude-opus-5-5" in out and "hari ini</i>" in out, out[-80:]
+        _assert_html_safe(out)
+    finally:
+        _restore_history_db(h, saved, path)
+
+
+def test_tg_low_confidence_line_shows_the_bar_it_cleared_and_says_confidence():
+    """`BUY WEAK 6.50 — below the bar` sat above `bar 4.30` lines: the score had cleared
+    the threshold; confidence was what refused it."""
+    from notifier.telegram import _format_compact_signal_telegram
+    with _tg_db():
+        out = _format_compact_signal_telegram(make_signal("BUY", "spot", confidence="WEAK"))
+    assert "BUY WEAK 6.50 · bar 4.30 — confidence too low" in out, out
+    assert "below the bar" not in out, out
+
+
+def test_tg_close_card_colours_by_result_and_names_a_partial():
+    from notifier.telegram import _format_close_notification
+    win_short = {"type": "SELL", "mode": "futures", "pnl": 3.10, "outcome": "TP2",
+                 "entry": 95000.0, "exit": 89000.0}
+    loss_long = {"type": "BUY", "mode": "spot", "pnl": -1.20, "outcome": "SL",
+                 "entry": 95000.0, "exit": 93800.0}
+    tp1 = {"type": "BUY", "mode": "spot", "pnl": 1.50, "outcome": "TP1",
+           "entry": 95000.0, "exit": 96500.0}
+    with _tg_db(closed_pnl=lambda mode=None: (0.0, 0, 0.0)):
+        out = _format_close_notification([win_short, loss_long])
+        assert "🟢 FUTURES SELL <b>+3.10%</b>" in out, out
+        assert "🔴 SPOT BUY <b>-1.20%</b>" in out, out
+        assert "Position closed" in out, out
+        part = _format_close_notification([tp1])
+        assert "Partial take-profit" in part and "Position closed" not in part, part
+        assert "Position closed" in _format_close_notification([tp1, loss_long])
+
+
+def test_send_signal_alert_survives_a_formatter_error():
+    """A formatter exception used to propagate into run_bot's Phase 4 and skip the
+    position-open/close messages queued after the hourly card."""
+    import notifier.common as nc
+    import notifier.telegram as nt
+    combined = nt._send_combined_telegram
+    try:
+        def boom(*a):
+            raise TypeError("unsupported format string passed to NoneType.__format__")
+        nt._send_combined_telegram = boom
+        assert nc.send_signal_alert(spot_signal={"mode": "spot"},
+                                    futures_signal={"mode": "futures"}) == 0
+    finally:
+        nt._send_combined_telegram = combined
+
+
 if __name__ == "__main__":
     print("\n══ Pipeline Dummy-Data Tests ══\n")
 
@@ -5616,6 +5728,15 @@ if __name__ == "__main__":
     print("\n── 43. spot_gates_ic.py — H-SR / H-PSY ──")
     run("H-PSY step: live for BTC, scaled else",  test_spot_gates_psy_rule_is_live_for_btc_and_scaled_elsewhere)
     run("H-SR rule + verdicts per prereg",        test_spot_gates_sr_rule_and_verdicts_follow_the_prereg)
+
+    print("\n── 44. Telegram format fixes ──")
+    run("fit_html: no cut tag/entity, closes",    test_fit_html_never_cuts_a_tag_or_entity_and_closes_what_is_open)
+    run("ops render over limit stays parseable",  test_ops_render_over_the_limit_stays_parseable)
+    run("ops/status: no None, thresholds .2f",    test_ops_and_status_never_render_none_and_print_thresholds_alike)
+    run("qa long answer fits after escaping",     test_qa_long_answer_fits_after_escaping_and_keeps_its_footer)
+    run("tg low confidence names its bar",        test_tg_low_confidence_line_shows_the_bar_it_cleared_and_says_confidence)
+    run("tg close card: colour by P&L, partial",  test_tg_close_card_colours_by_result_and_names_a_partial)
+    run("formatter error spares queued msgs",     test_send_signal_alert_survives_a_formatter_error)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
