@@ -4,6 +4,17 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-10 — feat: Q&A facts list each gate block, one row per signal
+
+The Q&A bot could say "regime_bearish 2, sr_first 2" but not which gate refused the
+16:01 signal. `build_facts` now adds `recent_blocks`: the last 24h of `signal_blocks`
+(stale_cache excluded, max 40), each with that hour's threshold and price from
+`cycle_log`, strength/threshold ratio, confidence and `run_bot._block`'s own text as
+`detail`. `qa_knowledge.md` explains it, including that only the FIRST failing gate is
+recorded. ~1k extra characters of facts. 286/286 pass.
+
+---
+
 ## 2026-10-10 — feat: pre-register H-RGL, the live regime gate priced against chance
 
 - **`docs/superpowers/specs/2026-10-10-regime-live-prereg.md`**: the spot BUYs that
