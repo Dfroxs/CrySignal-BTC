@@ -5106,6 +5106,7 @@ def test_qa_answer_is_html_escaped_and_question_stays_data():
 
 def test_qa_facts_exclude_the_locked_hypothesis_figures():
     import json
+    from datetime import timedelta
     from agents.qa_bot import LOCK_UNTIL, build_facts, system_prompt
     h, saved, path, now, tmp = _qa_env()
     try:
@@ -5117,6 +5118,9 @@ def test_qa_facts_exclude_the_locked_hypothesis_figures():
         c.execute("INSERT INTO shadow_opinions (timestamp, provider, verdict, opinion_confidence, "
                   "reason) VALUES ('2026-11-05 02:00:00', 'anthropic', 'AGREE', 77, "
                   "'SHADOW-REASON-TEXT')")
+        c.execute("INSERT INTO signal_blocks (timestamp,mode,signal_type,gate,reason) VALUES "
+                  "(?, 'spot','BUY','stale_cache','replay')",
+                  ((now - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S"),))
         c.commit()
         f = build_facts(path, now, host_run=_qa_host_run, root=tmp)
         blob = json.dumps(f, ensure_ascii=False, default=str)
@@ -5130,6 +5134,11 @@ def test_qa_facts_exclude_the_locked_hypothesis_figures():
         assert all(cy is fut[-1] or "reasons" not in cy for cy in fut[:-3]), fut
         assert f["blocks_by_gate"]["24h"]["futures"]["fakeout_first"] == 2
         assert len(f["closed_positions"]) == 1 and len(f["open_positions"]) == 1
+        assert [b["gate"] for b in f["recent_blocks"]] == \
+            ["fakeout_first", "fakeout_first", "confidence_first"], f["recent_blocks"]
+        assert all(b["threshold"] == 5.2 and b["price"] == 80000 for b in f["recent_blocks"]), \
+            "each block carries its own cycle's threshold and price"
+        assert '"reason"' not in blob
         assert f["shadow_24h"] == {"anthropic": [1, 0]}, "health counts only, no verdicts"
         sp = system_prompt(now)
         assert "2026-11-08" in sp and LOCK_UNTIL.date().isoformat() == "2026-11-08"

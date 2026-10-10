@@ -121,6 +121,12 @@ Jika FAKTA dan teks ini berbeda, FAKTA yang benar.
   Gunakan ini untuk menjawab "kenapa HOLD / kenapa skornya segini".
 - `gap` (bila ada) = threshold − strength; positif berarti kurang sebanyak itu untuk fire.
 - `blocks_by_gate.24h/7d`: jumlah sinyal yang menyala tetapi diblok, per mode dan gerbang.
+- `recent_blocks`: blok gerbang 24 jam terakhir SATU PER SATU, urut lama → baru (tanpa
+  stale_cache). Tiap baris: `ts`, `mode`, `gate`, `strength`, `threshold` dan `price` dari
+  siklus jam itu, `ratio` = strength/threshold (≥ 1.2 = NORMAL), `confidence`, dan
+  `detail` = teks penolakan dari kode. Pakai ini untuk menjawab "sinyal jam X ditolak
+  gerbang apa". Satu sinyal hanya diblok oleh gerbang PERTAMA yang gagal; gerbang
+  sesudahnya tidak dicek, jadi jangan menyimpulkan sinyal itu lolos gerbang lain.
 - `open_positions` / `closed_positions`: posisi paper. `pnl_pct` dalam persen.
 - `anomalies`: masalah kesehatan yang sudah dideteksi kode.
 - Backup database jalan tiap hari 03:00 UTC (laporan harian 03:30 UTC). Antara 00:00 dan

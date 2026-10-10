@@ -83,6 +83,8 @@ REPLIED_CHARS = 1500
 KNOWLEDGE_PATH = Path(__file__).with_name("qa_knowledge.md")
 VETO_MARKER = "⛔"
 VETO_CHARS = 200
+RECENT_BLOCKS = 40               # newest Phase 3 blocks listed one by one (24h, stale_cache excluded)
+BLOCK_DETAIL_CHARS = 160
 LLM_MAX_TOKENS = 8000            # DeepSeek thinks inside max_tokens; 4000 can cut it off
 
 
@@ -246,6 +248,29 @@ def build_facts(db_path, now, run_start=None, root=".", host_run=_run):
                                    (now - delta).strftime("%Y-%m-%d %H:%M:%S")):
                 by.setdefault(mode, {})[gate] = n
             f["blocks_by_gate"][label] = by
+        # One row per block so "which gate refused the 16:01 signal?" has an answer.
+        # stale_cache rows are replays of a block already listed; blocks_by_gate counts
+        # them. `detail` is run_bot._block's own text (code-written, never news).
+        hour = lambda col: f"substr({_ts(col)}, 1, 13)"
+        rows = q(f"SELECT {_ts('b.timestamp')}, b.mode, b.signal_type, b.gate, b.strength, "
+                 "b.confidence, b.reason, "
+                 f"(SELECT c.threshold FROM cycle_log c WHERE c.mode = b.mode AND "
+                 f"{hour('c.timestamp')} = {hour('b.timestamp')} ORDER BY c.id DESC LIMIT 1), "
+                 f"(SELECT c.price FROM cycle_log c WHERE c.mode = b.mode AND "
+                 f"{hour('c.timestamp')} = {hour('b.timestamp')} ORDER BY c.id DESC LIMIT 1) "
+                 f"FROM signal_blocks b WHERE {since.replace('timestamp', 'b.timestamp')} "
+                 "AND b.gate != 'stale_cache' ORDER BY b.id DESC "
+                 f"LIMIT {RECENT_BLOCKS}",
+                 (now - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S"))
+        r2 = lambda x: None if x is None else round(x, 2)
+        f["recent_blocks"] = [
+            {k: v for k, v in (("ts", str(ts)[:16]), ("mode", m), ("type", t), ("gate", g),
+                               ("strength", r2(st)), ("threshold", r2(th)),
+                               ("ratio", r2(st / th) if st and th else None),
+                               ("confidence", cf), ("price", None if px is None else round(px)),
+                               ("detail", (rs or "")[:BLOCK_DETAIL_CHARS] or None))
+             if v is not None}
+            for ts, m, t, g, st, cf, rs, th, px in rows][::-1]
     finally:
         con.close()
     f.pop("blocks_24h", None)              # superseded by blocks_by_gate, per mode
