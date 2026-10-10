@@ -4,6 +4,20 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-10 — feat: pre-register H-SR and H-PSY, the spot S/R and psychology-SL gates
+
+- **`docs/superpowers/specs/2026-10-10-sr-psy-gates-prereg.md`**: `sr_first` and
+  `psy_sl_first` had never been tested on spot, and refused 3 of the 6 NORMAL+ spot BUYs
+  on 2026-10-10. Same design as H-RG (kept − only_G, random arm where G's condition
+  holds, two windows, power guards), but scored as live through
+  `backtest._score_candle`: H-RG's harness passed `sr=None`, so `sr_first` could not fire
+  there. The $1,000 psychology step stays for BTC and scales with price elsewhere.
+- **`scripts/spot_gates_ic.py`**, committed before the smoke (`571b024`). Smoke, BTC 400
+  candles: `sr_first` fires on 3 of 6 BUYs, 0 BTC psychology mismatches. 2 tests;
+  288/288 pass.
+
+---
+
 ## 2026-10-10 — feat: Q&A facts list each gate block, one row per signal
 
 The Q&A bot could say "regime_bearish 2, sr_first 2" but not which gate refused the
