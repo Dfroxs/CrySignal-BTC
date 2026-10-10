@@ -3916,6 +3916,74 @@ def test_scoring_scripts_refuse_before_day_30():
     assert str(hd.SCORE_FROM.date()) == "2026-11-08" and str(sr.DAY_30.date()) == "2026-11-08"
     assert "HEALTH ONLY" in inspect.getsource(sr.main) and "refused" in inspect.getsource(hd.main)
 
+def _rgl_frame(n=650):
+    """Synthetic BTC 4h frame with every column the engine reads (entry_ic's loader)."""
+    import tempfile, numpy as np, pandas as pd
+    from pathlib import Path
+    from scripts.entry_ic import load_symbol
+    rng = np.random.default_rng(3)
+    close = 60000 * np.exp(np.cumsum(rng.normal(scale=0.01, size=n)))
+    ts = pd.date_range("2026-07-01", periods=n, freq="4h")
+    d = Path(tempfile.mkdtemp())
+    pd.DataFrame({"ts": (ts - pd.Timestamp(0)) // pd.Timedelta(milliseconds=1), "open": close,
+                  "high": close * 1.004, "low": close * 0.996, "close": close,
+                  "volume": 100.0}).to_csv(d / "BTC_USDT_4h.csv", index=False)
+    return load_symbol("BTC", d, end=None)
+
+def test_regime_live_maps_each_block_to_the_bar_live_scored():
+    """A cycle at 13:01 scores the bar that closed at 12:00 (opened 08:00). Restart
+    cycles inside one 4H bar collapse to that bar."""
+    import pandas as pd
+    from scripts.regime_live_ic import bar_index, distinct_bars
+    df = _rgl_frame()
+    at = lambda s: df.index[bar_index(df, pd.Timestamp(s))]
+    assert at("2026-10-09 13:01:04") == pd.Timestamp("2026-10-09 08:00")
+    assert at("2026-10-09 16:01:02") == pd.Timestamp("2026-10-09 12:00")
+    assert at("2026-10-09 15:59:59") == pd.Timestamp("2026-10-09 08:00")
+    bars = distinct_bars(df, [pd.Timestamp(t) for t in
+                              ("2026-10-09 13:01:04", "2026-10-09 14:01:02", "2026-10-09 18:01:05")])
+    assert [str(df.index[i]) for i in bars] == ["2026-10-09 08:00:00", "2026-10-09 12:00:00"]
+
+def test_regime_live_reads_only_spot_regime_buys_in_the_window_in_both_timestamp_forms():
+    import os, sqlite3, tempfile
+    import pandas as pd
+    from scripts.regime_live_ic import load_blocks
+    db = os.path.join(tempfile.mkdtemp(), "x.db")
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE signal_blocks (id INTEGER PRIMARY KEY, timestamp TEXT, mode TEXT, "
+                "signal_type TEXT, gate TEXT, reason TEXT, strength REAL, confidence TEXT, signal_id INT)")
+    rows = [("2026-10-09 12:01:00", "spot", "BUY", "regime_bearish"),       # before start
+            ("2026-10-09 13:01:04", "spot", "BUY", "regime_bearish"),       # in
+            ("2026-10-09T16:01:02+00:00", "spot", "BUY", "regime_bearish"), # in, other form
+            ("2026-10-09 17:01:03", "spot", "BUY", "stale_cache"),          # other gate
+            ("2026-10-09 18:01:05", "futures", "BUY", "regime_bearish"),    # other mode
+            ("2026-11-08 00:01:00", "spot", "BUY", "regime_bearish")]       # day 30: out
+    con.executemany("INSERT INTO signal_blocks (timestamp, mode, signal_type, gate) VALUES (?,?,?,?)", rows)
+    con.commit(); con.close()
+    got = load_blocks(db, "2026-10-09T12:34:20Z")
+    assert got == [pd.Timestamp("2026-10-09 13:01:04"), pd.Timestamp("2026-10-09 16:01:02")], got
+
+def test_regime_live_replay_from_one_adx_pass_equals_a_fresh_prefix():
+    """Replay computes ADX once; that is only valid if ADX is causal."""
+    from signals.indicators import classify_regime
+    from scripts.regime_live_ic import Replay
+    df = _rgl_frame()
+    rp = Replay(df)
+    for i in (150, 260, 399):
+        assert rp.regime(i) == classify_regime(df.iloc[: i + 1]), i
+
+def test_regime_live_verdict_and_lock_follow_the_prereg():
+    import pandas as pd
+    from scripts.regime_live_ic import SCORE_FROM, scorable, verdict
+    s = lambda n, m, lo, hi: {"n": n, "mean": m, "ci90": [lo, hi]}
+    assert verdict(s(9, -3.0, -4.0, -2.0), 0.0) == "INCONCLUSIVE"      # power guard
+    assert verdict(s(12, -1.0, -1.8, -0.2), 0.0) == "SUPPORTS"
+    assert verdict(s(12, -1.0, -1.8, 0.3), 0.0) == "INCONCLUSIVE"
+    assert verdict(s(12, 1.0, 0.2, 1.8), 0.0) == "CONTRADICTS"
+    assert verdict(s(12, -1.0, -1.8, -0.2), float("nan")) == "INCONCLUSIVE"
+    assert str(SCORE_FROM) == "2026-11-11 00:00:00"
+    assert not scorable(pd.Timestamp("2026-11-10 23:59")) and scorable(SCORE_FROM)
+
 def test_llm_haiku_request_omits_effort_and_fallbacks():
     """Haiku 4.5 rejects `effort` and has no server-side fallback; Opus 5.5 keeps both."""
     from agents.llm import ask
@@ -5497,6 +5565,12 @@ if __name__ == "__main__":
     run("H-D return after stat known, BTC window", test_hd_return_starts_after_the_stat_is_known_and_btc_window_holds)
     run("H-D finds planted signal, not null",     test_hd_pooled_ic_finds_a_planted_signal_and_not_a_null_one)
     run("scorers refuse before day 30",           test_scoring_scripts_refuse_before_day_30)
+
+    print("\n── 42. regime_live_ic.py — H-RGL ──")
+    run("H-RGL block → bar live scored",          test_regime_live_maps_each_block_to_the_bar_live_scored)
+    run("H-RGL reads spot regime, window, forms", test_regime_live_reads_only_spot_regime_buys_in_the_window_in_both_timestamp_forms)
+    run("H-RGL one ADX pass = fresh prefix",      test_regime_live_replay_from_one_adx_pass_equals_a_fresh_prefix)
+    run("H-RGL verdict + lock per prereg",        test_regime_live_verdict_and_lock_follow_the_prereg)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
