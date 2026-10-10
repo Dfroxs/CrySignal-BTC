@@ -251,3 +251,4 @@ docs/superpowers/specs/2026-10-09-hist-futures-ic-alts-run/*/*.csv
 
 # Binance derivatives archive (scripts/archive_binance_derivs.py), VPS only
 data/derivs/
+data/regime_live/

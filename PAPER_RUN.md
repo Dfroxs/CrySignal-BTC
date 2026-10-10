@@ -68,6 +68,12 @@ Day 30 is still 2026-11-08. The diff check now runs from `316e0dc`.
 Notifier only: a signal blocked in Phase 3 now shows as `⛔ … blocked by <gate>, no
 position` instead of reading like a trade. The trading-path diff from `316e0dc` is empty and the
 manifest is unchanged (`started_at = 2026-10-09T12:34:20Z`).
+
+**2026-10-10 02:18:54 UTC: pulled `a67c93a` (PR #22), restarted `spotsignal-qa` only.
+`spotsignal` was NOT restarted.** The trading-path diff from `28dabb5` is empty (only
+agents, scripts, docs, tests). The Q&A knowledge now explains `stale_cache` (the hourly
+replay of a 4H analysis) and the 4H ADX/DI regime gate. The backup anomaly no longer
+fires between 00:00 and 03:15 UTC. Run 3 does not restart.
 ---
 
 ## New session? Do this first
