@@ -1,6 +1,6 @@
 # Pengetahuan proyek SpotSignal (untuk agent tanya-jawab)
 
-Ditulis 2026-10-09 untuk v2.9.x. Ini menjelaskan CARA KERJA bot. Angka yang berubah
+Ditulis 2026-10-09 untuk v2.9.x (gerbang regime/stale_cache dan backup diperjelas 2026-10-10). Ini menjelaskan CARA KERJA bot. Angka yang berubah
 (threshold saat ini, jumlah siklus, posisi) selalu diambil dari FAKTA, bukan dari sini.
 Jika FAKTA dan teks ini berbeda, FAKTA yang benar.
 
@@ -54,11 +54,26 @@ Jika FAKTA dan teks ini berbeda, FAKTA yang benar.
 - `psy_sl_first`: stop-loss terlalu dekat angka bulat ($1.000-an), rawan stop hunt.
 - `sr_first`: entry terlalu dekat resistance (BUY) atau support (SELL), dalam 1× ATR.
 - `regime_bearish` (spot) / `regime_counter` (futures): melawan regime yang sedang
-  trending (BUY di tren bearish, SELL di tren bullish).
+  trending (BUY di tren bearish, SELL di tren bullish). Regime dihitung dari **ADX dan
+  DI+/DI− pada timeframe sinyal itu sendiri** (spot 4H, futures 1H): blok bila ADX > 25
+  (TRENDING) atau ATR di persentil > 90% (VOLATILE), DAN DI− > DI+ (untuk BUY). Ini
+  momentum jangka pendek, BUKAN EMA200 dan BUKAN HTF 1D/1W. Jadi "harga di atas EMA200"
+  dan "HTF BULLISH" di baris alasan bisa muncul bersamaan dengan blok regime_bearish:
+  tren besar naik, tetapi 4H sedang turun kuat (pullback tajam). Itu bukan kontradiksi
+  atau bug. Uji H-RG (2026-10-09) menemukan gerbang regime spot benar-benar menyeleksi,
+  jadi ia dipertahankan.
 - `trend_confluence`: kurang dari 2 dari 3 konfirmasi searah (harga vs EMA200, arah
   ADX, harga vs VWAP).
 - `breakout_chase` (spot): harga > VWAP + 1 ATR dan tidak dekat support.
-- `stale_cache` (spot): analisis 4H dari cache lama, tidak dieksekusi.
+- `stale_cache` (spot): BUKAN penyebab 0 posisi, dan bukan masalah. Spot dinilai per
+  candle 4H tetapi bot jalan tiap jam: siklus pertama setelah candle 4H tutup menghitung
+  ulang; 3 siklus berikutnya memutar ulang hasil yang sama dan sengaja tidak boleh
+  membuka posisi (harga entry sudah sampai 3 jam basi). Jadi SATU sinyal spot tercatat
+  sebagai 1 blok "asli" (gerbang yang benar-benar menolaknya) ditambah sampai 3 blok
+  stale_cache. Wajar bila stale_cache lebih banyak dari jumlah sinyal. Untuk menjawab
+  "apa yang menahan spot", abaikan stale_cache dan lihat gerbang lain di blocks_by_gate:
+  merekalah keputusan sebenarnya. Setelah restart, cache kosong, jadi siklus berikutnya
+  dihitung ulang walau di tengah candle 4H.
 - `pyramid_*` (spot): syarat menambah posisi kedua/ketiga: butuh STRONG, jarak minimal
   0.5 ATR dari entry terakhir, maksimal 6% dari entry pertama, dan maks 3 entry.
 - `flip_*` (futures): gerbang yang sama, diterapkan saat membalik arah.
@@ -108,4 +123,7 @@ Jika FAKTA dan teks ini berbeda, FAKTA yang benar.
 - `blocks_by_gate.24h/7d`: jumlah sinyal yang menyala tetapi diblok, per mode dan gerbang.
 - `open_positions` / `closed_positions`: posisi paper. `pnl_pct` dalam persen.
 - `anomalies`: masalah kesehatan yang sudah dideteksi kode.
+- Backup database jalan tiap hari 03:00 UTC (laporan harian 03:30 UTC). Antara 00:00 dan
+  03:00 UTC wajar bila backup terbaru masih bertanggal kemarin. Semua waktu di FAKTA
+  adalah UTC (`now_utc`), bukan WIB; "hari ini" berarti hari UTC.
 - `spot_svc` / `alloc_svc`: status service. `last_cycle_age_h`: jam sejak siklus terakhir.
