@@ -78,6 +78,17 @@ fires between 00:00 and 03:15 UTC. Run 3 does not restart.
 **2026-10-10 17:32 UTC: pulled `717a472` (PR #24), restarted `spotsignal-qa` only.**
 Trading-path diff from `9721529` empty. The Q&A facts now list each gate block
 (`recent_blocks`). `spotsignal` untouched, run 3 does not restart.
+
+**Restart 2026-10-10 17:52:56 UTC at `85f190b` (PRs #25, #26). Run 3 does NOT restart.**
+Notifier and agents only: HTML-safe truncation, Q&A answers escaped before fitting, a
+card error no longer swallows the open/close messages, WEAK cards name the confidence
+bar, close cards coloured by P&L, TP1-only headed "Partial take-profit". The trading-path
+diff from `316e0dc` (`signals/ config.py trading/paper.py backtest.py`) is empty;
+`run_bot.py` differs only by the 17:14 notifier annotation. `spotsignal` came back at
+17:53:26 (pid 69162) with position #4 intact; `spotsignal-qa` at 17:53:37.
+**Trap:** `pkill -f run_bot.py` sent over ssh also matches the ssh shell's own command
+line and kills the session (exit 255) — the bot still restarts. Use
+`pkill -f '[r]un_bot.py'`.
 ---
 
 ## New session? Do this first
