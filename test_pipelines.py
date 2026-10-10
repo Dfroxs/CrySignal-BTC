@@ -3916,6 +3916,36 @@ def test_scoring_scripts_refuse_before_day_30():
     assert str(hd.SCORE_FROM.date()) == "2026-11-08" and str(sr.DAY_30.date()) == "2026-11-08"
     assert "HEALTH ONLY" in inspect.getsource(sr.main) and "refused" in inspect.getsource(hd.main)
 
+def test_spot_gates_psy_rule_is_live_for_btc_and_scaled_elsewhere():
+    """H-PSY: BTC keeps live's $1,000 step at any price; other symbols use their own
+    scale. For BTC the replacement must agree with _failing_gates's own rule."""
+    import pandas as pd
+    from backtest import _failing_gates
+    from scripts.spot_gates_ic import gates_for, psy_hit, psy_step
+    assert psy_step("BTC", 120000) == 1000 and psy_step("BTC", 8000) == 1000
+    assert psy_step("ETH", 3000) == 100 and psy_step("SOL", 150) == 10
+    assert abs(psy_step("DOGE", 0.12) - 0.01) < 1e-12
+    assert psy_hit(80946, 1000) and not psy_hit(80700, 1000)      # live's 08:01 refusal
+    assert psy_hit(2997.0, 100) and not psy_hit(2950.0, 100)
+    df = _rgl_frame()
+    w = df.iloc[:300]
+    for sl in (80946.0, 80700.0, 79990.0, 79500.0):
+        sig = {"type": "BUY", "confidence": "NORMAL", "entry_price": 82000.0, "stop_loss": sl,
+               "_regime": {}, "support_resistance": {}}
+        own = "psy_sl_first" in _failing_gates(sig, "spot", w, None)
+        gates, differs = gates_for("BTC", sig, w)
+        assert not differs and own == ("psy_sl_first" in gates), sl
+
+def test_spot_gates_sr_rule_and_verdicts_follow_the_prereg():
+    from scripts.spot_gates_ic import overall, sr_hit, verdict1
+    assert sr_hit(82880, 1000, {"resistance": 83529}) and not sr_hit(82000, 1000, {"resistance": 83529})
+    assert not sr_hit(84000, 1000, {"resistance": 83529}) and not sr_hit(82880, 1000, {})
+    assert verdict1([-1.0] * 29, [0.5] * 50, 30)[0] == "INCONCLUSIVE"        # power guard
+    assert verdict1([-1.0, -0.8] * 20, [0.5, 0.7] * 25, 30)[0] == "PASS"
+    assert verdict1([0.5, 0.7] * 20, [-1.0, -0.8] * 25, 30)[0] == "FAIL"
+    assert overall("FAIL", "INCONCLUSIVE") == "FAIL" and overall("FAIL", "PASS") == "INCONCLUSIVE"
+    assert overall("PASS", "PASS") == "PASS" and overall("PASS", "INCONCLUSIVE") == "INCONCLUSIVE"
+
 def _rgl_frame(n=650):
     """Synthetic BTC 4h frame with every column the engine reads (entry_ic's loader)."""
     import tempfile, numpy as np, pandas as pd
@@ -5582,6 +5612,10 @@ if __name__ == "__main__":
     run("H-RGL reads spot regime, window, forms", test_regime_live_reads_only_spot_regime_buys_in_the_window_in_both_timestamp_forms)
     run("H-RGL one ADX pass = fresh prefix",      test_regime_live_replay_from_one_adx_pass_equals_a_fresh_prefix)
     run("H-RGL verdict + lock per prereg",        test_regime_live_verdict_and_lock_follow_the_prereg)
+
+    print("\n── 43. spot_gates_ic.py — H-SR / H-PSY ──")
+    run("H-PSY step: live for BTC, scaled else",  test_spot_gates_psy_rule_is_live_for_btc_and_scaled_elsewhere)
+    run("H-SR rule + verdicts per prereg",        test_spot_gates_sr_rule_and_verdicts_follow_the_prereg)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
