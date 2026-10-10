@@ -30,7 +30,7 @@ the S/R scoring condition never scored either.
   `load_symbol`: its 10 `TUNING` symbols (BTC, ETH, SOL, BNB, OKB, ICP, SUSHI, NEAR, UNI,
   DOGE). Nakhoda's locked market-holdout symbols are not read.
 - HTF (1D, 1W) resampled from the 4h base (`entry_ic.build_htf`, strict warmup).
-- **Scoring as live does it:** `backtest._score_candle` (the last 250 closed bars with
+- **Scoring as live does it:** `backtest._score_candle` (the last `LIVE_BASE_BARS` = 499 closed bars with
   indicators computed over them alone, `detect_support_resistance` passed to the engine,
   HTF as of that bar), `mode='spot'`, fixed `SPOT_THRESHOLD`, `disabled=None`, so
   `config.VETOES_DISABLED` applies (spot anti-chase off, as deployed since `316e0dc`).
