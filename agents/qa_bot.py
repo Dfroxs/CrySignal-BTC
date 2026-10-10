@@ -62,7 +62,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from agents.ops_report import _run, _ts, anomalies, collect_db_facts, collect_host_facts
+from agents.ops_report import (_run, _ts, anomalies, collect_db_facts, collect_host_facts,
+                               fit_html, fmt_thresholds)
 
 API = "https://api.telegram.org/bot{token}/{method}"
 POLL_TIMEOUT_S = 50              # Telegram holds the request open this long
@@ -313,7 +314,7 @@ def render_status(f):
         lines.append("✅ semua bersih")
     cyc, fired = f.get("cycles_24h") or {}, f.get("fired_24h") or {}
     lines.append(f"siklus 24j: futures {cyc.get('futures', 0)} · spot {cyc.get('spot', 0)} · "
-                 f"terakhir {e(f.get('last_cycle_age_h'))} jam lalu")
+                 f"terakhir {_ago(f.get('last_cycle_age_h'))}")
     lines.append(f"sinyal 24j: futures {fired.get('futures', 0)} · spot {fired.get('spot', 0)}")
     for mode, rows in (f.get("recent_cycles") or {}).items():
         if rows:
@@ -326,7 +327,7 @@ def render_status(f):
                  f"terbuka: {f.get('open_positions_count', len(f.get('open_positions') or []))}")
     for p in f.get("open_positions") or []:
         lines.append(f"• {e(p['mode'])} {e(p['type'])} @{p['entry']:,.0f} sejak "
-                     f"{e(str(p['opened_at'])[:16])}")
+                     f"{e(str(p['opened_at'])[:16].replace('T', ' '))}")
     gates = {}
     for by in (f.get("blocks_by_gate") or {}).get("24h", {}).values():
         for g, n in by.items():
@@ -335,9 +336,15 @@ def render_status(f):
         top = sorted(gates.items(), key=lambda kv: -kv[1])[:3]
         lines.append("gerbang 24j: " + ", ".join(f"{e(g)} {n}" for g, n in top))
     if f.get("thresholds"):
-        lines.append("threshold: " + ", ".join(f"{e(m)} {t}" for m, t in f["thresholds"].items()))
-    text = "\n".join(lines)
-    return text if len(text) <= TELEGRAM_LIMIT else text[:TELEGRAM_LIMIT - 1] + "…"
+        lines.append("threshold: " + fmt_thresholds(f["thresholds"], e))
+    return fit_html("\n".join(lines), TELEGRAM_LIMIT)
+
+
+def _ago(hours):
+    """'9 menit lalu' under two hours, '3.5 jam lalu' above; never 'None jam lalu'."""
+    if not isinstance(hours, (int, float)):
+        return "tidak diketahui"
+    return f"{hours * 60:.0f} menit lalu" if hours < 2 else f"{hours:.1f} jam lalu"
 
 
 # ---------------------------------------------------------------------------
@@ -499,11 +506,11 @@ class QABot:
         self.log(f"qa: answered {len(question)}-char question via {reply.provider}/"
                  f"{reply.model} tokens in={reply.input_tokens} out={reply.output_tokens} "
                  f"({used}/{MAX_QUESTIONS_PER_DAY} today)")
-        text = (html.escape(reply.text) + f"\n\n<i>{html.escape(reply.provider)}/"
-                f"{html.escape(reply.model)} · {used}/{MAX_QUESTIONS_PER_DAY} hari ini</i>")
-        if len(text) > TELEGRAM_LIMIT:
-            text = html.escape(reply.text[:TELEGRAM_LIMIT - 200]) + "…"
-        self.send(text)
+        footer = (f"\n\n<i>{html.escape(reply.provider)}/{html.escape(reply.model)} · "
+                  f"{used}/{MAX_QUESTIONS_PER_DAY} hari ini</i>")
+        # Cut AFTER escaping: escaping lengthens the text (& → &amp;), so a raw cut at
+        # limit-200 could still exceed Telegram's limit and lose the whole answer.
+        self.send(fit_html(html.escape(reply.text), TELEGRAM_LIMIT - len(footer)) + footer)
 
     def run_forever(self):
         failures = 0

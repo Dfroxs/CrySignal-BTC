@@ -74,6 +74,10 @@ manifest is unchanged (`started_at = 2026-10-09T12:34:20Z`).
 agents, scripts, docs, tests). The Q&A knowledge now explains `stale_cache` (the hourly
 replay of a 4H analysis) and the 4H ADX/DI regime gate. The backup anomaly no longer
 fires between 00:00 and 03:15 UTC. Run 3 does not restart.
+
+**2026-10-10 17:32 UTC: pulled `717a472` (PR #24), restarted `spotsignal-qa` only.**
+Trading-path diff from `9721529` empty. The Q&A facts now list each gate block
+(`recent_blocks`). `spotsignal` untouched, run 3 does not restart.
 ---
 
 ## New session? Do this first

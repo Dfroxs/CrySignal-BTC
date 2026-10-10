@@ -81,6 +81,16 @@ def send_signal_alert(spot_signal=None, futures_signal=None, symbol="BTC/USDT"):
     Returns the number of messages delivered, so the caller can report honestly
     instead of announcing a send that never happened.
     """
+    try:
+        return _send_signal_alert(spot_signal, futures_signal, symbol)
+    except Exception as e:  # noqa: BLE001
+        # A malformed signal must cost only the hourly card. Raised into run_bot's
+        # Phase 4, it also skipped the position-open/close messages queued behind it.
+        logger.error("Telegram signal card skipped: %s: %s", type(e).__name__, e)
+        return 0
+
+
+def _send_signal_alert(spot_signal, futures_signal, symbol):
     from notifier.telegram import _format_compact_signal_telegram, _send_combined_telegram
 
     # Backward compat: positional single-signal call

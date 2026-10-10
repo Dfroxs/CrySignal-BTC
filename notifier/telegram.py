@@ -92,9 +92,12 @@ def _verdict_line(sig):
 
     if stype in ("BUY", "SELL"):
         if not _openable(sig):
+            # The bar here is CONFIDENCE, not the score threshold: the score has
+            # already cleared `bar`. "below the bar" next to 4.50 > bar 4.30 read as
+            # a contradiction, so name the bar that actually refused it.
             conf_s = f" {conf}" if conf else ""
-            return (f"🔇 {label} · {stype}{conf_s} {score:.2f} — "
-                    f"below the bar, no position will open", False)
+            return (f"🔇 {label} · {stype}{conf_s} {score:.2f} · bar {thr:.2f} — "
+                    f"confidence too low, no position will open", False)
         conf_s = f" {conf}" if conf else ""
         block = sig.get("_phase3_block")
         if block:
@@ -275,10 +278,14 @@ def _format_close_notification(closed):
     if not closed:
         return None
 
-    lines = ["🔔 <b>Position closed</b>"]
+    # A TP1 hit closes half and leaves the position open: "Position closed" over it
+    # told the owner the trade was over.
+    partial_only = all(c.get("outcome") == "TP1" for c in closed)
+    lines = ["🔔 <b>Partial take-profit</b>" if partial_only else "🔔 <b>Position closed</b>"]
     modes = []
     for c in closed:
-        icon = "🟢" if c["type"] == "BUY" else "🔴"
+        # Colour by result, not side: "🔴 FUTURES SELL +3.10%" read as a loss.
+        icon = "🟢" if c["pnl"] >= 0 else "🔴"
         mode = c.get("mode", "futures")
         if mode not in modes:
             modes.append(mode)
