@@ -27,6 +27,22 @@ those trades. Fidelity check: reproduce H-SR's kept arm exactly. Nothing changes
 
 ---
 
+## 2026-10-15 — docs: H-TP results — nearer spot TP1 INCONCLUSIVE, nothing changes
+
+Scored as pre-registered (`2026-10-15-tp1-distance-results.md`, instrument
+`scripts/tp1_ic.py`). Fidelity passed: H-SR's kept arm was reproduced exactly.
+
+- **Synthetic entries both pass.** A (2024–25): 9/10 cells, +0.0995pp per entry.
+  B (09-21 grid): 18/20 cells, +0.1025pp. TP1 hit rate ~13% → 32%.
+- **Engine entries (the guard) are negative in both windows:** −0.02pp (n=347) and
+  −0.08pp (n=43). That makes the verdict INCONCLUSIVE.
+- **Reading:** a nearer TP1 helps on price itself, but not on the range-top breakout
+  entries this engine takes, whose winners run.
+- **Outcome:** spot TP1 stays at 2.5R. Recorded as a lead in the run-4 backlog, tied to
+  H-B.
+
+---
+
 ## 2026-10-15 — docs: H-TP pre-registered — is spot's TP1 too far away?
 
 Spot TP1 sits at +3.75 ATR and was hit on only 8–21% of spot trades in H-RT's

@@ -49,9 +49,11 @@ claim). Started 2026-10-09, updated 2026-10-10.
 
 ## Open questions (untested, need their own prereg)
 
-- **Spot TP1 is hit on 8–21% of trades** (H-RT descriptives, every arm), and sits above
-  the 72h high on 80–100% of them. A TP1-distance test must be pre-registered and
-  must account for the 09-21 spot exit FAILs.
+- ~~**Spot TP1 is hit on 8–21% of trades**~~ **Tested 2026-10-15 as H-TP, INCONCLUSIVE.**
+  TP1 at 1.5R beats 2.5R on synthetic entries: +0.10pp per entry, 27 of 30 cells, TP1 hit
+  rate 13% → 32%. It is slightly worse on the engine's own entries (−0.02pp, −0.08pp). Not
+  licensed. Revisit only with a new prereg on run-3/4 engine trades, or if H-B shows the
+  entries behave like random ones.
 
 ## Not to re-propose (already failed)
 
