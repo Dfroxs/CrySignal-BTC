@@ -44,6 +44,13 @@ claim). Started 2026-10-09, updated 2026-10-10.
 | spot `sr_first` | H-SR 2026-10-10 INCONCLUSIVE: primary kept − only +0.26pp [−0.53, +1.08]; confirmation flips (n=12) | **design-decision candidate**: removing it adds ~50% spot entries (BTC: ~+1–1.5 trades/month), cost indistinguishable from 0. Not worth restarting run 3 for |
 | spot `psy_sl_first` | H-PSY 2026-10-10 INCONCLUSIVE, blocks few (35 vs 347 kept), blocked BUYs no better than random | stays |
 | short-term (5-SMA) veto | untested | candidate |
+| spot range-top (≥70% of 72h range) | H-RT 2026-10-14 INCONCLUSIVE: worse in both windows (+0.19pp, +0.96pp), CIs span 0; 61% of kept entries are range-top, so a gate would remove most of them | **not licensed**; no other cut-off may be tried on these windows |
+
+## Open questions (untested, need their own prereg)
+
+- **Spot TP1 is hit on 8–21% of trades** (H-RT descriptives, every arm), and sits above
+  the 72h high on 80–100% of them. A TP1-distance test must be pre-registered and
+  must account for the 09-21 spot exit FAILs.
 
 ## Not to re-propose (already failed)
 

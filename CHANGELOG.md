@@ -4,6 +4,18 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-14 — docs: H-RT results — range-top spot BUYs INCONCLUSIVE, nothing changes
+
+Scored as pre-registered (`2026-10-14-range-top-results.md`, instrument
+`scripts/range_top_ic.py`). Fidelity passed: H-SR's kept arm reproduced exactly (347 /
+43). H-RT1: range-top trades worse in both windows (+0.19pp [−0.73, +1.15], +0.96pp
+[−1.17, +3.16]), intervals span zero, so INCONCLUSIVE. H-RT2: 6 trades in 8 years, so
+INCONCLUSIVE. 61% of kept spot entries are range-top: the engine buys there by
+construction, and a gate would remove most entries. TP1 is hit on only 8–21% of spot
+trades in every arm, noted as an untested exit question.
+
+---
+
 ## 2026-10-14 — docs: H-RT pre-registered — do spot BUYs at the top of their range lose?
 
 Run 3's three spot losses (#5–#7, Oct 11–14) all bought the upper 72–90% of a 72h chop

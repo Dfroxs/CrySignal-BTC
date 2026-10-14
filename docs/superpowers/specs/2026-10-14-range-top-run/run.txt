@@ -1,0 +1,48 @@
+H-RT  spot 4h, 10 symbols, scored as live
+fidelity {'primary': {'n': 347, 'mean': -0.165}, 'confirmation': {'n': 43, 'mean': -0.515}} (expected {'primary': (347, -0.165), 'confirmation': (43, -0.515)}), squeeze fires 68
+
+######## H-RT1
+== primary
+  flagged    n= 210 mean=-0.241pp [-0.891, +0.426]
+  unflagged  n= 137 mean=-0.050pp [-0.709, +0.635]
+  random     mean=-0.405pp (n=4200)
+  unflagged − flagged = +0.191 [-0.728, +1.149]   verdict INCONCLUSIVE   H-RT3 INCONCLUSIVE
+  describe flagged {'n': 210, 'tp1_hit_rate': 0.16666666666666666, 'tp1_above_range_share': 1.0, 'mean_mfe_atr': 2.3200133699726355}
+  describe unflagged {'n': 137, 'tp1_hit_rate': 0.18248175182481752, 'tp1_above_range_share': 0.8029197080291971, 'mean_mfe_atr': 1.9868036013075068}
+  BTC flagged n=  68 mean=-0.589pp [-1.176, -0.001]   BTC unflagged n=  30 mean=+0.573pp [-0.174, +1.335]
+  per symbol flagged n {'BTC': 68, 'ETH': 43, 'SOL': 22, 'BNB': 0, 'OKB': 42, 'ICP': 0, 'SUSHI': 1, 'NEAR': 3, 'UNI': 5, 'DOGE': 26}
+== confirmation
+  flagged    n=  24 mean=-0.939pp [-1.993, +0.175]
+  unflagged  n=  19 mean=+0.021pp [-1.758, +1.955]
+  random     mean=-0.879pp (n=480)
+  unflagged − flagged = +0.961 [-1.173, +3.159]   verdict INCONCLUSIVE   H-RT3 FAIL
+  describe flagged {'n': 24, 'tp1_hit_rate': 0.08333333333333333, 'tp1_above_range_share': 1.0, 'mean_mfe_atr': 1.9411335335835116}
+  describe unflagged {'n': 19, 'tp1_hit_rate': 0.21052631578947367, 'tp1_above_range_share': 0.8421052631578947, 'mean_mfe_atr': 2.2325215733530355}
+  BTC flagged n=   5 mean=-0.293pp [-1.461, +0.737]   BTC unflagged n=   3 mean=-1.541pp [-1.958, -1.123]
+  per symbol flagged n {'BTC': 5, 'ETH': 3, 'SOL': 4, 'BNB': 0, 'OKB': 6, 'ICP': 0, 'SUSHI': 0, 'NEAR': 1, 'UNI': 2, 'DOGE': 3}
+OVERALL H-RT1: INCONCLUSIVE
+
+######## H-RT2
+== primary
+  flagged    n=   5 mean=-2.694pp [-3.861, -1.689]
+  unflagged  n= 342 mean=-0.128pp [-0.619, +0.373]
+  random     mean=-1.041pp (n=100)
+  unflagged − flagged = —   verdict INCONCLUSIVE   H-RT3 INCONCLUSIVE
+  describe flagged {'n': 5, 'tp1_hit_rate': 0.0, 'tp1_above_range_share': 1.0, 'mean_mfe_atr': 1.4250214718220122}
+  describe unflagged {'n': 342, 'tp1_hit_rate': 0.17543859649122806, 'tp1_above_range_share': 0.9210526315789473, 'mean_mfe_atr': 2.1996192798662917}
+  BTC flagged n=   3 mean=-1.762pp [-2.248, -1.275]   BTC unflagged n=  95 mean=-0.185pp [-0.669, +0.301]
+  per symbol flagged n {'BTC': 3, 'ETH': 0, 'SOL': 0, 'BNB': 0, 'OKB': 1, 'ICP': 0, 'SUSHI': 0, 'NEAR': 0, 'UNI': 0, 'DOGE': 1}
+== confirmation
+  flagged    n=   1 mean=-0.808pp [-0.808, -0.808]
+  unflagged  n=  42 mean=-0.508pp [-1.542, +0.566]
+  random     mean=+1.172pp (n=20)
+  unflagged − flagged = —   verdict INCONCLUSIVE   H-RT3 INCONCLUSIVE
+  describe flagged {'n': 1, 'tp1_hit_rate': 0.0, 'tp1_above_range_share': 1.0, 'mean_mfe_atr': 2.0225651805469234}
+  describe unflagged {'n': 42, 'tp1_hit_rate': 0.14285714285714285, 'tp1_above_range_share': 0.9285714285714286, 'mean_mfe_atr': 2.071013083789644}
+  BTC flagged —   BTC unflagged n=   8 mean=-0.761pp [-1.543, +0.042]
+  per symbol flagged n {'BTC': 0, 'ETH': 0, 'SOL': 0, 'BNB': 0, 'OKB': 1, 'ICP': 0, 'SUSHI': 0, 'NEAR': 0, 'UNI': 0, 'DOGE': 0}
+OVERALL H-RT2: INCONCLUSIVE
+
+quintiles (primary, NOT verdict-bearing): 0.0-0.2: n=   8 mean=-1.719pp [-2.870, -0.300]  0.2-0.4: n=  35 mean=-0.745pp [-1.851, +0.433]  0.4-0.6: n=  48 mean=+0.374pp [-0.986, +1.857]  0.6-0.8: n= 109 mean=+0.436pp [-0.561, +1.513]  0.8-1.0: n= 147 mean=-0.565pp [-1.172, +0.065]
+quintiles (confirmation, NOT verdict-bearing): 0.0-0.2: —  0.2-0.4: n=   9 mean=-1.802pp [-3.574, +0.153]  0.4-0.6: n=   4 mean=+5.494pp [+1.983, +8.982]  0.6-0.8: n=   9 mean=-1.419pp [-3.225, +0.962]  0.8-1.0: n=  21 mean=-0.720pp [-1.895, +0.544]
+written → docs/superpowers/specs/2026-10-14-range-top-run/result.json
