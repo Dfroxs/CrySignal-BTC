@@ -27,6 +27,32 @@ those trades. Fidelity check: reproduce H-SR's kept arm exactly. Nothing changes
 
 ---
 
+## 2026-10-15 — feat: clearer Telegram cards in Indonesian; shadow agents on Claude only
+
+**Telegram (notifier only).** The owner found the hourly card too terse ("⏸ SPOT 4H ·
+HOLD · bearish 6.00 · BUY-only"). Every card is now in Indonesian, and the hourly one
+gives each mode a short block:
+- what it decided (TAHAN / SINYAL BUY / DIBLOKIR);
+- both scores against the bar, with how much is missing (`kurang 0.66`);
+- one sentence on why ("Pasar condong turun; spot hanya bisa beli, jadi menunggu.");
+- one context line: trend for spot, funding / L/S / OI for futures.
+
+Open positions show the move since entry at this cycle's price, and a first entry is no
+longer labelled "pyr1". Open, close, TP1, macro-banner and circuit-breaker messages are
+translated, and the close card's total reads "Total semua trade". Setup, sizing and top
+reasons still appear only for a signal that can open. A HOLD card is ~10 lines.
+
+**Shadow agents: Claude only.** `SHADOW_PROVIDERS` now defaults to `anthropic`. The
+DeepSeek adapter stays, so `SHADOW_PROVIDERS=anthropic,deepseek` brings it back.
+Prereg amendment: H-S/H-X score Claude only, and DeepSeek's earlier opinions are
+descriptive.
+
+Tests: the Telegram format tests now assert the Indonesian text, and two were added
+(`test_tg_a_hold_cycle_explains_each_mode_in_a_short_block`,
+`test_shadow_agents_default_to_claude_only`). Suite 301/301.
+
+---
+
 ## 2026-10-15 — fix: futures basis + taker pruned; FLIP/BREAKER priced with costs (mid-run)
 
 Correctness fixes from the run-4 backlog, shipped mid-run by owner decision. They are

@@ -1,4 +1,4 @@
-"""Shadow opinions: Claude and DeepSeek judge each fired signal. Logged, never traded.
+"""Shadow opinions: Claude judges each fired signal (DeepSeek ran beside it until 2026-10-15). Logged, never traded.
 
 For every non-HOLD signal the bot produces, each configured provider is asked, in
 parallel and under one timeout, whether the trade AS THE BOT WILL MANAGE IT (its real
@@ -15,7 +15,8 @@ and news can carry outside text, and outside text in a prompt is an injection pa
 neither is sent.
 
 Evaluated per `docs/superpowers/specs/2026-10-09-run3-prereg.md` § H-S.
-Configured by `SHADOW_PROVIDERS` (default "anthropic,deepseek"; empty disables).
+Configured by `SHADOW_PROVIDERS` (default "anthropic"; "anthropic,deepseek" brings DeepSeek
+back; empty disables). DeepSeek was switched off by the owner on 2026-10-15.
 """
 from __future__ import annotations
 
@@ -154,7 +155,7 @@ def parse_opinion(text):
 
 
 def _providers():
-    raw = os.getenv("SHADOW_PROVIDERS", "anthropic,deepseek")
+    raw = os.getenv("SHADOW_PROVIDERS", "anthropic")
     return tuple(p.strip() for p in raw.split(",") if p.strip())
 
 
