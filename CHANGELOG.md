@@ -27,6 +27,23 @@ those trades. Fidelity check: reproduce H-SR's kept arm exactly. Nothing changes
 
 ---
 
+## 2026-10-15 — docs: H-TP pre-registered — is spot's TP1 too far away?
+
+Spot TP1 sits at +3.75 ATR and was hit on only 8–21% of spot trades in H-RT's
+descriptives, while mean best excursion was 1.9–2.3 ATR. The question is pre-registered
+before any figure (`2026-10-15-tp1-distance-prereg.md`).
+
+- **One candidate:** TP1 at 1.5 × risk (+2.25 ATR), TP2 at twice that.
+- **Applied at open**, like futures' exit geometry, so entries and the R:R veto are
+  untouched.
+- **Paired test on three arms, all of which must hold:**
+  - A: synthetic entries on fresh 2024–2025 data, ≥ 8 of 10 cells, ≥ +0.05pp per entry;
+  - B: the 09-21 grid, ≥ 16 of 20 cells, ≥ +0.05pp;
+  - C: engine entries, disclosed as contaminated, so a guard only.
+- No R-multiple sweep. Nothing changes live.
+
+---
+
 ## 2026-10-15 — feat: clearer Telegram cards in Indonesian; shadow agents on Claude only
 
 **Telegram (notifier only).** The owner found the hourly card too terse ("⏸ SPOT 4H ·
