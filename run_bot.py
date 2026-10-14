@@ -479,9 +479,9 @@ def run_cycle():
         modes_blocked = " + ".join(m for m, b in (("SPOT", spot_block), ("FUT", fut_block)) if b)
         pending_tg.append((
             f"⛔ <b>Circuit Breaker</b>\n"
-            f"{modes_blocked} new entries blocked\n"
-            f"Spot DD <b>{spot_dd:.1f}%</b>  ·  Fut DD <b>{fut_dd:.1f}%</b>\n"
-            f"Daily Spot <b>{daily_spot:+.1f}%</b>  ·  Daily Fut <b>{daily_fut:+.1f}%</b>",
+            f"Entry baru {modes_blocked} diblokir (batas rugi tercapai)\n"
+            f"Drawdown spot <b>{spot_dd:.1f}%</b>  ·  futures <b>{fut_dd:.1f}%</b>\n"
+            f"Hari ini spot <b>{daily_spot:+.1f}%</b>  ·  futures <b>{daily_fut:+.1f}%</b>",
             "circuit-breaker",
         ))
 
@@ -930,7 +930,7 @@ def run_cycle():
     except Exception as e:  # noqa: BLE001 — a cache write must not kill the cycle
         logger.warning("threshold state update failed: %s", e)
 
-    # Shadow agents — Claude and DeepSeek judge each fired signal; logged, never traded
+    # Shadow agents — Claude judges each fired signal; logged, never traded
     # (agents/shadow.py). Runs in a background thread: the cycle never waits for them.
     try:
         from agents.shadow import run_shadow

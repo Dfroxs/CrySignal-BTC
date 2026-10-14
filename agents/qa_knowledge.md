@@ -110,7 +110,7 @@ Jika FAKTA dan teks ini berbeda, FAKTA yang benar.
 
 ## Run 3 dan agen
 - Paper run berjalan dengan versi kode yang dipatok. Restart dicatat di PAPER_RUN.md.
-- Agen shadow (Claude dan DeepSeek) memberi opini pada setiap sinyal dan posisi, tetapi
+- Agen shadow (Claude; DeepSeek ikut sampai 2026-10-15 lalu dimatikan pemilik) memberi opini pada setiap sinyal dan posisi, tetapi
   TIDAK PERNAH memutuskan trade. Hipotesis run 3 (H-L data live, H-V varian, H-B,
   H-S shadow entry, H-X shadow exit) dinilai setelah hari ke-30, 2026-11-08. Pengecualian
   sejak perubahan futures 2026-10-15: H-V1, H-V2 futures, H-S dan H-X dihitung ulang dari
