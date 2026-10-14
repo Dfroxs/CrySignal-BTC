@@ -4,6 +4,17 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-14 — docs: H-RT pre-registered — do spot BUYs at the top of their range lose?
+
+Run 3's three spot losses (#5–#7, Oct 11–14) all bought the upper 72–90% of a 72h chop
+range on a "BB squeeze" breakout coil, with TP1 above the range's high. Three trades in
+one week are a lead, not a finding, so the question is pre-registered before any figure
+(`2026-10-14-range-top-prereg.md`): H-RT1 (range position ≥ 0.70) and H-RT2 (+ squeeze +
+volume < 0.7×) within H-SR's `kept` universe, on Nakhoda's OKX cache, which ends before
+those trades. Fidelity check: reproduce H-SR's kept arm exactly. Nothing changes live.
+
+---
+
 ## 2026-10-10 — docs: run-4 backlog — today's findings
 
 Added: FLIP/BREAKER_CLOSE send no Telegram close (correctness, Phase 3 so run 4);
