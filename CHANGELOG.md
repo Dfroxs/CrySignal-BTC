@@ -27,6 +27,35 @@ those trades. Fidelity check: reproduce H-SR's kept arm exactly. Nothing changes
 
 ---
 
+## 2026-10-15 — fix: futures basis + taker pruned; FLIP/BREAKER priced with costs (mid-run)
+
+Correctness fixes from the run-4 backlog, shipped mid-run by owner decision. They are
+not a profit claim. Amendment in `2026-10-09-run3-prereg.md`.
+
+- **Basis and taker leave the active set** (`DISABLED_CONDITIONS = {"basis", "taker"}`).
+  Basis reads backwards (H-F/H-F2) and taker carries nothing (H-F). Basis gets its own
+  `_mark('basis')` checkpoint and `CONDITION_MAX` row (0.00, 0.50); `market_structure`
+  drops to (3.00, 4.75). Both are futures-only: **spot's 22.50 ceiling and 4.30 threshold
+  do not move.** Futures: 26.50 → 25.00, threshold 5.20 → 4.91, band 3.77–7.55.
+- **A disabled condition's reasons are dropped with its score**, so Telegram and the
+  shadow agents no longer read "✓ Taker ratio …" for a condition that scored nothing.
+- **FLIP and BREAKER_CLOSE P&L go through `_calc_pnl`**: costs deducted and a taken TP1
+  blended in, like every other close. BREAKER also covers spot, but only below 50%
+  combined equity.
+- **`score_run3.py` reads `futures_restart_at`** from the manifest. H-V1, H-V2 futures,
+  H-S and H-X count from it and wait 30 days. H-L, H-V2 spot, H-B, H-D and H-RGL keep
+  their windows.
+- The Q&A bot's knowledge says basis and taker are logged, not scored.
+
+Tests (written first, failing): `test_basis_and_taker_are_pruned_from_futures_and_spot_is_untouched`,
+`test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason`,
+`test_flip_and_breaker_pnl_carry_execution_costs`,
+`test_score_run3_scores_futures_hypotheses_from_the_futures_restart`. Suite 300/300. A
+live local cycle gave spot HOLD at threshold 4.30, and futures basis/taker
+contributions (0, 0) with no reason line.
+
+---
+
 ## 2026-10-14 — fix: FLIP and BREAKER_CLOSE now reach the Telegram close card
 
 Both close a position inside `run_cycle` itself rather than through

@@ -23,7 +23,9 @@ Jika FAKTA dan teks ini berbeda, FAKTA yang benar.
    `sell_score`. Kondisinya antara lain EMA200, RSI, MACD, volume, Bollinger, HTF (tren
    timeframe besar: spot 1D+1W, futures 4H+1D), divergensi, OBV, StochRSI, ADX/DI, S/R,
    VWAP, MFI. Khusus futures ada data pasar: funding rate, rasio long/short, open
-   interest, basis, taker ratio. Lalu makro: DXY, S&P, gold, VIX, BTC dominance,
+   interest. Basis dan taker ratio tetap diambil dan dicatat, tetapi sejak 2026-10-15
+   tidak dinilai lagi (basis terbaca terbalik, taker tanpa daya prediksi), sehingga skor
+   maksimum futures 25.0. Lalu makro: DXY, S&P, gold, VIX, BTC dominance,
    stablecoin. `strength` adalah skor sisi pemenang.
 3. **Fire atau HOLD**: sinyal menyala bila `strength >= threshold`. Sebelum itu ada veto
    anti-kejar harga di mesin (no-chase, anti-FOMO, wick entry, momentum jangka pendek,
@@ -110,7 +112,9 @@ Jika FAKTA dan teks ini berbeda, FAKTA yang benar.
 - Paper run berjalan dengan versi kode yang dipatok. Restart dicatat di PAPER_RUN.md.
 - Agen shadow (Claude dan DeepSeek) memberi opini pada setiap sinyal dan posisi, tetapi
   TIDAK PERNAH memutuskan trade. Hipotesis run 3 (H-L data live, H-V varian, H-B,
-  H-S shadow entry, H-X shadow exit) dinilai setelah hari ke-30, 2026-11-08.
+  H-S shadow entry, H-X shadow exit) dinilai setelah hari ke-30, 2026-11-08. Pengecualian
+  sejak perubahan futures 2026-10-15: H-V1, H-V2 futures, H-S dan H-X dihitung ulang dari
+  tanggal deploy itu dan dinilai 30 hari setelahnya.
 - Bot kedua di VPS yang sama: `nakhoda-alloc` (proyek Nakhoda, alokasi). Statusnya ada
   di `alloc_svc` di FAKTA.
 

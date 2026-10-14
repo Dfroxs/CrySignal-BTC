@@ -10,12 +10,12 @@ claim). Started 2026-10-09, updated 2026-10-10.
 
 | item | evidence | change |
 |---|---|---|
-| Basis condition reads backwards | H-F: BTC z168 IC −0.048 (high basis → weaker 24h). H-F2: negative in 5/6 markets, interval below 0 in 4, above 0 in none (`2026-10-09-hist-futures-ic-*-results.md`) | **Neutralise** basis (score 0). Flipping it needs the condition test that has not passed |
+| ~~Basis condition reads backwards~~ **shipped mid-run 2026-10-15** | H-F: BTC z168 IC −0.048 (high basis → weaker 24h). H-F2: negative in 5/6 markets, interval below 0 in 4, above 0 in none (`2026-10-09-hist-futures-ic-*-results.md`) | **Neutralise** basis (score 0). Flipping it needs the condition test that has not passed |
 | Futures taker fee likely 0.05%, not 0.04% | Binance regular-tier USDⓈ-M taker fee | `EXECUTION_CONFIG["futures_fee_pct"]` 0.04 → 0.05 after checking the account's real tier. Paper P&L and backtests are currently slightly optimistic |
 | ~~FLIP and BREAKER_CLOSE send no Telegram close message~~ **fixed 2026-10-14** | notifier-only: run_cycle now records both closes for the Phase 4 close card (`test_every_phase3_close_reaches_the_close_card`). No trading-path change, so it can ship mid-run without restarting run 3's window | done |
-| FLIP and BREAKER_CLOSE P&L carry no execution costs | found 2026-10-14: run_bot.py computes both as the raw price move and passes it to `close_paper_position`, unlike `trading/paper._calc_pnl`, which deducts (fee + slippage) × 2 | price both through `_calc_pnl`. Changes recorded P&L, drawdown and the breaker, so run 4 only. No FLIP or BREAKER close has happened in run 3 so far |
+| ~~FLIP and BREAKER_CLOSE P&L carry no execution costs~~ **shipped mid-run 2026-10-15** | found 2026-10-14: run_bot.py computes both as the raw price move and passes it to `close_paper_position`, unlike `trading/paper._calc_pnl`, which deducts (fee + slippage) × 2 | price both through `_calc_pnl`. Changes recorded P&L, drawdown and the breaker, so run 4 only. No FLIP or BREAKER close has happened in run 3 so far |
 | `psy_sl_first` uses a fixed $1,000 step | H-PSY prereg 2026-10-10: only "round" for BTC between $10k and $100k; above $100k the real round levels are $10k/$5k | step from price scale, as H-PSY's instrument does for non-BTC. Equal to today's rule at today's price |
-| `taker_ratio` condition carries nothing | H-F: IC +0.002, FAIL. H-F2: no symbol passes | Prune: add `"taker"` to `DISABLED_CONDITIONS` (ceiling 1.00 futures; the threshold scales with it) |
+| ~~`taker_ratio` condition carries nothing~~ **shipped mid-run 2026-10-15** | H-F: IC +0.002, FAIL. H-F2: no symbol passes | Prune: add `"taker"` to `DISABLED_CONDITIONS` (ceiling 1.00 futures; the threshold scales with it) |
 
 ## Tested changes (need their own pre-registered PASS first)
 

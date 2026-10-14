@@ -1328,9 +1328,11 @@ def test_thresholds_track_the_active_condition_set():
     import config
     saved = config.DISABLED_CONDITIONS
     try:
-        assert config.SPOT_MAX_SCORE == 22.50 and config.SIGNAL_MAX_SCORE == 26.50, \
+        config.DISABLED_CONDITIONS = frozenset()
+        assert config._max_score("spot") == 22.50 and config._max_score("futures") == 26.50, \
             "CONDITION_MAX must reproduce the documented ceilings"
-        assert config.SPOT_THRESHOLD == 4.30 and config.SIGNAL_THRESHOLD == 5.20, \
+        assert round(22.50 * config._SPOT_THR_FRACTION, 2) == 4.30 and \
+               round(26.50 * config._THR_FRACTION, 2) == 5.20, \
             "the fractions must reproduce the pre-existing thresholds"
 
         config.DISABLED_CONDITIONS = frozenset({"htf"})       # a 2.00 block
@@ -1340,6 +1342,48 @@ def test_thresholds_track_the_active_condition_set():
         assert lean < 5.20, "a smaller ceiling must lower the bar, not keep it"
     finally:
         config.DISABLED_CONDITIONS = saved
+
+def test_basis_and_taker_are_pruned_from_futures_and_spot_is_untouched():
+    """2026-10-15: basis reads backwards (H-F/H-F2) and taker carries nothing (H-F),
+    so both leave the active set. Both are futures-only, so every spot figure must be
+    exactly what it was: spot's ceiling, threshold and band do not move."""
+    import config
+    assert config.DISABLED_CONDITIONS == frozenset({"basis", "taker"}), config.DISABLED_CONDITIONS
+    assert config.CONDITION_MAX["basis"] == (0.00, 0.50), config.CONDITION_MAX["basis"]
+    assert config.CONDITION_MAX["taker"][0] == 0.00
+    assert (config.SPOT_MAX_SCORE, config.SPOT_THRESHOLD,
+            config.SPOT_THRESHOLD_MIN, config.SPOT_THRESHOLD_MAX) == (22.50, 4.30, 3.00, 7.00)
+    assert config.SIGNAL_MAX_SCORE == 25.00, config.SIGNAL_MAX_SCORE
+    assert config.SIGNAL_THRESHOLD == round(25.00 * config._THR_FRACTION, 2) == 4.91
+
+
+def test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason():
+    """Basis used to be scored inside market_structure, so it could not be disabled on
+    its own. And a disabled condition's score was rolled back but its reason line was
+    not, so Telegram and the shadow agents would still read "✓ Taker ratio …" for a
+    condition that scored nothing."""
+    from signals.engine import generate_signals
+    from signals.indicators import detect_support_resistance
+    df = _synthetic_df()
+    ms = {"funding": {"rate_pct": 0.004, "bias": "NEUTRAL", "basis_pct": 0.15, "basis_bias": "BULLISH"},
+          "long_short": {"ratio": 1.2, "bias": "NEUTRAL"},
+          "taker": {"ratio": 1.3, "bias": "BULLISH"}}
+    run = lambda mode, disabled: generate_signals(
+        df, htf=None, market_structure=ms, sr=detect_support_resistance(df), mode=mode,
+        threshold_override=5.2, disabled=disabled)
+    full, live = run("futures", ()), run("futures", None)
+    assert full["_contributions"]["basis"] == (0.5, 0.0), full["_contributions"]["basis"]
+    assert full["_contributions"]["taker"] == (1.0, 0.0), full["_contributions"]["taker"]
+    assert any("Futures premium" in r for r in full["reasons"])
+    assert full["_contributions"]["market_structure"] == live["_contributions"]["market_structure"]
+    assert live["_contributions"]["basis"] == live["_contributions"]["taker"] == (0.0, 0.0)
+    assert not any("Futures premium" in r or "Taker ratio" in r for r in live["reasons"]), live["reasons"]
+    assert abs(full["buy_score"] - live["buy_score"] - 1.5) < 0.011
+    spot_full, spot_live = run("spot", ()), run("spot", None)
+    assert (spot_full["buy_score"], spot_full["sell_score"], spot_full["reasons"]) == \
+           (spot_live["buy_score"], spot_live["sell_score"], spot_live["reasons"]), \
+        "spot never scored basis or taker, so pruning them must change nothing on spot"
+
 
 def test_condition_max_covers_every_scored_condition():
     """A condition the engine scores but CONDITION_MAX does not know about would
@@ -3916,6 +3960,23 @@ def test_scoring_scripts_refuse_before_day_30():
     assert str(hd.SCORE_FROM.date()) == "2026-11-08" and str(sr.DAY_30.date()) == "2026-11-08"
     assert "HEALTH ONLY" in inspect.getsource(sr.main) and "refused" in inspect.getsource(hd.main)
 
+def test_score_run3_scores_futures_hypotheses_from_the_futures_restart():
+    """Amendment 2026-10-15: H-V1, H-V2 futures, H-S and H-X count from the futures
+    restart and wait 30 days from it; H-L, H-V2 spot and H-B keep the run's window."""
+    from pathlib import Path
+    import scripts.score_run3 as sr
+    run, fut = "2026-10-09 12:34:20", "2026-10-15 10:00:00"
+    cmds = dict(sr.commands(Path("db"), run, Path("out"), fut))
+    start_of = lambda c: c[c.index("--start") + 1]
+    for name in sr.FUTURES_SCORED:
+        assert start_of(cmds[name]) == fut, (name, cmds[name])
+    for name in ("H-L", "H-V2_spot"):
+        assert start_of(cmds[name]) == run, (name, cmds[name])
+    assert all(start_of(c) == run for n, c in sr.commands(Path("db"), run, Path("out")) if "--start" in c)
+    assert sr.futures_day_30(None) == sr.DAY_30
+    assert str(sr.futures_day_30("2026-10-15T10:00:00+00:00").date()) == "2026-11-14"
+
+
 def test_spot_gates_psy_rule_is_live_for_btc_and_scaled_elsewhere():
     """H-PSY: BTC keeps live's $1,000 step at any price; other symbols use their own
     scale. For BTC the replacement must agree with _failing_gates's own rule."""
@@ -5351,6 +5412,21 @@ def test_every_phase3_close_reaches_the_close_card():
     assert "circuit breaker · equity" in out and "🔴 SPOT BUY <b>-2.10%</b>" in out, out
 
 
+def test_flip_and_breaker_pnl_carry_execution_costs():
+    """FLIP and BREAKER_CLOSE recorded the raw price move, while every other close goes
+    through trading.paper._calc_pnl, which deducts (fee + slippage) x 2 and blends a
+    taken TP1. Both must price through it."""
+    import inspect, re, run_bot
+    src = inspect.getsource(run_bot.run_cycle)
+    for outcome in ("FLIP", "BREAKER_CLOSE"):
+        m = re.search(r'close_paper_position\([^\n]*"%s"' % outcome, src)
+        assert m, f"{outcome} close not found"
+        assert "_calc_pnl(" in src[max(0, m.start() - 700):m.start()], src[max(0, m.start() - 700):m.end()]
+    from trading.paper import _calc_pnl
+    pos = {"type": "SELL", "entry_price": 100_000.0, "mode": "futures", "partial_closed": 0}
+    assert _calc_pnl(pos, 100_000.0) < 0, "a flat flip must cost the round trip"
+
+
 def test_send_signal_alert_survives_a_formatter_error():
     """A formatter exception used to propagate into run_bot's Phase 4 and skip the
     position-open/close messages queued after the hourly card."""
@@ -5741,6 +5817,7 @@ if __name__ == "__main__":
     run("H-D return after stat known, BTC window", test_hd_return_starts_after_the_stat_is_known_and_btc_window_holds)
     run("H-D finds planted signal, not null",     test_hd_pooled_ic_finds_a_planted_signal_and_not_a_null_one)
     run("scorers refuse before day 30",           test_scoring_scripts_refuse_before_day_30)
+    run("futures hypotheses from futures restart", test_score_run3_scores_futures_hypotheses_from_the_futures_restart)
 
     print("\n── 42. regime_live_ic.py — H-RGL ──")
     run("H-RGL block → bar live scored",          test_regime_live_maps_each_block_to_the_bar_live_scored)
@@ -5761,6 +5838,9 @@ if __name__ == "__main__":
     run("tg close card: colour by P&L, partial",  test_tg_close_card_colours_by_result_and_names_a_partial)
     run("formatter error spares queued msgs",     test_send_signal_alert_survives_a_formatter_error)
     run("FLIP/BREAKER closes reach close card",  test_every_phase3_close_reaches_the_close_card)
+    run("FLIP/BREAKER P&L carry costs",          test_flip_and_breaker_pnl_carry_execution_costs)
+    run("basis+taker pruned, spot untouched",    test_basis_and_taker_are_pruned_from_futures_and_spot_is_untouched)
+    run("basis own checkpoint, no stale reason", test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
