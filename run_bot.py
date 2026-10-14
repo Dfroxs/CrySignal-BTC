@@ -16,7 +16,7 @@ from signals.futures import analyze_futures_signal
 from signals.terminal import display_combined
 from news_scraper import scrape_and_export
 from notifier import _format_close_notification, _format_open_notification, _send_telegram_message, send_signal_alert
-from trading.paper import apply_futures_exit_geometry, check_and_close_positions, print_open_status, print_paper_summary
+from trading.paper import _calc_pnl, apply_futures_exit_geometry, check_and_close_positions, print_open_status, print_paper_summary
 from config import RISK_CONFIG, FUTURES_CONFIG, RISK_LIMITS
 from signals.sizing import calculate_position_size, get_pyramid_size_factor
 from trading.history import close as close_db, close_paper_position, get_open_position_count_by_direction, get_open_positions, has_open_position_same_direction, log_signal_block, open_paper_position
@@ -496,12 +496,8 @@ def run_cycle():
         # Use latest signal price for a meaningful exit P&L (was hard-coded 0).
         breaker_px = (futures_signal or spot_signal or {}).get("entry_price")
         for p in _h.get_open_positions():
-            if breaker_px:
-                breaker_pnl = ((breaker_px - p["entry_price"]) / p["entry_price"] * 100) \
-                              if p["type"] == "BUY" \
-                              else ((p["entry_price"] - breaker_px) / p["entry_price"] * 100)
-            else:
-                breaker_pnl = 0
+            # Priced like every other close: costs deducted, a taken TP1 blended in.
+            breaker_pnl = _calc_pnl(p, breaker_px) if breaker_px else 0
             _h.close_paper_position(p["id"], "BREAKER_CLOSE", round(breaker_pnl, 2), exit_price=breaker_px)
             phase3_closed.append({"type": p["type"], "entry": p["entry_price"],
                                   "exit": breaker_px or p["entry_price"], "pnl": round(breaker_pnl, 2),
@@ -735,7 +731,8 @@ def run_cycle():
             for opp in opp_positions:
                 entry = opp["entry_price"]
                 flip_px = futures_signal["entry_price"]
-                pnl = ((entry - flip_px) / entry * 100) if opp_dir == "SELL" else ((flip_px - entry) / entry * 100)
+                # Priced like every other close: costs deducted, a taken TP1 blended in.
+                pnl = _calc_pnl(opp, flip_px)
                 close_paper_position(opp["id"], "FLIP", round(pnl, 2), exit_price=flip_px)
                 phase3_closed.append({"type": opp["type"], "entry": entry, "exit": flip_px,
                                       "pnl": round(pnl, 2), "outcome": "FLIP", "mode": "futures"})

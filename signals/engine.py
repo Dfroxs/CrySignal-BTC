@@ -69,6 +69,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     # to answer which of the 22 conditions actually carry predictive power.
     _contrib = {}
     _seen = [0.0, 0.0]
+    _seen_reasons = [len(signal['reasons'])]
     # None = the configured active set; pass an empty collection to score
     # everything, which is what backtest.py --all-conditions does.
     _off = set(DISABLED_CONDITIONS if disabled is None else disabled)
@@ -86,11 +87,15 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         nonlocal buy_conditions, sell_conditions
         if name in _off:
             buy_conditions, sell_conditions = _seen[0], _seen[1]
+            # Its reason lines go too: a condition that scored nothing must not tell
+            # Telegram or the shadow agents that it fired.
+            del signal['reasons'][_seen_reasons[0]:]
             _contrib[name] = (0.0, 0.0)
             return
         _contrib[name] = (round(buy_conditions - _seen[0], 4),
                           round(sell_conditions - _seen[1], 4))
         _seen[0], _seen[1] = buy_conditions, sell_conditions
+        _seen_reasons[0] = len(signal['reasons'])
 
     # Pre-compute ADX once — used in condition 3 (MACD gate) and condition 18
     try:
@@ -421,17 +426,22 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
                 sell_conditions += 0.5
                 signal['reasons'].append(f"✗ Open Interest FALLING ({oi.get('change_pct',0):+.2f}%) — positions closing")
 
-            # 14 — Futures basis (futures only)
-            basis_pct = funding.get('basis_pct', 0)
-            basis_bias = funding.get('basis_bias', 'NEUTRAL')
-            if basis_bias == 'BULLISH':
-                buy_conditions += 0.5
-                signal['reasons'].append(f"✓ Futures premium ({basis_pct:+.3f}%) — long demand")
-            elif basis_bias == 'BEARISH':
-                sell_conditions += 0.5
-                signal['reasons'].append(f"✗ Futures discount ({basis_pct:+.3f}%) — weak demand")
-
     _mark('market_structure')
+
+    # 14 — Futures basis (futures only). Its own checkpoint, so it can be disabled
+    # without touching the rest of market structure.
+    if mode == 'futures' and market_structure:
+        funding = market_structure.get('funding', {})
+        basis_pct = funding.get('basis_pct', 0)
+        basis_bias = funding.get('basis_bias', 'NEUTRAL')
+        if basis_bias == 'BULLISH':
+            buy_conditions += 0.5
+            signal['reasons'].append(f"✓ Futures premium ({basis_pct:+.3f}%) — long demand")
+        elif basis_bias == 'BEARISH':
+            sell_conditions += 0.5
+            signal['reasons'].append(f"✗ Futures discount ({basis_pct:+.3f}%) — weak demand")
+
+    _mark('basis')
 
     # 15 — Stochastic RSI
     sk, sd = current.get('StochRSI_K'), current.get('StochRSI_D')
