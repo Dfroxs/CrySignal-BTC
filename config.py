@@ -144,8 +144,9 @@ CONDITION_MAX = {
     "bollinger":               (1.00, 1.00),
     "htf":                     (2.00, 2.00),
     "obv":                     (0.75, 0.75),
-    # funding, L/S, DXY, S&P, stablecoin, BTC.D (+ OI and basis on futures)
-    "market_structure":        (3.00, 5.25),
+    # funding, L/S, DXY, S&P, stablecoin, BTC.D (+ OI on futures)
+    "market_structure":        (3.00, 4.75),
+    "basis":                   (0.00, 0.50),
     "stoch_rsi":               (1.25, 1.25),
     "support_resistance":      (0.75, 0.75),
     "vwap":                    (0.75, 0.75),
@@ -184,7 +185,18 @@ CONDITION_MAX = {
 # The machinery stays: add names here to prune, or run
 # `backtest.py --disable a,b` for one run and `--all-conditions` to ignore this
 # set entirely. See CHANGELOG 2026-08-29 for the full write-up.
-DISABLED_CONDITIONS = frozenset()
+#
+# 2026-10-15: basis and taker OFF. Both are futures-only, so spot's ceiling and
+# threshold do not move; futures' ceiling falls 26.50 → 25.00 and its threshold with it.
+# A correctness fix, not a profit claim (run4-backlog.md):
+#   basis  reads backwards. H-F: BTC z168 IC −0.048 (high basis → weaker 24h); H-F2:
+#          negative in 5 of 6 markets. Its absolute ±0.10% band also scored on 0 of
+#          113 run-3 futures cycles.
+#   taker  carries nothing. H-F: IC +0.002, FAIL; H-F2: no symbol passes. It scored
+#          ±1.0 on 23 of 113 run-3 futures cycles, i.e. noise in a fifth of them.
+# The 2026-08-29 pruning test above never covered either: backtest.py scores both
+# NEUTRAL, having no history for them.
+DISABLED_CONDITIONS = frozenset({"basis", "taker"})
 
 # Engine veto gates switched off per mode (names from signals/engine._VETO_GATES).
 # `generate_signals(gates_disabled=None)` reads this, so the live bot, the variants and

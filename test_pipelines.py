@@ -214,23 +214,24 @@ def test_compact_hold_spot():
     from notifier.telegram import _format_compact_signal_telegram
     sig = make_signal("HOLD", "spot", score=3.5, buy_score=3.5, sell_score=1.0)
     out = _format_compact_signal_telegram(sig)
-    assert "HOLD" in out
-    assert "BUY 3.50" in out and "bar 4.30" in out   # leading side vs the bar
+    assert "TAHAN" in out
+    assert "Skor beli 3.50" in out and "batas 4.30" in out   # leading side vs the bar
+    assert "kurang 0.80" in out, out
     assert "_conflict" not in out
 
 def test_compact_hold_futures():
     from notifier.telegram import _format_compact_signal_telegram
     sig = make_signal("HOLD", "futures", score=3.8, buy_score=3.8, sell_score=2.0)
     out = _format_compact_signal_telegram(sig)
-    assert "HOLD" in out
-    assert "BUY 3.80" in out and "bar 5.20" in out
+    assert "TAHAN" in out
+    assert "Skor beli 3.80" in out and "batas 5.20" in out and "kurang 1.40" in out
 
 def test_compact_hold_gap_negative_no_crash():
     """Score exceeds threshold but forced HOLD by macro — gap is negative."""
     from notifier.telegram import _format_compact_signal_telegram
     sig = make_signal("HOLD", "futures", score=6.5, buy_score=6.5, sell_score=2.0)
     out = _format_compact_signal_telegram(sig)
-    assert "HOLD" in out
+    assert "TAHAN" in out and "kurang" not in out
 
 
 # ── 3. Telegram consolidated formatter ────────────────────────────────────────
@@ -268,8 +269,8 @@ def test_consolidated_both_hold():
     spot = make_signal("HOLD", "spot",    score=3.0, buy_score=3.0, sell_score=1.0)
     fut  = make_signal("HOLD", "futures", score=3.5, buy_score=3.5, sell_score=2.0)
     out  = _format_consolidated_telegram(spot, fut)
-    assert "HOLD" in out
-    assert "bar 4.30" in out and "bar 5.20" in out   # each mode vs its own bar
+    assert "TAHAN" in out
+    assert "batas 4.30" in out and "batas 5.20" in out   # each mode vs its own bar
 
 def test_consolidated_spot_only():
     from notifier.telegram import _format_consolidated_telegram
@@ -290,7 +291,7 @@ def test_consolidated_verdict_spot_bearish_spot_only():
     from notifier.telegram import _format_consolidated_telegram
     sig = make_signal("HOLD", "spot", score=4.0, buy_score=1.5, sell_score=4.0)
     out = _format_consolidated_telegram(sig, None)
-    assert "BEARISH" in out or "BUY-only" in out
+    assert "spot hanya bisa beli" in out, out
 
 
 # ── 4. Terminal display_combined ──────────────────────────────────────────────
@@ -1328,9 +1329,11 @@ def test_thresholds_track_the_active_condition_set():
     import config
     saved = config.DISABLED_CONDITIONS
     try:
-        assert config.SPOT_MAX_SCORE == 22.50 and config.SIGNAL_MAX_SCORE == 26.50, \
+        config.DISABLED_CONDITIONS = frozenset()
+        assert config._max_score("spot") == 22.50 and config._max_score("futures") == 26.50, \
             "CONDITION_MAX must reproduce the documented ceilings"
-        assert config.SPOT_THRESHOLD == 4.30 and config.SIGNAL_THRESHOLD == 5.20, \
+        assert round(22.50 * config._SPOT_THR_FRACTION, 2) == 4.30 and \
+               round(26.50 * config._THR_FRACTION, 2) == 5.20, \
             "the fractions must reproduce the pre-existing thresholds"
 
         config.DISABLED_CONDITIONS = frozenset({"htf"})       # a 2.00 block
@@ -1340,6 +1343,48 @@ def test_thresholds_track_the_active_condition_set():
         assert lean < 5.20, "a smaller ceiling must lower the bar, not keep it"
     finally:
         config.DISABLED_CONDITIONS = saved
+
+def test_basis_and_taker_are_pruned_from_futures_and_spot_is_untouched():
+    """2026-10-15: basis reads backwards (H-F/H-F2) and taker carries nothing (H-F),
+    so both leave the active set. Both are futures-only, so every spot figure must be
+    exactly what it was: spot's ceiling, threshold and band do not move."""
+    import config
+    assert config.DISABLED_CONDITIONS == frozenset({"basis", "taker"}), config.DISABLED_CONDITIONS
+    assert config.CONDITION_MAX["basis"] == (0.00, 0.50), config.CONDITION_MAX["basis"]
+    assert config.CONDITION_MAX["taker"][0] == 0.00
+    assert (config.SPOT_MAX_SCORE, config.SPOT_THRESHOLD,
+            config.SPOT_THRESHOLD_MIN, config.SPOT_THRESHOLD_MAX) == (22.50, 4.30, 3.00, 7.00)
+    assert config.SIGNAL_MAX_SCORE == 25.00, config.SIGNAL_MAX_SCORE
+    assert config.SIGNAL_THRESHOLD == round(25.00 * config._THR_FRACTION, 2) == 4.91
+
+
+def test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason():
+    """Basis used to be scored inside market_structure, so it could not be disabled on
+    its own. And a disabled condition's score was rolled back but its reason line was
+    not, so Telegram and the shadow agents would still read "✓ Taker ratio …" for a
+    condition that scored nothing."""
+    from signals.engine import generate_signals
+    from signals.indicators import detect_support_resistance
+    df = _synthetic_df()
+    ms = {"funding": {"rate_pct": 0.004, "bias": "NEUTRAL", "basis_pct": 0.15, "basis_bias": "BULLISH"},
+          "long_short": {"ratio": 1.2, "bias": "NEUTRAL"},
+          "taker": {"ratio": 1.3, "bias": "BULLISH"}}
+    run = lambda mode, disabled: generate_signals(
+        df, htf=None, market_structure=ms, sr=detect_support_resistance(df), mode=mode,
+        threshold_override=5.2, disabled=disabled)
+    full, live = run("futures", ()), run("futures", None)
+    assert full["_contributions"]["basis"] == (0.5, 0.0), full["_contributions"]["basis"]
+    assert full["_contributions"]["taker"] == (1.0, 0.0), full["_contributions"]["taker"]
+    assert any("Futures premium" in r for r in full["reasons"])
+    assert full["_contributions"]["market_structure"] == live["_contributions"]["market_structure"]
+    assert live["_contributions"]["basis"] == live["_contributions"]["taker"] == (0.0, 0.0)
+    assert not any("Futures premium" in r or "Taker ratio" in r for r in live["reasons"]), live["reasons"]
+    assert abs(full["buy_score"] - live["buy_score"] - 1.5) < 0.011
+    spot_full, spot_live = run("spot", ()), run("spot", None)
+    assert (spot_full["buy_score"], spot_full["sell_score"], spot_full["reasons"]) == \
+           (spot_live["buy_score"], spot_live["sell_score"], spot_live["reasons"]), \
+        "spot never scored basis or taker, so pruning them must change nothing on spot"
+
 
 def test_condition_max_covers_every_scored_condition():
     """A condition the engine scores but CONDITION_MAX does not know about would
@@ -2287,7 +2332,7 @@ def test_a_weak_buy_alert_says_no_position_will_open():
            "buy_score": 5.5, "sell_score": 2.0, "_threshold": 4.8, "entry_price": 80000.0,
            "reasons": []}
     out = _format_compact_signal_telegram(sig)
-    assert "no position" in out.lower(), out
+    assert "posisi tidak dibuka" in out, out
     assert "🟢" not in out, "a signal that cannot open must not carry the go marker"
 
 
@@ -2298,7 +2343,7 @@ def test_a_normal_buy_alert_is_still_a_tradeable_signal():
            "reasons": []}
     out = _format_compact_signal_telegram(sig)
     assert "🟢" in out, out
-    assert "no position" not in out.lower(), out
+    assert "posisi tidak dibuka" not in out, out
 
 
 
@@ -3110,6 +3155,21 @@ def test_llm_deepseek_adapter_uses_the_openai_shape():
     assert kw["messages"][0] == {"role": "system", "content": "sys"}, kw
     assert r.text == "ringkasan ds" and r.input_tokens == 100
 
+def test_shadow_agents_default_to_claude_only():
+    """Owner, 2026-10-15: DeepSeek off, Claude only. The adapter stays, so
+    SHADOW_PROVIDERS=anthropic,deepseek brings it back without a code change."""
+    import os
+    from agents.shadow import _providers
+    saved = os.environ.pop("SHADOW_PROVIDERS", None)
+    try:
+        assert _providers() == ("anthropic",), _providers()
+        os.environ["SHADOW_PROVIDERS"] = "anthropic,deepseek"
+        assert _providers() == ("anthropic", "deepseek")
+    finally:
+        os.environ.pop("SHADOW_PROVIDERS", None)
+        if saved is not None:
+            os.environ["SHADOW_PROVIDERS"] = saved
+
 def test_llm_missing_key_or_unknown_provider_is_an_error():
     import os
     from agents.llm import LLMError, ask
@@ -3647,8 +3707,8 @@ def test_tg_card_says_blocked_when_a_phase3_gate_refused_the_signal():
     run_bot._block([], "spot", sig, "regime_bearish", "Spot BUY blocked — bearish trend regime")
     assert sig["_phase3_block"][0] == "regime_bearish"
     msg = _format_consolidated_telegram(sig, None)
-    assert "blocked by <b>regime_bearish</b>" in msg and "no position" in msg, msg
-    assert f"${sig['stop_loss']:,.0f}" not in msg and "Size" not in msg, msg
+    assert "Ditolak gate <b>regime_bearish</b>" in msg and "posisi tidak dibuka" in msg, msg
+    assert f"${sig['stop_loss']:,.0f}" not in msg and "Ukuran" not in msg, msg
     assert msg.startswith("⏸"), "a blocked signal must not ring the 🔔 header"
     ok = make_signal("BUY", "spot"); ok["confidence"] = "NORMAL"
     assert f"${ok['stop_loss']:,.0f}" in _format_consolidated_telegram(ok, None)
@@ -3915,6 +3975,23 @@ def test_scoring_scripts_refuse_before_day_30():
     import scripts.hd_eval as hd, scripts.score_run3 as sr
     assert str(hd.SCORE_FROM.date()) == "2026-11-08" and str(sr.DAY_30.date()) == "2026-11-08"
     assert "HEALTH ONLY" in inspect.getsource(sr.main) and "refused" in inspect.getsource(hd.main)
+
+def test_score_run3_scores_futures_hypotheses_from_the_futures_restart():
+    """Amendment 2026-10-15: H-V1, H-V2 futures, H-S and H-X count from the futures
+    restart and wait 30 days from it; H-L, H-V2 spot and H-B keep the run's window."""
+    from pathlib import Path
+    import scripts.score_run3 as sr
+    run, fut = "2026-10-09 12:34:20", "2026-10-15 10:00:00"
+    cmds = dict(sr.commands(Path("db"), run, Path("out"), fut))
+    start_of = lambda c: c[c.index("--start") + 1]
+    for name in sr.FUTURES_SCORED:
+        assert start_of(cmds[name]) == fut, (name, cmds[name])
+    for name in ("H-L", "H-V2_spot"):
+        assert start_of(cmds[name]) == run, (name, cmds[name])
+    assert all(start_of(c) == run for n, c in sr.commands(Path("db"), run, Path("out")) if "--start" in c)
+    assert sr.futures_day_30(None) == sr.DAY_30
+    assert str(sr.futures_day_30("2026-10-15T10:00:00+00:00").date()) == "2026-11-14"
+
 
 def test_spot_gates_psy_rule_is_live_for_btc_and_scaled_elsewhere():
     """H-PSY: BTC keeps live's $1,000 step at any price; other symbols use their own
@@ -4390,17 +4467,23 @@ def _hold_f():
     return make_signal("HOLD", "futures", score=3.5, buy_score=3.5, sell_score=2.0)
 
 
-def test_tg_a_hold_cycle_is_three_lines():
+def test_tg_a_hold_cycle_explains_each_mode_in_a_short_block():
+    """Owner, 2026-10-15: the three-line card was too terse to follow. Each mode now says
+    what it decided, its score against the bar and the gap, why, and one context line,
+    and the card still fits a phone screen."""
     from notifier.telegram import _format_consolidated_telegram
     with _tg_db():
         out = _format_consolidated_telegram(_hold_s(), _hold_f())
     lines = [l for l in out.splitlines() if l.strip()]
-    assert len(lines) <= 3, out
-    assert len(out) <= 300, (len(out), out)
-    assert "$95,000" in out
-    assert "SPOT 4H" in out and "FUTURES 1H" in out
-    assert "BUY 3.00" in out and "bar 4.30" in out
-    assert "BUY 3.50" in out and "bar 5.20" in out
+    assert len(lines) <= 12, out
+    assert len(out) <= 700, (len(out), out)
+    assert "$95,000" in out and "Tidak ada posisi baru jam ini." in out
+    assert "SPOT 4H — TAHAN" in out and "FUTURES 1H — TAHAN" in out
+    assert "Skor beli 3.00 · jual 1.00 · batas 4.30 (kurang 1.30)" in out, out
+    assert "Skor beli 3.50 · jual 2.00 · batas 5.20 (kurang 1.70)" in out, out
+    assert "Belum cukup kuat untuk beli." in out and "Belum cukup kuat untuk long." in out
+    assert "Tren:" in out and "Funding" in out, "a context line for each mode"
+    assert "Posisi terbuka: tidak ada" in out
     assert "━" not in out, "decorative separators are gone"
     _assert_html_safe(out)
 
@@ -4411,10 +4494,10 @@ def test_tg_a_signal_below_the_bar_carries_no_trade_setup():
     from notifier.telegram import _format_consolidated_telegram
     with _tg_db():
         out = _format_consolidated_telegram(make_signal("BUY", "spot", confidence="WEAK"), _hold_f())
-    assert "confidence too low" in out and "no position will open" in out, out
+    assert "confidence WEAK terlalu rendah" in out and "posisi tidak dibuka" in out, out
     assert "🟢" not in out and "ENTER" not in out, out
-    assert "$93,800" not in out and "SL" not in out, "an unopenable signal shows no setup"
-    assert len(out) <= 350, (len(out), out)
+    assert "$93,800" not in out and "SL <code>" not in out, "an unopenable signal shows no setup"
+    assert len(out) <= 750, (len(out), out)
     _assert_html_safe(out)
 
 
@@ -4422,7 +4505,7 @@ def test_tg_an_openable_buy_shows_its_setup():
     from notifier.telegram import _format_consolidated_telegram
     with _tg_db():
         out = _format_consolidated_telegram(make_signal("BUY", "spot", confidence="NORMAL"), _hold_f())
-    assert "🟢" in out and "BUY" in out and "no position" not in out
+    assert "🟢" in out and "BUY" in out and "posisi tidak dibuka" not in out
     for px in ("$95,000", "$93,800", "$98,000", "$101,000"):
         assert px in out, (px, out)
     assert "R/R" in out
@@ -4440,8 +4523,8 @@ def test_tg_a_futures_sell_shows_leverage_and_liquidation():
     assert "🔴" in out and "SELL" in out and "FUTURES SHORT 1H" in out
     opened_sl = apply_futures_exit_geometry(sig)["stop_loss"]
     assert opened_sl > sig["entry_price"] and f"${opened_sl:,.0f}" in out, "short SL (as opened) sits above entry"
-    assert "Liq" in out and "Funding" in out, out
-    assert len(out) <= 800, (len(out), out)
+    assert "likuidasi" in out and "Funding" in out, out
+    assert len(out) <= 1100, (len(out), out)
     _assert_html_safe(out)
 
 
@@ -4450,7 +4533,7 @@ def test_tg_both_modes_firing_stays_under_a_phone_screen():
     with _tg_db():
         out = _format_consolidated_telegram(make_signal("BUY", "spot", confidence="STRONG"),
                                             make_signal("BUY", "futures"))
-    assert len(out) <= 1300, (len(out), out)
+    assert len(out) <= 1600, (len(out), out)
     _assert_html_safe(out)
 
 
@@ -4485,9 +4568,9 @@ def test_tg_a_hold_says_why_when_it_is_not_just_short_of_the_bar():
         bearish = _format_compact_signal_telegram(make_signal("HOLD", "spot", score=4.0, buy_score=1.5, sell_score=4.0))
         held = _format_compact_signal_telegram(make_signal("HOLD", "futures", score=6.5, buy_score=6.5, sell_score=2.0))
         flat = _format_compact_signal_telegram(make_signal("HOLD", "futures", score=2.0, buy_score=2.0, sell_score=2.0))
-    assert "BUY-only" in bearish, bearish
-    assert "news/macro" in held, held
-    assert "no direction" in flat, flat
+    assert "spot hanya bisa beli" in bearish, bearish
+    assert "ditahan filter berita/makro" in held, held
+    assert "Tidak ada arah yang jelas" in flat, flat
 
 
 def test_tg_a_vetoed_hold_names_the_veto_not_news():
@@ -4500,16 +4583,16 @@ def test_tg_a_vetoed_hold_names_the_veto_not_news():
                       "  ⛔ Short-term down: 5-SMA slope -1.24×ATR (need ≥ −0.5 for BUY)"]
     with _tg_db():
         out = _format_compact_signal_telegram(sig)
-    assert "vetoed: Short-term down: 5-SMA slope" in out, out
-    assert "news/macro" not in out and "⛔" not in out, out
-    assert len(out) <= 200, (len(out), out)
+    assert "diveto: Short-term down: 5-SMA slope" in out, out
+    assert "berita/makro" not in out and "⛔" not in out, out
+    assert len(out) <= 400, (len(out), out)
     _assert_html_safe(out)
 
     sig["reasons"] = ["⛔ Entry wick <b>& chase</b> " + "x" * 80]
     with _tg_db():
         out = _format_compact_signal_telegram(sig)
-    assert "vetoed: Entry wick &lt;b&gt;&amp; chase" in out, out
-    assert len(out) <= 200, (len(out), out)
+    assert "diveto: Entry wick &lt;b&gt;&amp; chase" in out, out
+    assert len(out) <= 400, (len(out), out)
     _assert_html_safe(out)
 
 
@@ -4518,7 +4601,7 @@ def test_tg_a_hold_above_the_bar_without_a_veto_still_says_news_macro():
     sig = make_signal("HOLD", "futures", score=6.5, buy_score=6.5, sell_score=2.0)
     with _tg_db():
         out = _format_compact_signal_telegram(sig)
-    assert "held back (news/macro)" in out and "vetoed" not in out, out
+    assert "ditahan filter berita/makro" in out and "diveto" not in out, out
 
 
 def test_tg_open_positions_are_one_line_each():
@@ -4528,9 +4611,14 @@ def test_tg_open_positions_are_one_line_each():
            "opened_at": "2026-10-09 08:01:00", "pyramid_entry": 0}
     with _tg_db(open_positions=[pos]):
         out = _format_consolidated_telegram(_hold_s(), _hold_f())
-    lines = [l for l in out.splitlines() if l.strip()]
-    assert len(lines) <= 4, out
-    assert "#42" in out and "$95,000" in out and "TP1 ✓" in out, out
+    assert "Posisi terbuka:" in out and "tidak ada" not in out.split("Posisi terbuka:")[1], out
+    pos_lines = [l for l in out.splitlines() if "#42" in l]
+    assert len(pos_lines) == 1, out
+    assert "$95,000" in pos_lines[0] and "TP1 ✓" in pos_lines[0], out
+    assert "+0.00% sekarang" in pos_lines[0], "the move since entry at this cycle's price"
+    with _tg_db(open_positions=[dict(pos, pyramid_entry=1), dict(pos, id=43, pyramid_entry=2)]):
+        out = _format_consolidated_telegram(_hold_s(), _hold_f())
+    assert "#42 @" in out and "#43 (pyramid 2)" in out, "a first entry is not a pyramid level"
     _assert_html_safe(out)
 
 
@@ -4558,7 +4646,7 @@ def test_tg_position_close_names_mode_outcome_pnl_and_running_total():
     assert "SPOT" in out and "SPO " not in out and "FUTURES" in out, out
     for want in ("+2.41%", "-1.27%", "TP2", "stop loss", "$95,000", "$97,290", "$96,200"):
         assert want in out, (want, out)
-    assert "+3.50%" in out and "4 trades" in out, "running total for the mode that closed"
+    assert "+3.50%" in out and "4 trade" in out, "running total for the mode that closed"
     assert len(out) <= 400, (len(out), out)
     _assert_html_safe(out)
 
@@ -5306,8 +5394,8 @@ def test_tg_low_confidence_line_shows_the_bar_it_cleared_and_says_confidence():
     from notifier.telegram import _format_compact_signal_telegram
     with _tg_db():
         out = _format_compact_signal_telegram(make_signal("BUY", "spot", confidence="WEAK"))
-    assert "BUY WEAK 6.50 · bar 4.30 — confidence too low" in out, out
-    assert "below the bar" not in out, out
+    assert "SINYAL BUY</b> · WEAK" in out and "Skor BUY 6.50 · batas 4.30" in out, out
+    assert "Skor lolos batas, tapi confidence WEAK terlalu rendah" in out, out
 
 
 def test_tg_close_card_colours_by_result_and_names_a_partial():
@@ -5322,10 +5410,49 @@ def test_tg_close_card_colours_by_result_and_names_a_partial():
         out = _format_close_notification([win_short, loss_long])
         assert "🟢 FUTURES SELL <b>+3.10%</b>" in out, out
         assert "🔴 SPOT BUY <b>-1.20%</b>" in out, out
-        assert "Position closed" in out, out
+        assert "Posisi ditutup" in out, out
         part = _format_close_notification([tp1])
-        assert "Partial take-profit" in part and "Position closed" not in part, part
-        assert "Position closed" in _format_close_notification([tp1, loss_long])
+        assert "Take-profit sebagian" in part and "Posisi ditutup" not in part, part
+        assert "sisanya tetap berjalan" in part, part
+        assert "Posisi ditutup" in _format_close_notification([tp1, loss_long])
+
+
+def test_every_phase3_close_reaches_the_close_card():
+    """FLIP and BREAKER_CLOSE close positions in run_cycle itself, not through
+    check_and_close_positions, so they never reached the close card and the owner was
+    never told. Every close_paper_position call in run_cycle must record what it closed
+    for Phase 4, and the card must render both outcomes."""
+    import inspect, re, run_bot
+    from notifier.telegram import _format_close_notification
+    src = inspect.getsource(run_bot.run_cycle)
+    calls = [m.end() for m in re.finditer(r"close_paper_position\(", src)]
+    assert len(calls) >= 2, "expected the FLIP and BREAKER_CLOSE closes in run_cycle"
+    for end in calls:
+        assert "phase3_closed.append(" in src[end:end + 400], src[end - 120:end + 400]
+    assert re.search(r"all_closed\s*=\s*phase3_closed\s*\+", src), "phase3_closed must feed all_closed"
+    flip = {"type": "SELL", "mode": "futures", "pnl": -0.40, "outcome": "FLIP",
+            "entry": 95000.0, "exit": 95380.0}
+    brk = {"type": "BUY", "mode": "spot", "pnl": -2.10, "outcome": "BREAKER_CLOSE",
+           "entry": 95000.0, "exit": 93005.0}
+    with _tg_db(closed_pnl=lambda mode=None: (0.0, 0, 0.0)):
+        out = _format_close_notification([flip, brk])
+    assert "Posisi ditutup" in out and "sinyal berbalik · flip" in out, out
+    assert "circuit breaker · equity" in out and "🔴 SPOT BUY <b>-2.10%</b>" in out, out
+
+
+def test_flip_and_breaker_pnl_carry_execution_costs():
+    """FLIP and BREAKER_CLOSE recorded the raw price move, while every other close goes
+    through trading.paper._calc_pnl, which deducts (fee + slippage) x 2 and blends a
+    taken TP1. Both must price through it."""
+    import inspect, re, run_bot
+    src = inspect.getsource(run_bot.run_cycle)
+    for outcome in ("FLIP", "BREAKER_CLOSE"):
+        m = re.search(r'close_paper_position\([^\n]*"%s"' % outcome, src)
+        assert m, f"{outcome} close not found"
+        assert "_calc_pnl(" in src[max(0, m.start() - 700):m.start()], src[max(0, m.start() - 700):m.end()]
+    from trading.paper import _calc_pnl
+    pos = {"type": "SELL", "entry_price": 100_000.0, "mode": "futures", "partial_closed": 0}
+    assert _calc_pnl(pos, 100_000.0) < 0, "a flat flip must cost the round trip"
 
 
 def test_send_signal_alert_survives_a_formatter_error():
@@ -5596,6 +5723,7 @@ if __name__ == "__main__":
     run("refusal is an error",                    test_llm_refusal_is_an_error_not_a_summary)
     run("deepseek: openai shape",                 test_llm_deepseek_adapter_uses_the_openai_shape)
     run("missing key / provider is an error",     test_llm_missing_key_or_unknown_provider_is_an_error)
+    run("shadow agents default to Claude only",  test_shadow_agents_default_to_claude_only)
     run("haiku omits effort and fallbacks",       test_llm_haiku_request_omits_effort_and_fallbacks)
     run("Q&A uses its own model (sonnet)",         test_qa_uses_its_own_model_sonnet_by_default)
     run("prices cover haiku alias + snapshot",    test_llm_prices_cover_haiku_alias_and_snapshot)
@@ -5635,7 +5763,7 @@ if __name__ == "__main__":
     run("eval verdict follows the prereg",        test_shadow_eval_verdict_follows_the_preregistration)
 
     print("\n── 35. Telegram messages fit a phone ──")
-    run("HOLD cycle is three lines",              test_tg_a_hold_cycle_is_three_lines)
+    run("HOLD card: short block per mode",       test_tg_a_hold_cycle_explains_each_mode_in_a_short_block)
     run("below the bar: no setup, no go marker",  test_tg_a_signal_below_the_bar_carries_no_trade_setup)
     run("openable BUY shows its setup",           test_tg_an_openable_buy_shows_its_setup)
     run("futures SELL: leverage + liquidation",   test_tg_a_futures_sell_shows_leverage_and_liquidation)
@@ -5718,6 +5846,7 @@ if __name__ == "__main__":
     run("H-D return after stat known, BTC window", test_hd_return_starts_after_the_stat_is_known_and_btc_window_holds)
     run("H-D finds planted signal, not null",     test_hd_pooled_ic_finds_a_planted_signal_and_not_a_null_one)
     run("scorers refuse before day 30",           test_scoring_scripts_refuse_before_day_30)
+    run("futures hypotheses from futures restart", test_score_run3_scores_futures_hypotheses_from_the_futures_restart)
 
     print("\n── 42. regime_live_ic.py — H-RGL ──")
     run("H-RGL block → bar live scored",          test_regime_live_maps_each_block_to_the_bar_live_scored)
@@ -5737,6 +5866,10 @@ if __name__ == "__main__":
     run("tg low confidence names its bar",        test_tg_low_confidence_line_shows_the_bar_it_cleared_and_says_confidence)
     run("tg close card: colour by P&L, partial",  test_tg_close_card_colours_by_result_and_names_a_partial)
     run("formatter error spares queued msgs",     test_send_signal_alert_survives_a_formatter_error)
+    run("FLIP/BREAKER closes reach close card",  test_every_phase3_close_reaches_the_close_card)
+    run("FLIP/BREAKER P&L carry costs",          test_flip_and_breaker_pnl_carry_execution_costs)
+    run("basis+taker pruned, spot untouched",    test_basis_and_taker_are_pruned_from_futures_and_spot_is_untouched)
+    run("basis own checkpoint, no stale reason", test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

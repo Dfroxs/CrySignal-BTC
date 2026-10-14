@@ -50,7 +50,7 @@ def _macro_banner(signal):
     """Return a warning banner if the signal was penalized for a macro event."""
     for r in signal.get("reasons", []):
         if "MACRO CAUTION" in r:
-            return "⚠️ <b>MACRO RISK: High-impact event approaching — position may be force-closed</b>"
+            return "⚠️ <b>RISIKO MAKRO: berita berdampak tinggi segera rilis — posisi bisa ditutup paksa</b>"
     return None
 
 

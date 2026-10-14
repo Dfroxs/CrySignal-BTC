@@ -1,4 +1,4 @@
-"""Exit shadow: Claude and DeepSeek judge each OPEN position every hour, CLOSE or HOLD.
+"""Exit shadow: Claude judges each OPEN position every hour, CLOSE or HOLD.
 Logged, never acted on.
 
 `agents/shadow.py` only ever judged entries. This asks the other half of the trading

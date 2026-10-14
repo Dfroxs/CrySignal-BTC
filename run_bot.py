@@ -16,7 +16,7 @@ from signals.futures import analyze_futures_signal
 from signals.terminal import display_combined
 from news_scraper import scrape_and_export
 from notifier import _format_close_notification, _format_open_notification, _send_telegram_message, send_signal_alert
-from trading.paper import apply_futures_exit_geometry, check_and_close_positions, print_open_status, print_paper_summary
+from trading.paper import _calc_pnl, apply_futures_exit_geometry, check_and_close_positions, print_open_status, print_paper_summary
 from config import RISK_CONFIG, FUTURES_CONFIG, RISK_LIMITS
 from signals.sizing import calculate_position_size, get_pyramid_size_factor
 from trading.history import close as close_db, close_paper_position, get_open_position_count_by_direction, get_open_positions, has_open_position_same_direction, log_signal_block, open_paper_position
@@ -425,6 +425,10 @@ def run_cycle():
     _loading("Phase 3  Updating paper positions...")
     phase3_actions = []     # track what happened for summary
     pending_tg    = []      # defer Telegram notifications until after Phase 4
+    # Closes Phase 3 makes itself (FLIP, BREAKER_CLOSE). check_and_close_positions returns
+    # its own closes for the close card; these never passed through it, so the owner was
+    # never told a position had flipped or been force-closed.
+    phase3_closed = []
     # Did Phase 3 actually OPEN anything this cycle? The adaptive controller is updated
     # from this, not from whether a signal fired — see market_data._update_threshold_state.
     _opened_this_cycle = {"spot": False, "futures": False}
@@ -475,9 +479,9 @@ def run_cycle():
         modes_blocked = " + ".join(m for m, b in (("SPOT", spot_block), ("FUT", fut_block)) if b)
         pending_tg.append((
             f"⛔ <b>Circuit Breaker</b>\n"
-            f"{modes_blocked} new entries blocked\n"
-            f"Spot DD <b>{spot_dd:.1f}%</b>  ·  Fut DD <b>{fut_dd:.1f}%</b>\n"
-            f"Daily Spot <b>{daily_spot:+.1f}%</b>  ·  Daily Fut <b>{daily_fut:+.1f}%</b>",
+            f"Entry baru {modes_blocked} diblokir (batas rugi tercapai)\n"
+            f"Drawdown spot <b>{spot_dd:.1f}%</b>  ·  futures <b>{fut_dd:.1f}%</b>\n"
+            f"Hari ini spot <b>{daily_spot:+.1f}%</b>  ·  futures <b>{daily_fut:+.1f}%</b>",
             "circuit-breaker",
         ))
 
@@ -492,13 +496,12 @@ def run_cycle():
         # Use latest signal price for a meaningful exit P&L (was hard-coded 0).
         breaker_px = (futures_signal or spot_signal or {}).get("entry_price")
         for p in _h.get_open_positions():
-            if breaker_px:
-                breaker_pnl = ((breaker_px - p["entry_price"]) / p["entry_price"] * 100) \
-                              if p["type"] == "BUY" \
-                              else ((p["entry_price"] - breaker_px) / p["entry_price"] * 100)
-            else:
-                breaker_pnl = 0
+            # Priced like every other close: costs deducted, a taken TP1 blended in.
+            breaker_pnl = _calc_pnl(p, breaker_px) if breaker_px else 0
             _h.close_paper_position(p["id"], "BREAKER_CLOSE", round(breaker_pnl, 2), exit_price=breaker_px)
+            phase3_closed.append({"type": p["type"], "entry": p["entry_price"],
+                                  "exit": breaker_px or p["entry_price"], "pnl": round(breaker_pnl, 2),
+                                  "outcome": "BREAKER_CLOSE", "mode": p.get("mode", "futures")})
 
     try:
         # Spot positions — BUY-only (no short selling on spot)
@@ -728,8 +731,11 @@ def run_cycle():
             for opp in opp_positions:
                 entry = opp["entry_price"]
                 flip_px = futures_signal["entry_price"]
-                pnl = ((entry - flip_px) / entry * 100) if opp_dir == "SELL" else ((flip_px - entry) / entry * 100)
+                # Priced like every other close: costs deducted, a taken TP1 blended in.
+                pnl = _calc_pnl(opp, flip_px)
                 close_paper_position(opp["id"], "FLIP", round(pnl, 2), exit_price=flip_px)
+                phase3_closed.append({"type": opp["type"], "entry": entry, "exit": flip_px,
+                                      "pnl": round(pnl, 2), "outcome": "FLIP", "mode": "futures"})
                 msg = f"FUT {opp['type']} flipped → {futures_signal['type']} (#{opp['id']} closed, P&L {pnl:+.2f}%)"
                 logger.info(msg)
                 phase3_actions.append(f"🔄 {msg}")
@@ -878,7 +884,7 @@ def run_cycle():
             fut_funding = futures_signal["_market"].get("funding", {}).get("rate_pct", 0)
         closed_spot = check_and_close_positions(current_price, mode="spot", current_atr=spot_atr)
         closed_fut   = check_and_close_positions(current_price, mode="futures", current_atr=fut_atr, funding_rate=fut_funding)
-        all_closed   = (closed_spot or []) + (closed_fut or [])
+        all_closed   = phase3_closed + (closed_spot or []) + (closed_fut or [])
 
         print_open_status("spot")
         print_open_status("futures")
@@ -924,7 +930,7 @@ def run_cycle():
     except Exception as e:  # noqa: BLE001 — a cache write must not kill the cycle
         logger.warning("threshold state update failed: %s", e)
 
-    # Shadow agents — Claude and DeepSeek judge each fired signal; logged, never traded
+    # Shadow agents — Claude judges each fired signal; logged, never traded
     # (agents/shadow.py). Runs in a background thread: the cycle never waits for them.
     try:
         from agents.shadow import run_shadow

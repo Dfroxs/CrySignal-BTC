@@ -34,6 +34,10 @@ from scripts.live_ic import norm_ts, ts_sql  # noqa: E402
 
 DAY_30 = pd.Timestamp("2026-11-08")
 SHADOW_ERROR_MAX = 0.20
+# Amendment 2026-10-15 (futures basis/taker pruned, FLIP/BREAKER costs): everything the
+# futures scoring path feeds counts from the manifest's `futures_restart_at`, and is
+# scored 30 days after it. H-L reads raw market fields and keeps the run's start.
+FUTURES_SCORED = ("H-V1", "H-V2_futures", "H-S", "H-X")
 
 
 def health(db: Path, start: str) -> dict:
@@ -58,17 +62,29 @@ def health(db: Path, start: str) -> dict:
     return out
 
 
-def commands(db: Path, start: str, out: Path) -> list[tuple[str, list[str]]]:
+def futures_day_30(futures_start: str | None) -> pd.Timestamp:
+    """Day 30 of the futures window: the run's own unless futures restarted later."""
+    if not futures_start:
+        return DAY_30
+    return max(DAY_30, pd.Timestamp(futures_start).tz_localize(None).normalize() + pd.Timedelta(days=30))
+
+
+def commands(db: Path, start: str, out: Path,
+             futures_start: str | None = None) -> list[tuple[str, list[str]]]:
+    """Every scorer with its own window. H-S and H-X mix both modes, so they take the
+    later start whole: spot opinions before it are dropped, which costs only data."""
     py = [sys.executable]
     s = ["--db", str(db), "--start", start]
+    f = ["--db", str(db), "--start", futures_start or start]
     return [
-        ("H-L_H-V1", py + ["scripts/live_ic.py", *s, "--out", str(out / "live_ic.json")]),
-        ("H-V2_futures", py + ["scripts/variant_books.py", *s, "--mode", "futures",
+        ("H-L", py + ["scripts/live_ic.py", *s, "--out", str(out / "live_ic.json")]),
+        ("H-V1", py + ["scripts/live_ic.py", *f, "--out", str(out / "live_ic_hv1.json")]),
+        ("H-V2_futures", py + ["scripts/variant_books.py", *f, "--mode", "futures",
                                "--out", str(out / "books_futures.json")]),
         ("H-V2_spot", py + ["scripts/variant_books.py", *s, "--mode", "spot",
                             "--out", str(out / "books_spot.json")]),
-        ("H-S", py + ["scripts/shadow_eval.py", *s, "--out", str(out / "shadow.json")]),
-        ("H-X", py + ["scripts/exit_shadow_eval.py", *s, "--out", str(out / "exit_shadow.json")]),
+        ("H-S", py + ["scripts/shadow_eval.py", *f, "--out", str(out / "shadow.json")]),
+        ("H-X", py + ["scripts/exit_shadow_eval.py", *f, "--out", str(out / "exit_shadow.json")]),
         ("H-B", py + ["scripts/hb_eval.py", "--end", str(DAY_30.date()), "--out-dir", str(out / "hb")]),
     ]
 
@@ -80,11 +96,17 @@ def main() -> int:
     ap.add_argument("--manifest", type=Path, required=True)
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
-    start = json.loads(args.manifest.read_text())["started_at"]
+    manifest = json.loads(args.manifest.read_text())
+    start = manifest["started_at"]
     start_db = norm_ts(start)                    # every scorer normalises again; this is for display
+    fut_start = manifest.get("futures_restart_at")
+    fut_start_db = norm_ts(fut_start) if fut_start else None
+    fut_day_30 = futures_day_30(fut_start)
 
     h = health(args.db, start_db)
     print(f"run 3 from {start}  db {args.db}")
+    if fut_start:
+        print(f"futures-scored hypotheses {FUTURES_SCORED} from {fut_start}, day 30 {fut_day_30.date()}")
     print(json.dumps(h, indent=1, default=str))
     if pd.Timestamp.now("UTC").tz_localize(None) < DAY_30:
         print(f"\nHEALTH ONLY: no hypothesis may be scored before {DAY_30.date()}.")
@@ -95,7 +117,11 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "health.json").write_text(json.dumps(h, indent=1, default=str))
     failed = []
-    for name, cmd in commands(args.db, start_db, args.out):
+    now = pd.Timestamp.now("UTC").tz_localize(None)
+    for name, cmd in commands(args.db, start_db, args.out, fut_start_db):
+        if name in FUTURES_SCORED and now < fut_day_30:
+            print(f"\n=== {name}: not before {fut_day_30.date()} (futures window restarted {fut_start})")
+            continue
         print(f"\n=== {name}: {' '.join(cmd[1:])}", flush=True)
         r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
         (args.out / f"{name}.txt").write_text(r.stdout + r.stderr)
