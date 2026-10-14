@@ -5328,6 +5328,29 @@ def test_tg_close_card_colours_by_result_and_names_a_partial():
         assert "Position closed" in _format_close_notification([tp1, loss_long])
 
 
+def test_every_phase3_close_reaches_the_close_card():
+    """FLIP and BREAKER_CLOSE close positions in run_cycle itself, not through
+    check_and_close_positions, so they never reached the close card and the owner was
+    never told. Every close_paper_position call in run_cycle must record what it closed
+    for Phase 4, and the card must render both outcomes."""
+    import inspect, re, run_bot
+    from notifier.telegram import _format_close_notification
+    src = inspect.getsource(run_bot.run_cycle)
+    calls = [m.end() for m in re.finditer(r"close_paper_position\(", src)]
+    assert len(calls) >= 2, "expected the FLIP and BREAKER_CLOSE closes in run_cycle"
+    for end in calls:
+        assert "phase3_closed.append(" in src[end:end + 400], src[end - 120:end + 400]
+    assert re.search(r"all_closed\s*=\s*phase3_closed\s*\+", src), "phase3_closed must feed all_closed"
+    flip = {"type": "SELL", "mode": "futures", "pnl": -0.40, "outcome": "FLIP",
+            "entry": 95000.0, "exit": 95380.0}
+    brk = {"type": "BUY", "mode": "spot", "pnl": -2.10, "outcome": "BREAKER_CLOSE",
+           "entry": 95000.0, "exit": 93005.0}
+    with _tg_db(closed_pnl=lambda mode=None: (0.0, 0, 0.0)):
+        out = _format_close_notification([flip, brk])
+    assert "Position closed" in out and "signal reversed · flip" in out, out
+    assert "circuit breaker · equity" in out and "🔴 SPOT BUY <b>-2.10%</b>" in out, out
+
+
 def test_send_signal_alert_survives_a_formatter_error():
     """A formatter exception used to propagate into run_bot's Phase 4 and skip the
     position-open/close messages queued after the hourly card."""
@@ -5737,6 +5760,7 @@ if __name__ == "__main__":
     run("tg low confidence names its bar",        test_tg_low_confidence_line_shows_the_bar_it_cleared_and_says_confidence)
     run("tg close card: colour by P&L, partial",  test_tg_close_card_colours_by_result_and_names_a_partial)
     run("formatter error spares queued msgs",     test_send_signal_alert_survives_a_formatter_error)
+    run("FLIP/BREAKER closes reach close card",  test_every_phase3_close_reaches_the_close_card)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

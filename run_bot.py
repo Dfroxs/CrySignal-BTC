@@ -425,6 +425,10 @@ def run_cycle():
     _loading("Phase 3  Updating paper positions...")
     phase3_actions = []     # track what happened for summary
     pending_tg    = []      # defer Telegram notifications until after Phase 4
+    # Closes Phase 3 makes itself (FLIP, BREAKER_CLOSE). check_and_close_positions returns
+    # its own closes for the close card; these never passed through it, so the owner was
+    # never told a position had flipped or been force-closed.
+    phase3_closed = []
     # Did Phase 3 actually OPEN anything this cycle? The adaptive controller is updated
     # from this, not from whether a signal fired — see market_data._update_threshold_state.
     _opened_this_cycle = {"spot": False, "futures": False}
@@ -499,6 +503,9 @@ def run_cycle():
             else:
                 breaker_pnl = 0
             _h.close_paper_position(p["id"], "BREAKER_CLOSE", round(breaker_pnl, 2), exit_price=breaker_px)
+            phase3_closed.append({"type": p["type"], "entry": p["entry_price"],
+                                  "exit": breaker_px or p["entry_price"], "pnl": round(breaker_pnl, 2),
+                                  "outcome": "BREAKER_CLOSE", "mode": p.get("mode", "futures")})
 
     try:
         # Spot positions — BUY-only (no short selling on spot)
@@ -730,6 +737,8 @@ def run_cycle():
                 flip_px = futures_signal["entry_price"]
                 pnl = ((entry - flip_px) / entry * 100) if opp_dir == "SELL" else ((flip_px - entry) / entry * 100)
                 close_paper_position(opp["id"], "FLIP", round(pnl, 2), exit_price=flip_px)
+                phase3_closed.append({"type": opp["type"], "entry": entry, "exit": flip_px,
+                                      "pnl": round(pnl, 2), "outcome": "FLIP", "mode": "futures"})
                 msg = f"FUT {opp['type']} flipped → {futures_signal['type']} (#{opp['id']} closed, P&L {pnl:+.2f}%)"
                 logger.info(msg)
                 phase3_actions.append(f"🔄 {msg}")
@@ -878,7 +887,7 @@ def run_cycle():
             fut_funding = futures_signal["_market"].get("funding", {}).get("rate_pct", 0)
         closed_spot = check_and_close_positions(current_price, mode="spot", current_atr=spot_atr)
         closed_fut   = check_and_close_positions(current_price, mode="futures", current_atr=fut_atr, funding_rate=fut_funding)
-        all_closed   = (closed_spot or []) + (closed_fut or [])
+        all_closed   = phase3_closed + (closed_spot or []) + (closed_fut or [])
 
         print_open_status("spot")
         print_open_status("futures")

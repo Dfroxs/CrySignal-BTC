@@ -15,6 +15,20 @@ those trades. Fidelity check: reproduce H-SR's kept arm exactly. Nothing changes
 
 ---
 
+## 2026-10-14 — fix: FLIP and BREAKER_CLOSE now reach the Telegram close card
+
+Both close a position inside `run_cycle` itself rather than through
+`check_and_close_positions`, so they never joined `all_closed` and the owner was never
+told a futures position had flipped or a breaker had force-closed everything. They now
+append to `phase3_closed`, which feeds the Phase 4 close card. Notification only: the
+close itself, its P&L and every trading decision are unchanged, and nothing in
+`signals/`, `trading/`, `config.py` or `backtest.py` moved, so this can ship mid-run
+without restarting run 3's window. Test: `test_every_phase3_close_reaches_the_close_card`
+(fails without the fix). Found while doing it: both closes record P&L without execution
+costs. That changes recorded P&L and the breaker, so it goes to the run-4 backlog.
+
+---
+
 ## 2026-10-10 — docs: run-4 backlog — today's findings
 
 Added: FLIP/BREAKER_CLOSE send no Telegram close (correctness, Phase 3 so run 4);
