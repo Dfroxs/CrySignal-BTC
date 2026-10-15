@@ -130,6 +130,9 @@ def main() -> int:
             failed.append(name)
             print(f"  ✗ {name} exited {r.returncode}: {r.stderr[-500:]}")
     print(f"\nwritten → {args.out}   failed: {failed or 'none'}")
+    if fut_start:
+        print("H-L is read from H-L.txt / live_ic.json only. H-V1.txt prints H-L lines too, "
+              "but on the futures window: they are not H-L.")
     print("H-D runs on the VPS: scripts/hd_eval.py --derivs data/derivs --fetch-klines, then --out")
     print("H-RGL (2026-10-10-regime-live-prereg.md) scores from 2026-11-11: "
           "scripts/regime_live_ic.py --db <db> --out <folder>/regime_live")
