@@ -3908,6 +3908,16 @@ def test_variant_books_fidelity_matches_within_one_bar():
     m, un = fidelity([5, 30], idx, ["2026-10-10T05:01:03+00:00", "2026-10-10T20:01:00+00:00"], "1h")
     assert m == 1 and un == ["2026-10-10T20:01:00+00:00"], (m, un)
 
+def test_variant_books_fidelity_counts_level_one_spot_entries_as_live():
+    # Rehearsal 2026-10-15: spot writes pyramid_entry=1 for an initial entry, so
+    # `if not pyr` dropped every spot position and fidelity read "0/0", always holding.
+    from scripts.variant_books import split_live
+    pos = [("2026-10-11T12:01", 1), ("2026-10-12T00:01", 2), ("2026-10-13T16:01", 1),
+           ("2026-10-10T06:01", None)]
+    live, n_pyr = split_live(pos)
+    assert live == ["2026-10-11T12:01", "2026-10-13T16:01", "2026-10-10T06:01"], live
+    assert n_pyr == 1
+
 def test_hb_verdict_follows_the_prereg():
     from scripts.hb_eval import verdict
     s = lambda n, mean, lo, hi: {"n": n, "mean": mean, "ci": (lo, hi)}
@@ -5842,6 +5852,7 @@ if __name__ == "__main__":
     print("\n── 41. Run-3 scoring instruments ──")
     run("start filter: both timestamp forms",     test_scorer_start_filter_reads_both_timestamp_forms_alike)
     run("H-V2 fidelity within ±1 bar",            test_variant_books_fidelity_matches_within_one_bar)
+    run("H-V2 fidelity: level-1 spot entries live", test_variant_books_fidelity_counts_level_one_spot_entries_as_live)
     run("H-B verdict per prereg",                 test_hb_verdict_follows_the_prereg)
     run("H-D return after stat known, BTC window", test_hd_return_starts_after_the_stat_is_known_and_btc_window_holds)
     run("H-D finds planted signal, not null",     test_hd_pooled_ic_finds_a_planted_signal_and_not_a_null_one)

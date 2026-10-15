@@ -4,6 +4,21 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-15 — fix(scripts): run-3 scoring rehearsal; H-V2 spot fidelity counted no positions
+
+Rehearsed scoring day without computing any hypothesis figure: health on a pulled DB,
+then every scorer end to end on blinded inputs (permuted DB fields, random-walk and
+bootstrapped prices, synthetic perp klines). All nine paths ran.
+
+- **Fixed `scripts/variant_books.py`:** `pyramid_entry` is the pyramid level (1 = initial
+  spot entry), so `if not pyr` excluded every spot entry and H-V2 spot fidelity read
+  "0/0" and always held. Only level > 1 is now a pyramid (`split_live`, new test).
+- `score_run3.py` now warns that H-L is read from `H-L.txt`, not from the H-L lines
+  `H-V1.txt` also prints on the futures window.
+- Recorded as the third 2026-10-15 amendment to `2026-10-09-run3-prereg.md`.
+
+---
+
 ## 2026-10-14 — docs: H-RT results — range-top spot BUYs INCONCLUSIVE, nothing changes
 
 Scored as pre-registered (`2026-10-14-range-top-results.md`, instrument
