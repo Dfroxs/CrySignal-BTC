@@ -27,6 +27,39 @@ those trades. Fidelity check: reproduce H-SR's kept arm exactly. Nothing changes
 
 ---
 
+## 2026-10-15 — docs: H-TP results — nearer spot TP1 INCONCLUSIVE, nothing changes
+
+Scored as pre-registered (`2026-10-15-tp1-distance-results.md`, instrument
+`scripts/tp1_ic.py`). Fidelity passed: H-SR's kept arm was reproduced exactly.
+
+- **Synthetic entries both pass.** A (2024–25): 9/10 cells, +0.0995pp per entry.
+  B (09-21 grid): 18/20 cells, +0.1025pp. TP1 hit rate ~13% → 32%.
+- **Engine entries (the guard) are negative in both windows:** −0.02pp (n=347) and
+  −0.08pp (n=43). That makes the verdict INCONCLUSIVE.
+- **Reading:** a nearer TP1 helps on price itself, but not on the range-top breakout
+  entries this engine takes, whose winners run.
+- **Outcome:** spot TP1 stays at 2.5R. Recorded as a lead in the run-4 backlog, tied to
+  H-B.
+
+---
+
+## 2026-10-15 — docs: H-TP pre-registered — is spot's TP1 too far away?
+
+Spot TP1 sits at +3.75 ATR and was hit on only 8–21% of spot trades in H-RT's
+descriptives, while mean best excursion was 1.9–2.3 ATR. The question is pre-registered
+before any figure (`2026-10-15-tp1-distance-prereg.md`).
+
+- **One candidate:** TP1 at 1.5 × risk (+2.25 ATR), TP2 at twice that.
+- **Applied at open**, like futures' exit geometry, so entries and the R:R veto are
+  untouched.
+- **Paired test on three arms, all of which must hold:**
+  - A: synthetic entries on fresh 2024–2025 data, ≥ 8 of 10 cells, ≥ +0.05pp per entry;
+  - B: the 09-21 grid, ≥ 16 of 20 cells, ≥ +0.05pp;
+  - C: engine entries, disclosed as contaminated, so a guard only.
+- No R-multiple sweep. Nothing changes live.
+
+---
+
 ## 2026-10-15 — feat: clearer Telegram cards in Indonesian; shadow agents on Claude only
 
 **Telegram (notifier only).** The owner found the hourly card too terse ("⏸ SPOT 4H ·

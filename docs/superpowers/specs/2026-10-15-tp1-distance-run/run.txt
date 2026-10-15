@@ -1,0 +1,47 @@
+WARNING:signals.market_data:binance fetch_ohlcv failed (binance GET https://fapi.binance.com/fapi/v1/exchangeInfo) — falling back to data-api.binance.vision for 1800s
+Arm A (2024-2025, synthetic)
+  A BTC/USDT   2024  n= 330 n_eff= 106 diff=+0.0174pp  base=-0.305 cand=-0.288  TP1 hit 14%→32%
+WARNING:root:fetch BTC/USDT 2025 failed (binance GET https://data-api.binance.vision/api/v3/klines?interval=4h&limit=1000&symbol=BTCUSDT&startTime=1764489600000), retry 1
+  A BTC/USDT   2025  n= 329 n_eff= 106 diff=+0.1495pp  base=-0.616 cand=-0.467  TP1 hit 11%→32%
+  A ETH/USDT   2024  n= 330 n_eff= 103 diff=+0.1168pp  base=-0.471 cand=-0.354  TP1 hit 12%→31%
+  A ETH/USDT   2025  n= 329 n_eff= 106 diff=+0.1044pp  base=-0.596 cand=-0.492  TP1 hit 13%→32%
+  A BNB/USDT   2024  n= 330 n_eff= 106 diff=+0.0886pp  base=-0.235 cand=-0.147  TP1 hit 12%→32%
+  A BNB/USDT   2025  n= 329 n_eff= 114 diff=-0.0214pp  base=-0.198 cand=-0.220  TP1 hit 16%→35%
+  A XRP/USDT   2024  n= 330 n_eff= 108 diff=+0.0367pp  base=+0.036 cand=+0.072  TP1 hit 14%→33%
+WARNING:root:fetch XRP/USDT 2025 failed (binance GET https://data-api.binance.vision/api/v3/klines?interval=4h&limit=1000&symbol=XRPUSDT&startTime=1750089600000), retry 1
+  A XRP/USDT   2025  n= 329 n_eff= 105 diff=+0.1179pp  base=-0.528 cand=-0.410  TP1 hit 13%→32%
+  A LINK/USDT  2024  n= 330 n_eff=  97 diff=+0.1669pp  base=-0.778 cand=-0.611  TP1 hit 12%→29%
+  A LINK/USDT  2025  n= 329 n_eff=  94 diff=+0.2188pp  base=-0.874 cand=-0.655  TP1 hit 11%→29%
+Arm B (09-21 grid, synthetic)
+  B BTC/USDT   2020  n= 330 n_eff= 119 diff=+0.0716pp  base=+0.189 cand=+0.260  TP1 hit 16%→36%
+  B BTC/USDT   2021  n= 329 n_eff=  98 diff=+0.0832pp  base=-0.632 cand=-0.549  TP1 hit 12%→30%
+  B BTC/USDT   2022  n= 329 n_eff=  86 diff=+0.1243pp  base=-1.134 cand=-1.010  TP1 hit 10%→26%
+  B BTC/USDT   2023  n= 329 n_eff= 106 diff=+0.0476pp  base=-0.334 cand=-0.286  TP1 hit 17%→32%
+  B ETH/USDT   2020  n= 330 n_eff= 115 diff=-0.0232pp  base=+0.030 cand=+0.007  TP1 hit 18%→35%
+  B ETH/USDT   2021  n= 329 n_eff= 116 diff=-0.0288pp  base=-0.229 cand=-0.258  TP1 hit 13%→35%
+  B ETH/USDT   2022  n= 329 n_eff=  98 diff=+0.0853pp  base=-0.964 cand=-0.879  TP1 hit 11%→30%
+  B ETH/USDT   2023  n= 329 n_eff=  92 diff=+0.0347pp  base=-0.636 cand=-0.601  TP1 hit 15%→28%
+  B BNB/USDT   2020  n= 330 n_eff= 112 diff=+0.0624pp  base=-0.028 cand=+0.034  TP1 hit 17%→34%
+  B BNB/USDT   2021  n= 329 n_eff= 121 diff=+0.1603pp  base=+0.058 cand=+0.218  TP1 hit 16%→37%
+  B BNB/USDT   2022  n= 329 n_eff=  93 diff=+0.0258pp  base=-0.860 cand=-0.834  TP1 hit 11%→28%
+  B BNB/USDT   2023  n= 329 n_eff=  92 diff=+0.0938pp  base=-0.596 cand=-0.502  TP1 hit 13%→28%
+  B XRP/USDT   2020  n= 330 n_eff=  90 diff=+0.1418pp  base=-1.163 cand=-1.021  TP1 hit 12%→27%
+  B XRP/USDT   2021  n= 329 n_eff= 111 diff=+0.2997pp  base=-0.340 cand=-0.040  TP1 hit 14%→34%
+  B XRP/USDT   2022  n= 329 n_eff= 103 diff=+0.1934pp  base=-0.838 cand=-0.645  TP1 hit 15%→31%
+  B XRP/USDT   2023  n= 329 n_eff= 102 diff=+0.1675pp  base=-0.488 cand=-0.320  TP1 hit 14%→31%
+  B LINK/USDT  2020  n= 330 n_eff= 114 diff=+0.0350pp  base=-0.406 cand=-0.371  TP1 hit 17%→35%
+  B LINK/USDT  2021  n= 329 n_eff= 112 diff=+0.2519pp  base=-0.667 cand=-0.415  TP1 hit 15%→34%
+  B LINK/USDT  2022  n= 329 n_eff=  86 diff=+0.1723pp  base=-1.437 cand=-1.265  TP1 hit 11%→26%
+  B LINK/USDT  2023  n= 329 n_eff= 103 diff=+0.0518pp  base=-0.530 cand=-0.479  TP1 hit 16%→31%
+
+Arm A: cells favouring 9/10 (need 8), pooled diff +0.0995pp (need ≥ +0.05) n=3295 n_eff=1045  base -0.456 cand -0.357  TP1 hit 13%→32%  unresolved 0/0  → meets
+  BTC only: diff +0.0834pp (n=659)
+
+Arm B: cells favouring 18/20 (need 16), pooled diff +0.1025pp (need ≥ +0.05) n=6585 n_eff=2069  base -0.550 cand -0.448  TP1 hit 14%→31%  unresolved 0/0  → meets
+  BTC only: diff +0.0817pp (n=1317)
+Arm C primary: n=347 base -0.165 cand -0.185 diff -0.0195pp  TP1 hit 17%→33%  inert 1%  BTC diff -0.0204 (n=98)
+Arm C confirmation: n=43 base -0.515 cand -0.592 diff -0.0772pp  TP1 hit 14%→30%  inert 2%  BTC diff +0.1965 (n=8)
+Arm C fidelity {'primary': (347, -0.165), 'confirmation': (43, -0.515)} expected {'primary': (347, -0.165), 'confirmation': (43, -0.515)} → ok;  C holds: False
+
+H-TP: INCONCLUSIVE
+written → docs/superpowers/specs/2026-10-15-tp1-distance-run/result.json
