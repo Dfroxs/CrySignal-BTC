@@ -4,6 +4,45 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-17 — feat(config): futures runs without the three anti-chase vetoes (design decision)
+
+Owner design decision for data yield, not a test result. `config.VETOES_DISABLED["futures"]`
+now matches spot: `no_chase`, `anti_fomo` and `entry_wick` off; `counter_trend` (H-CT)
+and `short_term` stay on.
+
+- **Why:** since the 2026-10-14 futures restart the bot fired 0 futures signals. Of 10
+  cycles over threshold, 5 SELLs died on counter_trend, 4 BUYs on no_chase (price
+  +0.9 to +1.8×ATR above VWAP) and 1 on short_term. Recomputed on the closed 1H bars, 3 of
+  those 4 BUYs pass every later engine veto with no_chase off; anti_fomo would have
+  stopped the fourth, which is why futures takes the whole spot set rather than no_chase
+  alone.
+- **Evidence:** none for futures, either way. H-B (2026-09-24) measured spot 4h only and
+  found no evidence the three vetoes pay. Futures has no Phase 3 `breakout_chase`, so it
+  now runs with no chase limit at all.
+- `backtest.py` and the variant books read the same config, so replay follows.
+- New test `test_futures_default_runs_without_no_chase`; Q&A knowledge corrected (it still
+  described all five vetoes as active, stale for spot since 10-09).
+- Recorded as the 2026-10-17 amendment to `2026-10-09-run3-prereg.md`: the futures-scored
+  hypotheses (H-V1, H-V2 futures, H-S, H-X) restart at the deploy via
+  `futures_restart_at`; spot, H-L, H-B, H-D and H-RGL keep their windows.
+
+---
+
+## 2026-10-15 — fix(scripts): run-3 scoring rehearsal; H-V2 spot fidelity counted no positions
+
+Rehearsed scoring day without computing any hypothesis figure: health on a pulled DB,
+then every scorer end to end on blinded inputs (permuted DB fields, random-walk and
+bootstrapped prices, synthetic perp klines). All nine paths ran.
+
+- **Fixed `scripts/variant_books.py`:** `pyramid_entry` is the pyramid level (1 = initial
+  spot entry), so `if not pyr` excluded every spot entry and H-V2 spot fidelity read
+  "0/0" and always held. Only level > 1 is now a pyramid (`split_live`, new test).
+- `score_run3.py` now warns that H-L is read from `H-L.txt`, not from the H-L lines
+  `H-V1.txt` also prints on the futures window.
+- Recorded as the third 2026-10-15 amendment to `2026-10-09-run3-prereg.md`.
+
+---
+
 ## 2026-10-14 — docs: H-RT results — range-top spot BUYs INCONCLUSIVE, nothing changes
 
 Scored as pre-registered (`2026-10-14-range-top-results.md`, instrument
@@ -24,6 +63,39 @@ one week are a lead, not a finding, so the question is pre-registered before any
 (`2026-10-14-range-top-prereg.md`): H-RT1 (range position ≥ 0.70) and H-RT2 (+ squeeze +
 volume < 0.7×) within H-SR's `kept` universe, on Nakhoda's OKX cache, which ends before
 those trades. Fidelity check: reproduce H-SR's kept arm exactly. Nothing changes live.
+
+---
+
+## 2026-10-15 — docs: H-TP results — nearer spot TP1 INCONCLUSIVE, nothing changes
+
+Scored as pre-registered (`2026-10-15-tp1-distance-results.md`, instrument
+`scripts/tp1_ic.py`). Fidelity passed: H-SR's kept arm was reproduced exactly.
+
+- **Synthetic entries both pass.** A (2024–25): 9/10 cells, +0.0995pp per entry.
+  B (09-21 grid): 18/20 cells, +0.1025pp. TP1 hit rate ~13% → 32%.
+- **Engine entries (the guard) are negative in both windows:** −0.02pp (n=347) and
+  −0.08pp (n=43). That makes the verdict INCONCLUSIVE.
+- **Reading:** a nearer TP1 helps on price itself, but not on the range-top breakout
+  entries this engine takes, whose winners run.
+- **Outcome:** spot TP1 stays at 2.5R. Recorded as a lead in the run-4 backlog, tied to
+  H-B.
+
+---
+
+## 2026-10-15 — docs: H-TP pre-registered — is spot's TP1 too far away?
+
+Spot TP1 sits at +3.75 ATR and was hit on only 8–21% of spot trades in H-RT's
+descriptives, while mean best excursion was 1.9–2.3 ATR. The question is pre-registered
+before any figure (`2026-10-15-tp1-distance-prereg.md`).
+
+- **One candidate:** TP1 at 1.5 × risk (+2.25 ATR), TP2 at twice that.
+- **Applied at open**, like futures' exit geometry, so entries and the R:R veto are
+  untouched.
+- **Paired test on three arms, all of which must hold:**
+  - A: synthetic entries on fresh 2024–2025 data, ≥ 8 of 10 cells, ≥ +0.05pp per entry;
+  - B: the 09-21 grid, ≥ 16 of 20 cells, ≥ +0.05pp;
+  - C: engine entries, disclosed as contaminated, so a guard only.
+- No R-multiple sweep. Nothing changes live.
 
 ---
 

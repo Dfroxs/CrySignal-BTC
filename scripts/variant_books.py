@@ -92,6 +92,15 @@ def fidelity(opened_i, index, live_opened_at, timeframe):
     return matched, unmatched
 
 
+def split_live(pos):
+    """(initial entries' opened_at, pyramid count) from (opened_at, pyramid_entry) rows.
+
+    `pyramid_entry` is the pyramid LEVEL: spot writes 1 for an initial entry and 2-3 for
+    pyramids, futures writes NULL. Only level > 1 is a pyramid."""
+    live = [ts for ts, lvl in pos if (lvl or 1) == 1]
+    return live, len(pos) - len(live)
+
+
 def random_book(df, n, start, timeframe, mode, seeds=20):
     """Long entries at `n` random bars per seed, through the same exit simulator."""
     pnls, hi = [], len(df) - MAX_HOLD_CANDLES[timeframe] - 1
@@ -159,11 +168,11 @@ def main() -> int:
                           + (f" AND {ts_sql('opened_at')} >= ?" if args.start else "")
                           + " ORDER BY opened_at",
                           [args.mode] + ([norm_ts(args.start)] if args.start else [])).fetchall()
-        live = [ts for ts, pyr in pos if not pyr]
+        live, n_pyr = split_live(pos)
         matched, unmatched = fidelity(base_opened, df.index, live, tf)
         result["fidelity"] = {"live_positions": len(live), "matched": matched,
                               "unmatched": unmatched,
-                              "pyramids_excluded": sum(1 for _, pyr in pos if pyr),
+                              "pyramids_excluded": n_pyr,
                               "holds": not unmatched}
         print(f"fidelity: {matched}/{len(live)} live positions matched within ±1 bar"
               + (f"; UNMATCHED {unmatched} — annotate each (macro-close, breaker) or "

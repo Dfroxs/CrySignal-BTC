@@ -209,9 +209,16 @@ DISABLED_CONDITIONS = frozenset({"basis", "taker"})
 # threshold, 1 fired, and 13 were killed by no_chase/entry_wick. short_term and
 # counter_trend stay (untested / H-CT), and the Phase 3 breakout_chase gate still
 # blocks entries more than 1 ATR above VWAP.
+#
+# futures: the same three OFF. A DESIGN DECISION (owner, 2026-10-17) for data yield, not
+# a test result: H-B measured spot 4h only, and these gates have never been tested on
+# futures either way. Live 2026-10-14 17:35 → 10-17: 0 futures signals; of the 10
+# cycles over threshold, 4 BUYs died on no_chase (price +0.9 to +1.8×ATR above VWAP),
+# and anti_fomo would have stopped 1 of those 4. Futures has no Phase 3 breakout_chase,
+# so it now runs with no chase limit. counter_trend (H-CT: stays) and short_term stay.
 VETOES_DISABLED = {
     "spot": frozenset({"no_chase", "anti_fomo", "entry_wick"}),
-    "futures": frozenset(),
+    "futures": frozenset({"no_chase", "anti_fomo", "entry_wick"}),
 }
 
 

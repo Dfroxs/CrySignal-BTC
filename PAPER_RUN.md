@@ -89,6 +89,28 @@ diff from `316e0dc` (`signals/ config.py trading/paper.py backtest.py`) is empty
 **Trap:** `pkill -f run_bot.py` sent over ssh also matches the ssh shell's own command
 line and kills the session (exit 255) — the bot still restarts. Use
 `pkill -f '[r]un_bot.py'`.
+
+**Restart 2026-10-14 17:34:58 UTC at `c717b21` (PRs #28–#32). Futures hypotheses
+restart; spot and H-L do NOT.** The first trading-path change since `316e0dc`, shipped
+mid-run by owner decision (amendments 2026-10-15 in `2026-10-09-run3-prereg.md`):
+- **futures:** basis and taker pruned (`DISABLED_CONDITIONS`), so `SIGNAL_MAX_SCORE`
+  26.50 → 25.00, threshold 5.20 → 4.91 and band 3.77–7.55;
+- FLIP/BREAKER_CLOSE P&L priced with costs, and both closes now reach the Telegram card;
+- shadow agents run on Claude only (`SHADOW_PROVIDERS` default `anthropic`);
+- every Telegram card rewritten in Indonesian.
+
+Spot's 22.50 ceiling and 4.30 threshold are unchanged (verified on the VPS before
+restart). Diff `9d0e6c4..c717b21`: `config.py`, `signals/engine.py`, `run_bot.py`,
+`notifier/`, `agents/`, `scripts/score_run3.py`; `trading/` and `backtest.py` untouched.
+No position was open at restart. The manifest gained `futures_restart_at =
+2026-10-14T17:34:58+00:00` (pre-edit copy: `paper_run_manifest.pre-futures-restart.json`).
+`score_run3.py` scores H-V1, H-V2 futures, H-S and H-X from it, so their day 30 is
+**2026-11-13**. H-L, H-V2 spot, H-B, H-D and H-RGL keep 2026-11-08 / 11-11.
+`spotsignal-qa` was restarted with it. The restart's diff check from here on runs from `c717b21`.
+First cycle after it (18:01 UTC): spot HOLD at 4.30; futures HOLD at **4.66** (4.91 base −
+0.25, the controller lowering a mode with no open in 72h); basis and taker contributions
+`[0, 0]` on both; Telegram card sent; no error in `paper_run.log`. No shadow row yet
+(nothing fired, nothing open), so Claude-only is unverified until the first signal.
 ---
 
 ## New session? Do this first

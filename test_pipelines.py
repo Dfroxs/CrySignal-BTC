@@ -1927,6 +1927,18 @@ def test_no_gates_disabled_leaves_every_gate_running():
         "gates_disabled=None must follow config.VETOES_DISABLED['spot']"
 
 
+def test_futures_default_runs_without_no_chase():
+    """Design decision 2026-10-17: futures follows VETOES_DISABLED['futures'] as spot
+    follows its own. Four live futures BUYs on 10-15/16 died on no_chase alone."""
+    from signals.engine import generate_signals
+    df, _ = _gate_fixture("no_chase")
+    fires = lambda g: any(_GATE_MARKER["no_chase"] in r for r in generate_signals(
+        df, None, None, None, mode="futures", threshold_override=0.5,
+        gates_disabled=g)["reasons"])
+    assert fires(()), "fixture does not trip no_chase in futures mode"
+    assert not fires(None), "futures default still applies no_chase"
+
+
 
 # ── 22. Holdout windowing in entry_ic ────────────────────────────────────────
 
@@ -2289,7 +2301,11 @@ def test_engine_vetoes_disabled_default_reads_config_per_mode():
     from config import VETOES_DISABLED
     from signals import engine
     assert VETOES_DISABLED["spot"] == {"no_chase", "anti_fomo", "entry_wick"}
-    assert VETOES_DISABLED["futures"] == frozenset()
+    # Design decision 2026-10-17: futures runs the same set; the two H-CT/untested
+    # vetoes stay on in both modes.
+    assert VETOES_DISABLED["futures"] == VETOES_DISABLED["spot"]
+    for mode in ("spot", "futures"):
+        assert not {"counter_trend", "short_term"} & VETOES_DISABLED[mode]
     assert set(VETOES_DISABLED["spot"]) <= set(engine._VETO_GATES)
     src = inspect.getsource(engine.generate_signals)
     assert "if gates_disabled is None:" in src and "VETOES_DISABLED.get(mode" in src
@@ -3907,6 +3923,16 @@ def test_variant_books_fidelity_matches_within_one_bar():
     # live opened at 05:01 -> scored bar opened 04:00 (index 4); replay opened bar 5: within 1
     m, un = fidelity([5, 30], idx, ["2026-10-10T05:01:03+00:00", "2026-10-10T20:01:00+00:00"], "1h")
     assert m == 1 and un == ["2026-10-10T20:01:00+00:00"], (m, un)
+
+def test_variant_books_fidelity_counts_level_one_spot_entries_as_live():
+    # Rehearsal 2026-10-15: spot writes pyramid_entry=1 for an initial entry, so
+    # `if not pyr` dropped every spot position and fidelity read "0/0", always holding.
+    from scripts.variant_books import split_live
+    pos = [("2026-10-11T12:01", 1), ("2026-10-12T00:01", 2), ("2026-10-13T16:01", 1),
+           ("2026-10-10T06:01", None)]
+    live, n_pyr = split_live(pos)
+    assert live == ["2026-10-11T12:01", "2026-10-13T16:01", "2026-10-10T06:01"], live
+    assert n_pyr == 1
 
 def test_hb_verdict_follows_the_prereg():
     from scripts.hb_eval import verdict
@@ -5638,6 +5664,7 @@ if __name__ == "__main__":
     run("HOLD never opens",                       test_will_open_is_false_for_a_hold_whatever_its_confidence)
     run("futures opens from WEAK, bt same bar", test_futures_opens_from_weak_and_backtest_gates_on_the_same_minimum)
     run("engine vetoes off per mode from config", test_engine_vetoes_disabled_default_reads_config_per_mode)
+    run("futures default: no_chase off",       test_futures_default_runs_without_no_chase)
     run("R:R gate admits exact 1.5 geometry",     test_rr_gate_admits_an_exact_one_point_five_geometry)
     run("one comparator, two consumers",          test_phase3_and_the_notifier_share_one_comparator)
     run("WEAK alert says no position",            test_a_weak_buy_alert_says_no_position_will_open)
@@ -5842,6 +5869,7 @@ if __name__ == "__main__":
     print("\n── 41. Run-3 scoring instruments ──")
     run("start filter: both timestamp forms",     test_scorer_start_filter_reads_both_timestamp_forms_alike)
     run("H-V2 fidelity within ±1 bar",            test_variant_books_fidelity_matches_within_one_bar)
+    run("H-V2 fidelity: level-1 spot entries live", test_variant_books_fidelity_counts_level_one_spot_entries_as_live)
     run("H-B verdict per prereg",                 test_hb_verdict_follows_the_prereg)
     run("H-D return after stat known, BTC window", test_hd_return_starts_after_the_stat_is_known_and_btc_window_holds)
     run("H-D finds planted signal, not null",     test_hd_pooled_ic_finds_a_planted_signal_and_not_a_null_one)
