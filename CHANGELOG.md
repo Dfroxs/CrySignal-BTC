@@ -4,6 +4,13 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-17 — docs: PAPER_RUN futures veto restart
+
+Deployed `d1d490b` to the VPS at 14:39:46 UTC. Manifest `futures_restart_at` moved to it;
+futures-scored hypotheses' day 30 is now 2026-11-16. First cycle at 15:01 clean.
+
+---
+
 ## 2026-10-17 — feat(config): futures runs without the three anti-chase vetoes (design decision)
 
 Owner design decision for data yield, not a test result. `config.VETOES_DISABLED["futures"]`
