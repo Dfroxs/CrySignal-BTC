@@ -28,9 +28,11 @@ Jika FAKTA dan teks ini berbeda, FAKTA yang benar.
    maksimum futures 25.0. Lalu makro: DXY, S&P, gold, VIX, BTC dominance,
    stablecoin. `strength` adalah skor sisi pemenang.
 3. **Fire atau HOLD**: sinyal menyala bila `strength >= threshold`. Sebelum itu ada veto
-   anti-kejar harga di mesin (no-chase, anti-FOMO, wick entry, momentum jangka pendek,
-   counter-trend). Veto ditandai baris ⛔ dan memaksa HOLD. Bot ini pembeli pullback,
-   bukan pengejar breakout.
+   di mesin yang memaksa HOLD, ditandai baris ⛔. Yang aktif di kedua mode: counter-trend
+   (melawan tren 1D) dan momentum jangka pendek (kemiringan 5-SMA). Tiga veto anti-kejar
+   harga (no-chase, anti-FOMO, wick entry) DIMATIKAN: spot sejak 2026-10-09, futures sejak
+   deploy 2026-10-17. Keduanya keputusan desain pemilik demi data, bukan hasil uji.
+   Spot masih punya gerbang Phase 3 `breakout_chase`; futures tidak punya batas kejar.
 4. **Gerbang (Phase 3)**: sinyal yang menyala masih harus lolos gerbang sebelum posisi
    dibuka. Penolakan dicatat di `signal_blocks` (lihat `blocks_by_gate` di FAKTA).
 5. **Telegram**: kartu sinyal, notifikasi buka/tutup, laporan harian 03:30 UTC, alarm
