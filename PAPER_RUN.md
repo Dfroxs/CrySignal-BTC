@@ -111,6 +111,23 @@ First cycle after it (18:01 UTC): spot HOLD at 4.30; futures HOLD at **4.66** (4
 0.25, the controller lowering a mode with no open in 72h); basis and taker contributions
 `[0, 0]` on both; Telegram card sent; no error in `paper_run.log`. No shadow row yet
 (nothing fired, nothing open), so Claude-only is unverified until the first signal.
+
+**Restart 2026-10-17 14:39:46 UTC at `d1d490b` (PRs #36, #37). Futures hypotheses
+restart again; spot and H-L do NOT.** Futures now runs without `no_chase`, `anti_fomo`
+and `entry_wick` (`VETOES_DISABLED["futures"]`, the spot set), an owner design decision
+for data yield, not a test result. Since 10-14 17:34 futures had fired 0 signals: of 10
+over-threshold cycles, 4 BUYs died on no_chase alone. `counter_trend` and `short_term`
+stay. Futures has no Phase 3 `breakout_chase`, so it now has no chase limit.
+Trading-path diff `c717b21..d1d490b` is `config.py` only; ceilings and thresholds
+unchanged (25.00 / 4.91, spot 22.50 / 4.30). No position open at restart. The manifest's
+`futures_restart_at` is now `2026-10-17T14:39:46+00:00` (pre-edit copy:
+`paper_run_manifest.pre-futures-restart-2.json`), so H-V1, H-V2 futures, H-S and H-X
+score from it, **day 30 = 2026-11-16** (prereg amendment 2026-10-17). H-L, H-V2 spot,
+H-B, H-D and H-RGL keep 2026-11-08 / 11-11. Restarted with `pkill -f '[r]un_bot.py'`
+(systemd respawn, pid 133552); `spotsignal-qa` restarted 14:40:08. The diff check now
+runs from `d1d490b`. First cycle after it (15:01 UTC): spot HOLD 3.0/3.80, futures HOLD
+3.0/4.91, funding non-zero, Telegram sent, no error in `paper_run.log`. The change is
+unverified until the first futures BUY above VWAP+0.5×ATR fires.
 ---
 
 ## New session? Do this first
