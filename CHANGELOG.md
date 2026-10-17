@@ -4,6 +4,30 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-10-17 — feat(config): futures runs without the three anti-chase vetoes (design decision)
+
+Owner design decision for data yield, not a test result. `config.VETOES_DISABLED["futures"]`
+now matches spot: `no_chase`, `anti_fomo` and `entry_wick` off; `counter_trend` (H-CT)
+and `short_term` stay on.
+
+- **Why:** since the 2026-10-14 futures restart the bot fired 0 futures signals. Of 10
+  cycles over threshold, 5 SELLs died on counter_trend, 4 BUYs on no_chase (price
+  +0.9 to +1.8×ATR above VWAP) and 1 on short_term. Recomputed on the closed 1H bars, 3 of
+  those 4 BUYs pass every later engine veto with no_chase off; anti_fomo would have
+  stopped the fourth, which is why futures takes the whole spot set rather than no_chase
+  alone.
+- **Evidence:** none for futures, either way. H-B (2026-09-24) measured spot 4h only and
+  found no evidence the three vetoes pay. Futures has no Phase 3 `breakout_chase`, so it
+  now runs with no chase limit at all.
+- `backtest.py` and the variant books read the same config, so replay follows.
+- New test `test_futures_default_runs_without_no_chase`; Q&A knowledge corrected (it still
+  described all five vetoes as active, stale for spot since 10-09).
+- Recorded as the 2026-10-17 amendment to `2026-10-09-run3-prereg.md`: the futures-scored
+  hypotheses (H-V1, H-V2 futures, H-S, H-X) restart at the deploy via
+  `futures_restart_at`; spot, H-L, H-B, H-D and H-RGL keep their windows.
+
+---
+
 ## 2026-10-15 — fix(scripts): run-3 scoring rehearsal; H-V2 spot fidelity counted no positions
 
 Rehearsed scoring day without computing any hypothesis figure: health on a pulled DB,

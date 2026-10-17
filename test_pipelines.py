@@ -1927,6 +1927,18 @@ def test_no_gates_disabled_leaves_every_gate_running():
         "gates_disabled=None must follow config.VETOES_DISABLED['spot']"
 
 
+def test_futures_default_runs_without_no_chase():
+    """Design decision 2026-10-17: futures follows VETOES_DISABLED['futures'] as spot
+    follows its own. Four live futures BUYs on 10-15/16 died on no_chase alone."""
+    from signals.engine import generate_signals
+    df, _ = _gate_fixture("no_chase")
+    fires = lambda g: any(_GATE_MARKER["no_chase"] in r for r in generate_signals(
+        df, None, None, None, mode="futures", threshold_override=0.5,
+        gates_disabled=g)["reasons"])
+    assert fires(()), "fixture does not trip no_chase in futures mode"
+    assert not fires(None), "futures default still applies no_chase"
+
+
 
 # ── 22. Holdout windowing in entry_ic ────────────────────────────────────────
 
@@ -2289,7 +2301,11 @@ def test_engine_vetoes_disabled_default_reads_config_per_mode():
     from config import VETOES_DISABLED
     from signals import engine
     assert VETOES_DISABLED["spot"] == {"no_chase", "anti_fomo", "entry_wick"}
-    assert VETOES_DISABLED["futures"] == frozenset()
+    # Design decision 2026-10-17: futures runs the same set; the two H-CT/untested
+    # vetoes stay on in both modes.
+    assert VETOES_DISABLED["futures"] == VETOES_DISABLED["spot"]
+    for mode in ("spot", "futures"):
+        assert not {"counter_trend", "short_term"} & VETOES_DISABLED[mode]
     assert set(VETOES_DISABLED["spot"]) <= set(engine._VETO_GATES)
     src = inspect.getsource(engine.generate_signals)
     assert "if gates_disabled is None:" in src and "VETOES_DISABLED.get(mode" in src
@@ -5648,6 +5664,7 @@ if __name__ == "__main__":
     run("HOLD never opens",                       test_will_open_is_false_for_a_hold_whatever_its_confidence)
     run("futures opens from WEAK, bt same bar", test_futures_opens_from_weak_and_backtest_gates_on_the_same_minimum)
     run("engine vetoes off per mode from config", test_engine_vetoes_disabled_default_reads_config_per_mode)
+    run("futures default: no_chase off",       test_futures_default_runs_without_no_chase)
     run("R:R gate admits exact 1.5 geometry",     test_rr_gate_admits_an_exact_one_point_five_geometry)
     run("one comparator, two consumers",          test_phase3_and_the_notifier_share_one_comparator)
     run("WEAK alert says no position",            test_a_weak_buy_alert_says_no_position_will_open)
