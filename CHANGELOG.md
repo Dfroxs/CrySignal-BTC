@@ -4,6 +4,17 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-10 — docs: pre-registration H-TRL (futures trail)
+
+`docs/superpowers/specs/2026-11-10-futures-trail-prereg.md`, written before any figure.
+One candidate, `trailing_atr_factor` 2.5 (live 3.5), through the simulator's existing
+`exit_params`. Same arms, criteria and discard rules as H-TPF. The prereg states that the
+prior is against it (the 10-09 test and its monotone grid favoured a wider trail) and
+that the live give-back observation is n=7. A profit-lock trail is deferred. No
+instrument yet, no result, no config or trading change.
+
+---
+
 ## 2026-11-10 — docs: run-3 prereg amendment, H-V2 fidelity may annotate flip artefacts
 
 `2026-10-09-run3-prereg.md`. Two of seven futures positions (#15, #16) are unmatched in
