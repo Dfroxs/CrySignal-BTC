@@ -5523,6 +5523,26 @@ def test_htpf_candidate_levels_and_verdict_follow_the_prereg():
     assert verdict(arm(9, 10, 0.04), good_b, cres(0.1, 0.1, 0.1, 0.1)) == "INCONCLUSIVE"
 
 
+def test_htrl_candidate_trail_is_wired_and_giveback_is_measured():
+    """H-TRL (2026-11-10 prereg): the candidate is the simulator's own exit_params at 2.5
+    (live 3.5), and give-back is the best favourable excursion minus the final P&L."""
+    from scripts.trail_futures_ic import CAND_PARAMS, make_row
+    from scripts.exit_ic import _signal_at
+    from backtest import _exit_signal
+    from config import FUTURES_CONFIG
+    assert CAND_PARAMS == {"trailing_atr_factor": 2.5}
+    assert FUTURES_CONFIG["trailing_atr_factor"] == 3.5, "prereg compares against live 3.5"
+    # Entry at 1000 (ATR 10), a run to 1040, then a slide: the tighter trail exits higher.
+    closes = [1000.0] * 3 + [1010, 1020, 1030, 1040, 1035, 1025, 1015, 1005, 995, 985, 975, 965] + [960.0] * 80
+    df = _exit_fixture(closes, atr=10.0)
+    sig = _exit_signal(_signal_at(df, 2), "futures")
+    pb, pc, rb, rc, tb, tc, gb, gc = make_row(df, 2, sig)
+    assert rb and rc, "both arms must resolve on this path"
+    assert pc > pb, f"tighter trail should give back less on a reversal ({pc} vs {pb})"
+    assert gc < gb, f"give-back must shrink with the tighter trail ({gc} vs {gb})"
+    assert gb > 0 and gc >= 0
+
+
 def test_send_signal_alert_survives_a_formatter_error():
     """A formatter exception used to propagate into run_bot's Phase 4 and skip the
     position-open/close messages queued after the hourly card."""
@@ -5941,6 +5961,7 @@ if __name__ == "__main__":
     run("basis+taker pruned, spot untouched",    test_basis_and_taker_are_pruned_from_futures_and_spot_is_untouched)
     run("stops checked before the flip closes",  test_futures_stops_are_checked_before_the_flip_closes_the_opposite_position)
     run("H-TPF levels + verdict per prereg",    test_htpf_candidate_levels_and_verdict_follow_the_prereg)
+    run("H-TRL trail wired, give-back measured", test_htrl_candidate_trail_is_wired_and_giveback_is_measured)
     run("basis own checkpoint, no stale reason", test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason)
 
     print(f"\n{'══' * 20}")
