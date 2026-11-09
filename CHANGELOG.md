@@ -4,6 +4,16 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-10 — docs: pre-registration H-TPF (futures TP1 distance)
+
+`docs/superpowers/specs/2026-11-10-futures-tp1-prereg.md`, written before any figure.
+Prompted by 0 of 7 closed run-3 futures positions reaching TP1. One candidate (TP1 at
+1.0 × stop distance, applied at open), arms A/B synthetic and C engine-entry guard,
+criteria and discard rules fixed. The trail is explicitly not tested. No instrument yet,
+so no result and no change to config or trading.
+
+---
+
 ## 2026-11-10 — fix(run_bot): futures stops are checked before a flip closes the opposite position
 
 Phase 3's flip block closed the opposite position before the end-of-cycle
