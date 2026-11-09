@@ -4,6 +4,15 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-10 — results: H-TPF FAIL (futures TP1 distance)
+
+Instrument `scripts/tp1_futures_ic.py` (`7b62ece`), scored run after its smoke commit.
+Arm A 2/10 cells, pooled -0.072pp; Arm B 9/20, -0.113pp; Arm C +0.012 / +0.048pp, SELL
+-0.013pp. A nearer TP1 is hit 16% -> 45% of the time and loses money. Nothing changes in
+config or trading. `docs/superpowers/specs/2026-11-10-futures-tp1-results.md`.
+
+---
+
 ## 2026-11-10 — docs: pre-registration H-TPF (futures TP1 distance)
 
 `docs/superpowers/specs/2026-11-10-futures-tp1-prereg.md`, written before any figure.
