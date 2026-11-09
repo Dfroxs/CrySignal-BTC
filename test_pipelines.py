@@ -5494,6 +5494,35 @@ def test_futures_stops_are_checked_before_the_flip_closes_the_opposite_position(
     assert stop < opp < flip, "stop check must come before the flip closes anything"
 
 
+def test_htpf_candidate_levels_and_verdict_follow_the_prereg():
+    """H-TPF (2026-11-10 prereg): TP1 at 1.0 x the stop distance, TP2 at twice that, never
+    further out than the live target, either direction; verdicts as pre-registered."""
+    from scripts.tp1_futures_ic import candidate, verdict, geometry_ok
+    buy = {"type": "BUY", "entry_price": 100.0, "stop_loss": 97.0, "take_profit": 109.0, "tp2": 118.0}
+    c = candidate(buy)
+    assert (c["take_profit"], c["tp2"]) == (103.0, 106.0), c
+    sell = {"type": "SELL", "entry_price": 100.0, "stop_loss": 103.0, "take_profit": 91.0, "tp2": 82.0}
+    c = candidate(sell)
+    assert (c["take_profit"], c["tp2"]) == (97.0, 94.0), c
+    near = {"type": "BUY", "entry_price": 100.0, "stop_loss": 97.0, "take_profit": 102.0, "tp2": 104.0}
+    c = candidate(near)
+    assert c["take_profit"] == 102.0 and c["tp2"] == 104.0, "a nearer target must never move out"
+    assert geometry_ok(), "geometry must be applied exactly once"
+
+    def arm(fav, total, diff):
+        return {"cells_favouring": fav, "cells_total": total, "pooled": {"mean_diff": diff}}
+    def cres(w1, w2, buy_d, sell_d):
+        return {"windows": {"p": {"mean_diff": w1}, "c": {"mean_diff": w2}},
+                "by_dir": {"BUY": {"n": 9, "mean_diff": buy_d}, "SELL": {"n": 9, "mean_diff": sell_d}}}
+    good_a, good_b = arm(9, 10, 0.10), arm(18, 20, 0.10)
+    assert verdict(good_a, good_b, cres(0.1, 0.1, 0.1, 0.1)) == "PASS"
+    assert verdict(good_a, good_b, cres(0.1, -0.01, 0.1, 0.1)) == "INCONCLUSIVE", "C vetoes"
+    assert verdict(good_a, good_b, cres(0.1, 0.1, 0.1, -0.01)) == "INCONCLUSIVE", "direction reversal"
+    assert verdict(arm(9, 10, 0.0), good_b, cres(0.1, 0.1, 0.1, 0.1)) == "FAIL"
+    assert verdict(arm(7, 10, 0.10), good_b, cres(0.1, 0.1, 0.1, 0.1)) == "INCONCLUSIVE"
+    assert verdict(arm(9, 10, 0.04), good_b, cres(0.1, 0.1, 0.1, 0.1)) == "INCONCLUSIVE"
+
+
 def test_send_signal_alert_survives_a_formatter_error():
     """A formatter exception used to propagate into run_bot's Phase 4 and skip the
     position-open/close messages queued after the hourly card."""
@@ -5911,6 +5940,7 @@ if __name__ == "__main__":
     run("FLIP/BREAKER P&L carry costs",          test_flip_and_breaker_pnl_carry_execution_costs)
     run("basis+taker pruned, spot untouched",    test_basis_and_taker_are_pruned_from_futures_and_spot_is_untouched)
     run("stops checked before the flip closes",  test_futures_stops_are_checked_before_the_flip_closes_the_opposite_position)
+    run("H-TPF levels + verdict per prereg",    test_htpf_candidate_levels_and_verdict_follow_the_prereg)
     run("basis own checkpoint, no stale reason", test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason)
 
     print(f"\n{'══' * 20}")
