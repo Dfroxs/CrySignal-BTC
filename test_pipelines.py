@@ -5481,6 +5481,19 @@ def test_flip_and_breaker_pnl_carry_execution_costs():
     assert _calc_pnl(pos, 100_000.0) < 0, "a flat flip must cost the round trip"
 
 
+def test_futures_stops_are_checked_before_the_flip_closes_the_opposite_position():
+    """The flip block closed the opposite position before the end-of-cycle stop check ran,
+    so a position already through its stop was booked as FLIP, not LOSS (2026-11-08 #14).
+    Counted in the source: the stop check must precede the flip's own close."""
+    import inspect, run_bot
+    src = inspect.getsource(run_bot.run_cycle)
+    flip = src.index('"FLIP"')
+    opp = src.index("opp_positions = [p for p in get_open_positions")
+    stop = src.rfind("check_and_close_positions(", 0, opp)
+    assert stop != -1 and stop > src.index("opp_dir ="), "no stop check between opp_dir and opp_positions"
+    assert stop < opp < flip, "stop check must come before the flip closes anything"
+
+
 def test_send_signal_alert_survives_a_formatter_error():
     """A formatter exception used to propagate into run_bot's Phase 4 and skip the
     position-open/close messages queued after the hourly card."""
@@ -5897,6 +5910,7 @@ if __name__ == "__main__":
     run("FLIP/BREAKER closes reach close card",  test_every_phase3_close_reaches_the_close_card)
     run("FLIP/BREAKER P&L carry costs",          test_flip_and_breaker_pnl_carry_execution_costs)
     run("basis+taker pruned, spot untouched",    test_basis_and_taker_are_pruned_from_futures_and_spot_is_untouched)
+    run("stops checked before the flip closes",  test_futures_stops_are_checked_before_the_flip_closes_the_opposite_position)
     run("basis own checkpoint, no stale reason", test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason)
 
     print(f"\n{'══' * 20}")

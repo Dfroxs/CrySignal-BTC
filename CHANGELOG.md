@@ -4,6 +4,28 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-10 — fix(run_bot): futures stops are checked before a flip closes the opposite position
+
+Phase 3's flip block closed the opposite position before the end-of-cycle
+`check_and_close_positions` ran, so a position already through its stop was booked as
+FLIP instead of LOSS. Seen on #14 (2026-11-08 22:01): SL 75,281, price 74,136, labelled
+FLIP −2.56%. The stop check now runs first, when an opposite position is open, and its
+closes go to `phase3_closed` (so they still reach the Telegram close card).
+
+- **Fill price and P&L are unchanged**: both paths close at the current price. This fixes
+  the outcome label, and with it every FLIP-vs-LOSS statistic.
+- **Behaviour change to note:** a position stopped this way is gone before the flip logic
+  runs, so the new signal opens through the first-entry gates, not the flip gates
+  (`flip_unprofitable` and the other `flip_*` blocks). On #14 the SELL at 22:01 would have
+  been considered as a first entry instead of being blocked.
+- A recorded fix, not a test result; no profit claim. Trading path (`run_bot.py`) touched,
+  so this belongs to the next deploy of `main` and the owner decides whether it restarts
+  the futures window.
+- Test: `test_futures_stops_are_checked_before_the_flip_closes_the_opposite_position`
+  (304/304 pass).
+
+---
+
 ## 2026-10-17 — docs: PAPER_RUN futures veto restart
 
 Deployed `d1d490b` to the VPS at 14:39:46 UTC. Manifest `futures_restart_at` moved to it;

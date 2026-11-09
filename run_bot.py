@@ -725,6 +725,16 @@ def run_cycle():
                 futures_signal, wick_ratio=fut_entry_cfg.get("fakeout_wick_ratio", 0.6),
             )
             opp_dir = "SELL" if futures_signal["type"] == "BUY" else "BUY"
+            # Stops first. This block closes the opposite position before the end-of-cycle
+            # check_and_close_positions runs, so a position already through its stop was
+            # booked as FLIP instead of LOSS (2026-11-08 #14: stop 75,281, price 74,136).
+            # The fill price is unchanged; the outcome label is what was wrong.
+            if any(p["type"] == opp_dir for p in get_open_positions("futures")):
+                phase3_closed.extend(check_and_close_positions(
+                    futures_signal["entry_price"], mode="futures",
+                    current_atr=futures_signal.get("atr", 0),
+                    funding_rate=(futures_signal.get("_market") or {}).get("funding", {}).get("rate_pct", 0),
+                ) or [])
             opp_positions = [p for p in get_open_positions("futures") if p["type"] == opp_dir]
             flipped = False
 
