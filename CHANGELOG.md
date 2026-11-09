@@ -4,6 +4,16 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-10 — docs: run-3 prereg amendment, H-V2 fidelity may annotate flip artefacts
+
+`2026-10-09-run3-prereg.md`. Two of seven futures positions (#15, #16) are unmatched in
+the H-V2 replay because it has no close-and-flip and applies a cooldown live did not.
+New annotation category with two explicit tests and a one-third cap. Written after a
+descriptive look at the books, which the amendment discloses. No criterion, code or
+config change.
+
+---
+
 ## 2026-11-10 — results: H-TPF FAIL (futures TP1 distance)
 
 Instrument `scripts/tp1_futures_ic.py` (`7b62ece`), scored run after its smoke commit.
