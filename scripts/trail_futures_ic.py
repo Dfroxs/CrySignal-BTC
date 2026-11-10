@@ -23,6 +23,7 @@ import argparse
 import json
 import logging
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -31,8 +32,29 @@ from backtest import RESOLVED, _exit_signal, _simulate_forward  # noqa: E402
 from scripts.exit_ic import _signal_at, synth_entries  # noqa: E402
 from scripts.tp1_futures_ic import (  # noqa: E402
     ARM_YEARS, ASSETS, FID_TOL, HOLD, INERT_MAX, MIN_CELLS, MIN_EFFECT, MODE, STRIDE, TF,
-    WINDOWS, arm_meets, fetch_cell, geometry_ok, pool_c, record_window, verdict,
+    WINDOWS, arm_meets, fetch_cell, geometry_ok, pool_c, verdict,
 )
+from scripts.tp1_futures_ic import record_window as _record_window  # noqa: E402
+
+RETRIES = 5
+
+
+def record_window(start, end):
+    """H-TPF's recorder, retried on a failed data fetch.
+
+    A first scored run died on a `RequestTimeout` inside `run_backtest`'s own OHLCV fetch,
+    after Arms A and B had finished and before any figure was summarised. The retry
+    changes nothing that is computed: a failed fetch simply asks again, as `fetch_cell`
+    already does for Arms A and B.
+    """
+    for attempt in range(RETRIES):
+        try:
+            return _record_window(start, end)
+        except Exception as exc:  # noqa: BLE001 - a window is retried, never dropped
+            logging.warning("record_window %s..%s attempt %d: %s", start, end, attempt + 1, exc)
+            time.sleep(10 * (attempt + 1))
+    raise RuntimeError(f"no data for window {start}..{end} after {RETRIES} tries")
+
 
 CAND_TRAIL = 2.5                       # live futures: FUTURES_CONFIG["trailing_atr_factor"] = 3.5
 CAND_PARAMS = {"trailing_atr_factor": CAND_TRAIL}
