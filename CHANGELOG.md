@@ -25,6 +25,20 @@ config change.
 
 ---
 
+## 2026-11-12 — chore(scripts): Arm C recordings are cached on disk
+
+`scripts/trail_futures_ic.py::record_window` (used by `trail_futures_ic.py` and
+`lock_futures_ic.py`) now caches each window's recorded signals in `data/cache/armc/`,
+keyed by the window and a hash of `backtest.py`, `config.py`, `signals/`, `trading/` and
+`tp1_futures_ic.py`, so a changed engine, simulator or config re-records instead of
+reusing. Windows ending in the future are never cached, and a damaged cache file is
+re-recorded. Every exit test used to replay the same two multi-year backtests (about 50
+minutes) for the same 625 + 178 signals; later runs reuse them. Speed only, no computed
+value changes. `scripts/tp1_futures_ic.py` (H-TPF's scored instrument) is untouched. The
+cache is empty until the next run fills it. One new test (309/309).
+
+---
+
 ## 2026-11-12 — results: H-PLK FAIL (futures breakeven lock)
 
 Scored from `08327fb`, smoke at `50a9ed0`; a first run was stopped by hand before any

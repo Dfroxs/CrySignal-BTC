@@ -5596,6 +5596,36 @@ def test_hplk_instrument_candidate_and_row_follow_the_prereg():
     assert s["lock_armed"] == 0.5 and s["exit_at_floor"] == 0.5
 
 
+def test_armc_recording_is_cached_per_window_and_invalidated_by_code_changes():
+    """Exit tests re-ran the same 50-minute backtests every time. The recording is cached
+    per (window, code hash): a second call is served from disk, and a different code hash
+    re-records instead of reusing."""
+    import tempfile
+    from pathlib import Path
+    import scripts.trail_futures_ic as t
+    calls = []
+    saved = (t._fetch_window, t.CACHE_DIR, t.code_hash)
+    try:
+        t.CACHE_DIR = Path(tempfile.mkdtemp())
+        t._fetch_window = lambda a, b: (calls.append((a, b)) or ("frame", [(1, {"type": "BUY"}, None)]))
+        t.code_hash = lambda: "aaaa"
+        first = t.record_window("2022-01-01", "2025-10-01")
+        second = t.record_window("2022-01-01", "2025-10-01")
+        assert first == second and len(calls) == 1, calls
+        t.code_hash = lambda: "bbbb"
+        t.record_window("2022-01-01", "2025-10-01")
+        assert len(calls) == 2, "a changed code hash must re-record"
+        t.record_window("2025-10-01", "2099-01-01")
+        t.record_window("2025-10-01", "2099-01-01")
+        assert len(calls) == 4, "a window ending in the future is never cached"
+        (next(t.CACHE_DIR.glob("2022-01-01_2025-10-01_bbbb.pkl"))).write_bytes(b"garbage")
+        t.record_window("2022-01-01", "2025-10-01")
+        assert len(calls) == 5, "a damaged cache file is re-recorded"
+    finally:
+        t._fetch_window, t.CACHE_DIR, t.code_hash = saved
+    assert len(t.code_hash()) == 16
+
+
 def test_send_signal_alert_survives_a_formatter_error():
     """A formatter exception used to propagate into run_bot's Phase 4 and skip the
     position-open/close messages queued after the hourly card."""
@@ -6017,6 +6047,7 @@ if __name__ == "__main__":
     run("H-TRL trail wired, give-back measured", test_htrl_candidate_trail_is_wired_and_giveback_is_measured)
     run("H-PLK lock: close-armed, next bar, SELL", test_be_lock_arms_on_the_close_applies_next_bar_and_mirrors_for_sell)
     run("H-PLK instrument candidate + row",       test_hplk_instrument_candidate_and_row_follow_the_prereg)
+    run("Arm C recording cached, hash-keyed",    test_armc_recording_is_cached_per_window_and_invalidated_by_code_changes)
     run("basis own checkpoint, no stale reason", test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason)
 
     print(f"\n{'══' * 20}")

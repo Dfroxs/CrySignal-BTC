@@ -37,9 +37,28 @@ from scripts.tp1_futures_ic import (  # noqa: E402
 from scripts.tp1_futures_ic import record_window as _record_window  # noqa: E402
 
 RETRIES = 5
+ROOT = Path(__file__).resolve().parents[1]
+CACHE_DIR = ROOT / "data" / "cache" / "armc"
+# Everything the recorded signals are computed from. A cache entry is valid only for the
+# exact bytes of these files, so editing the engine, the simulator or the config can never
+# serve a stale recording.
+_CODE = ("backtest.py", "config.py", "scripts/tp1_futures_ic.py")
+_CODE_DIRS = ("signals", "trading")
 
 
-def record_window(start, end):
+def code_hash():
+    import hashlib
+    h = hashlib.sha256()
+    files = [ROOT / f for f in _CODE]
+    for d in _CODE_DIRS:
+        files += sorted((ROOT / d).rglob("*.py"))
+    for f in files:
+        h.update(str(f.relative_to(ROOT)).encode())
+        h.update(f.read_bytes())
+    return h.hexdigest()[:16]
+
+
+def _fetch_window(start, end):
     """H-TPF's recorder, retried on a failed data fetch.
 
     A first scored run died on a `RequestTimeout` inside `run_backtest`'s own OHLCV fetch,
@@ -54,6 +73,34 @@ def record_window(start, end):
             logging.warning("record_window %s..%s attempt %d: %s", start, end, attempt + 1, exc)
             time.sleep(10 * (attempt + 1))
     raise RuntimeError(f"no data for window {start}..{end} after {RETRIES} tries")
+
+
+def record_window(start, end):
+    """(df, [(entry_idx, signal, own_trade)]) for one Arm C window, cached on disk.
+
+    Every exit test replays the same two multi-year backtests (about 50 minutes) to get the
+    same 625 + 178 signals. The recording is keyed by the window and a hash of the code it
+    depends on (`code_hash`), so a changed engine, simulator or config re-records instead
+    of reusing. Windows ending in the future are never cached: their data still moves.
+    """
+    import pickle
+    import pandas as pd
+    cacheable = pd.Timestamp(end) <= pd.Timestamp.now().normalize()
+    f = CACHE_DIR / f"{start}_{end}_{code_hash()}.pkl"
+    if cacheable and f.exists():
+        try:
+            with f.open("rb") as fh:
+                return pickle.load(fh)
+        except Exception as exc:  # noqa: BLE001 - a damaged cache file is re-recorded
+            logging.warning("armc cache %s unreadable (%s); re-recording", f.name, exc)
+    rec = _fetch_window(start, end)
+    if cacheable and rec[0] is not None and rec[1]:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = f.with_suffix(".tmp")
+        with tmp.open("wb") as fh:
+            pickle.dump(rec, fh)
+        tmp.replace(f)
+    return rec
 
 
 CAND_TRAIL = 2.5                       # live futures: FUTURES_CONFIG["trailing_atr_factor"] = 3.5
