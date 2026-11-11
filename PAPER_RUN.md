@@ -128,6 +128,15 @@ H-B, H-D and H-RGL keep 2026-11-08 / 11-11. Restarted with `pkill -f '[r]un_bot.
 runs from `d1d490b`. First cycle after it (15:01 UTC): spot HOLD 3.0/3.80, futures HOLD
 3.0/4.91, funding non-zero, Telegram sent, no error in `paper_run.log`. The change is
 unverified until the first futures BUY above VWAP+0.5×ATR fires.
+
+**2026-11-11: `nakhoda-alloc` removed from the VPS.** Service stopped, disabled and its user
+unit deleted; `~/playground/Nakhoda` deleted. The code is intact on the Mac
+(`~/Playground/Python/Nakhoda`). Its OKX **demo** wallet was not touched (equity about
+25,838 USDT virtual, flat), and the demo keys that were in the VPS `.env` are gone with it:
+revoke them in OKX if they are no longer wanted. `spotsignal` and `spotsignal-qa` were not
+touched and were `active` after. `scripts/morning_check.sh` no longer checks allocbot.
+Where this file still says "two bots" or describes allocbot, it is history. Free memory
+went from ~70 to ~195 MB.
 ---
 
 ## New session? Do this first
@@ -174,32 +183,33 @@ vs random, H-S shadow agents). Interim looks are health only. Instruments:
 mode 600). Still **no exchange keys**: spotsignal places no orders. If a key leaks,
 revoke it in its console and replace it in `.env`.
 
-**allocbot's demo gate: two weeks elapsed 2026-10-08 04:17 UTC, clean.** Read
-`../Nakhoda/docs/OOS-FINDING-2026-09-08.md` before treating that as permission to trade
-real money. The pass proves the plumbing, not the edge.
+**allocbot's demo gate (history; removed from the VPS 2026-11-11): two weeks elapsed
+2026-10-08 04:17 UTC, clean.** Read `../Nakhoda/docs/OOS-FINDING-2026-09-08.md` before
+treating that as permission to trade real money. The pass proves the plumbing, not the
+edge.
 
 ---
 
-## Two bots are running, on one VPS
+## One bot runs on the VPS (nakhoda-alloc was removed 2026-11-11)
 
-| | **spotsignal** | **nakhoda-alloc** |
-|---|---|---|
-| Repo | `~/playground/CrySignal-BTC` | `~/playground/Nakhoda` |
-| Service | `spotsignal.service` (system) | `nakhoda-alloc.service` (**user scope**) |
-| Runs as | `dmonk` | `dmonk` |
-| Started | **run 3: 2026-10-09 (see manifest)** · run 2: 2026-10-04 07:37 | 2026-09-24 04:17 UTC |
-| Touches an exchange? | **No.** No exchange keys, zero order calls (LLM keys only, for the agents). Paper positions live in SQLite. | **Yes** — real orders on OKX **Demo** (virtual money) |
-| Strategy | 22 conditions, 5 veto gates, adaptive threshold, BTC only | Donchian 20/10 across 10 coins, daily, no stops |
+| | **spotsignal** |
+|---|---|
+| Repo | `~/playground/CrySignal-BTC` |
+| Service | `spotsignal.service` (system), plus `spotsignal-qa` (user scope) |
+| Runs as | `dmonk` |
+| Started | **run 3: 2026-10-09 (see manifest)** · run 2: 2026-10-04 07:37 |
+| Touches an exchange? | **No.** No exchange keys, zero order calls (LLM keys only, for the agents). Paper positions live in SQLite. |
+| Strategy | 22 conditions, 5 veto gates, adaptive threshold, BTC only |
 
 Host `45.151.155.178` — Kamatera, Singapore, Ubuntu 24.04, **960 MB RAM, 1 core**.
-`ssh dmonk@45.151.155.178`. Roughly 380 MB free with both bots up.
+`ssh dmonk@45.151.155.178`. Roughly 195 MB free (page cache included in `available`: ~525 MB) after Nakhoda's removal.
 
 **There is no passwordless sudo**, and `sudo` needs a real TTY — neither Claude Code's
 Bash tool nor its `!` prefix provides one, so anything needing root has to be pasted into
 a terminal application. Two consequences that cost a previous session time:
-- `nakhoda-alloc` is a **user-scope** unit (`systemctl --user ...`, `journalctl --user -u ...`)
-  with `loginctl enable-linger` set — that needs no root and still survives reboot.
-  The runbook in Nakhoda's CLAUDE.md said `sudo systemctl`; that was wrong and is fixed.
+- `spotsignal-qa` is a **user-scope** unit (`systemctl --user ...`, `journalctl --user -u ...`)
+  with `loginctl enable-linger` set — that needs no root and still survives reboot. The
+  same was true of `nakhoda-alloc` while it ran.
 - `spotsignal` is system-scope, but its process runs as `dmonk` and the unit is
   `Restart=always` / `RestartSec=30`. So `pkill -TERM -f run_bot.py` **is** a restart —
   systemd brings it back on the code then on disk. That is how run 2 was started.
@@ -251,7 +261,7 @@ among them. No threshold, weight, gate or risk parameter moved.**
 ## Check it in five minutes
 
 ```bash
-bash scripts/morning_check.sh          # both bots, run 2's health, backups — one command
+bash scripts/morning_check.sh          # the bot's health and backups — one command
 ```
 
 It exits non-zero if anything needs attention, so it can be cron'd. The contributions
@@ -265,7 +275,7 @@ By hand:
 ssh dmonk@45.151.155.178
 cd ~/playground/CrySignal-BTC
 systemctl status spotsignal                 # active (running)?
-systemctl --user status nakhoda-alloc       # the other bot — note --user
+systemctl --user status spotsignal-qa       # the Q&A bot — note --user
 ./venv/bin/python analyze.py                # the full report
 ```
 
@@ -311,7 +321,8 @@ loudly. Keeps 30 days. Pull one to the Mac occasionally.
    `NRestarts` reset. That was a deliberate reboot with clean automatic recovery, not a
    fault, and no error was logged either side of it. Judge the two-week requirement on
    errors and missed daily decisions, not on one process's uptime.
-4. **`nakhoda-alloc`'s demo clock — two weeks clean as of 2026-10-08.** Nakhoda's
+4. ~~`nakhoda-alloc`'s demo clock~~ — **moot: removed from the VPS 2026-11-11.** History:
+   two weeks clean as of 2026-10-08. Nakhoda's
    CLAUDE.md requires **two weeks clean** before real money is considered. Started
    2026-09-24 04:17 UTC; zero errors and no missed daily decision through 2026-10-08. The
    10-08 rebalance cut it from 10 sleeves to 5 (Donchian exits in a falling market, equity

@@ -2,10 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **Start with `PAPER_RUN.md`.** A live paper run is in progress and a second bot
-> (`nakhoda-alloc`, from the sibling `../Nakhoda` repo) shares the same VPS. That note
-> says what is running, what changed between runs, which open items need `sudo`, and the
-> traps that have already cost a session time. Nothing here supersedes its one rule:
+> **Start with `PAPER_RUN.md`.** A live paper run is in progress. (A second bot,
+> `nakhoda-alloc` from the sibling `../Nakhoda` repo, shared the VPS until 2026-11-11 and
+> has been removed.) That note says what is running, what changed between runs, which open
+> items need `sudo`, and the traps that have already cost a session time. Nothing here supersedes its one rule:
 > **change nothing while a run is live.**
 
 ## Goal: collect data, then improve toward real profit

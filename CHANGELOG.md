@@ -25,6 +25,17 @@ config change.
 
 ---
 
+## 2026-11-11 — chore: nakhoda-alloc removed from the VPS; morning_check and docs follow
+
+The owner had `nakhoda-alloc` (service, user unit and `~/playground/Nakhoda`) removed from
+the VPS. `scripts/morning_check.sh` drops the allocbot service and journal checks (they
+would have read "needs checking" every morning, and its "daily decision" check was
+already a likely false alarm). `PAPER_RUN.md` records the removal and marks its two-bot
+text as history; the CLAUDE.md banner says the second bot is gone. No signal, gate,
+config or trading change. The morning check ran clean against the VPS afterwards.
+
+---
+
 ## 2026-11-10 — results: H-TPF FAIL (futures TP1 distance)
 
 Instrument `scripts/tp1_futures_ic.py` (`7b62ece`), scored run after its smoke commit.
