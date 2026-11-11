@@ -1,0 +1,4 @@
+geometry applied once: ok
+smoke A BTC/USDT 2024: synthetic entries 355
+smoke C primary: signals recorded 625
+smoke C confirmation: signals recorded 178
