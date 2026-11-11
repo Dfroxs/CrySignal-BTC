@@ -25,6 +25,18 @@ config change.
 
 ---
 
+## 2026-11-11 — docs: pre-registration H-PLK (futures breakeven lock)
+
+`docs/superpowers/specs/2026-11-11-futures-profit-lock-prereg.md`, written before any
+figure. One candidate: after a close favourable by 1.0R (R = the position's stop
+distance) the trail is raised to entry, effective the next bar; nothing else changes.
+Same arms, criteria and discard rules as H-TPF and H-TRL, plus an identity check that the
+new default-off simulator knob (`exit_params["be_lock_r"]`) leaves the current output
+byte-identical. The prereg states the prior is against it. No knob, no instrument, no
+result, no config or live-code change yet.
+
+---
+
 ## 2026-11-11 — results: H-TRL FAIL (futures trail width)
 
 Instrument `scripts/trail_futures_ic.py` (`69025ee`), scored after its smoke commit and a
