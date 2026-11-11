@@ -25,6 +25,18 @@ config change.
 
 ---
 
+## 2026-11-12 — results: H-PLK FAIL (futures breakeven lock)
+
+Scored from `08327fb`, smoke at `50a9ed0`; a first run was stopped by hand before any
+verdict (archived). Arm A 6/10 cells, pooled +0.003pp; Arm B 7/20, -0.015pp; Arm C
+-0.020 / -0.011pp, SELL -0.040pp. Effect near zero, not harmful: the lock arms on ~38% of
+entries but only ~10% exit at the floor, and give-back is unchanged (3.84 to 3.81pp).
+Nothing changes in config or live code; the `be_lock_r` knob stays, default off. With
+H-TPF and H-TRL this closes the exit-side candidates.
+`docs/superpowers/specs/2026-11-11-futures-profit-lock-results.md`.
+
+---
+
 ## 2026-11-11 — feat: be_lock_r simulator knob and the H-PLK instrument (not yet run)
 
 `backtest._simulate_forward` gains `exit_params["be_lock_r"]` (default absent = off): a
