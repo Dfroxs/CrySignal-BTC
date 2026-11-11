@@ -5543,6 +5543,59 @@ def test_htrl_candidate_trail_is_wired_and_giveback_is_measured():
     assert gb > 0 and gc >= 0
 
 
+def test_be_lock_arms_on_the_close_applies_next_bar_and_mirrors_for_sell():
+    """H-PLK (2026-11-11 prereg): when a bar's CLOSE is favourable by be_lock_r x the stop
+    distance, the trail goes to entry from the NEXT bar; absent = off and nothing changes."""
+    import copy
+    from backtest import _simulate_forward
+    BUY = {"type": "BUY", "entry_price": 1000.0, "stop_loss": 970.0,
+           "take_profit": 1075.0, "tp2": 1150.0, "atr": 10.0}
+    closes = [1000.0, 1010, 1020, 1031, 1032, 1033, 1034, 1030, 1020, 1010, 1000, 990, 980] + [980.0] * 80
+    lows = [c - 1 for c in closes]
+    lows[3] = 999.0                     # the arming bar wicks under entry: a same-bar lock would exit here
+    highs = [c + 1 for c in closes]
+
+    def run(sig, df, params):
+        s = copy.deepcopy(sig)
+        return _simulate_forward(df, 0, s, 72, "1h", "futures", exit_params=params), s
+
+    dfb = _exit_fixture(closes, highs=highs, lows=lows, atr=10.0)
+    base, sb = run(BUY, dfb, None)
+    lock, sl = run(BUY, dfb, {"be_lock_r": 1.0})
+    assert "_lock_armed" not in sb and sl.get("_lock_armed") is True
+    assert base["exit_price"] == 996.0 and base["candles_held"] == 11, base
+    assert lock["exit_price"] == 1000.0 and lock["candles_held"] == 10, lock     # not bar 3
+    assert run(BUY, dfb, {"be_lock_r": 5.0})[0] == base, "an unreached trigger changes nothing"
+    assert run(BUY, dfb, {"be_lock_r": None})[0] == base and run(BUY, dfb, {})[0] == base
+
+    SELL = {"type": "SELL", "entry_price": 1000.0, "stop_loss": 1030.0,
+            "take_profit": 925.0, "tp2": 850.0, "atr": 10.0}
+    dfs = _exit_fixture([2000 - c for c in closes], highs=[2000 - l for l in lows],
+                        lows=[2000 - h for h in highs], atr=10.0)
+    sbase, _ = run(SELL, dfs, None)
+    slock, ss = run(SELL, dfs, {"be_lock_r": 1.0})
+    assert sbase["exit_price"] == 1004.0 and slock["exit_price"] == 1000.0, (sbase, slock)
+    assert ss.get("_lock_armed") is True
+
+
+def test_hplk_instrument_candidate_and_row_follow_the_prereg():
+    """H-PLK instrument: the candidate is exactly be_lock_r 1.0, and a row reports whether
+    the lock armed and whether the trade then exited at the locked floor."""
+    from scripts.lock_futures_ic import CAND_PARAMS, make_row, summarise_rows
+    assert CAND_PARAMS == {"be_lock_r": 1.0}
+    closes = [1000.0, 1010, 1020, 1031, 1032, 1033, 1034, 1030, 1020, 1010, 1000, 990, 980] + [980.0] * 80
+    lows = [c - 1 for c in closes]
+    lows[3] = 999.0
+    df = _exit_fixture(closes, highs=[c + 1 for c in closes], lows=lows, atr=10.0)
+    sig = {"type": "BUY", "entry_price": 1000.0, "stop_loss": 970.0,
+           "take_profit": 1075.0, "tp2": 1150.0, "atr": 10.0}
+    row = make_row(df, 0, sig)
+    assert row[8] is True and row[9] is True, row          # armed, exited at the floor
+    assert row[1] > row[0], "the lock exits at 1000 instead of 996 on this path"
+    s = summarise_rows([row, (0.0, 0.0, True, True, False, False, 0.0, 0.0, False, False)])
+    assert s["lock_armed"] == 0.5 and s["exit_at_floor"] == 0.5
+
+
 def test_send_signal_alert_survives_a_formatter_error():
     """A formatter exception used to propagate into run_bot's Phase 4 and skip the
     position-open/close messages queued after the hourly card."""
@@ -5962,6 +6015,8 @@ if __name__ == "__main__":
     run("stops checked before the flip closes",  test_futures_stops_are_checked_before_the_flip_closes_the_opposite_position)
     run("H-TPF levels + verdict per prereg",    test_htpf_candidate_levels_and_verdict_follow_the_prereg)
     run("H-TRL trail wired, give-back measured", test_htrl_candidate_trail_is_wired_and_giveback_is_measured)
+    run("H-PLK lock: close-armed, next bar, SELL", test_be_lock_arms_on_the_close_applies_next_bar_and_mirrors_for_sell)
+    run("H-PLK instrument candidate + row",       test_hplk_instrument_candidate_and_row_follow_the_prereg)
     run("basis own checkpoint, no stale reason", test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason)
 
     print(f"\n{'══' * 20}")

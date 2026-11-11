@@ -25,6 +25,20 @@ config change.
 
 ---
 
+## 2026-11-11 — feat: be_lock_r simulator knob and the H-PLK instrument (not yet run)
+
+`backtest._simulate_forward` gains `exit_params["be_lock_r"]` (default absent = off): a
+bar's close favourable by that multiple of the initial stop distance raises the trail to
+entry from the NEXT bar, one-way, either direction. With the knob absent the output is
+identical to before (0 differences over 18,900 simulated entries; check kept in
+`2026-11-11-futures-profit-lock-run/`). `scripts/lock_futures_ic.py` is the H-PLK
+instrument, built on H-TPF's and H-TRL's helpers. The prereg gains a same-day amendment
+narrowing where the identity is shown. Three new tests (308/308). `backtest.py` shows in
+the PAPER_RUN trading-path diff check; it is default-off research plumbing and
+`trading/paper.py` is untouched. No config or live-code change.
+
+---
+
 ## 2026-11-11 — docs: pre-registration H-PLK (futures breakeven lock)
 
 `docs/superpowers/specs/2026-11-11-futures-profit-lock-prereg.md`, written before any

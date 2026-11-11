@@ -146,3 +146,29 @@ candidate set explicitly to `{"be_lock_r": 1.0}` and asserted in a test. Committ
 counts only. Raw output to `2026-11-11-futures-profit-lock-run/`. Arm C replays two
 multi-year backtests (about 50 minutes) and needs network to Binance; the scored run
 starts once, from the committed instrument.
+
+---
+
+# Amendment, 2026-11-11 (same day): scope of the identity check
+
+Written before any H-PLK figure exists: the knob and the instrument are built and tested,
+and nothing has been scored.
+
+The Discard section asks the simulator to reproduce its pre-edit output "on the Arm C
+signal set" when `be_lock_r` is absent. That set is produced by a 50-minute backtest per
+window, and checking it against the old simulator would need that backtest run twice. The
+check is done instead where it can be exhaustive and cheap, and the in-run fidelity check
+still covers Arm C:
+
+- **Identity (done, before the scored run):** the simulator at `7b35144` (before the knob)
+  against the simulator with the knob, over **18,900 simulated entries** on six seeded
+  random-walk frames (4,000 hourly bars each), **BUY and SELL**, with `exit_params` set
+  to `None`, `{}` and `{"trailing_atr_factor": 2.5}`: **0 differences**, and no `_lock_armed`
+  flag set. Script and output: `2026-11-11-futures-profit-lock-run/identity_check.py`,
+  `identity.txt`.
+- **In the scored run:** Arm C's baseline replay must still equal `run_backtest`'s own
+  P&L on every recorded signal (max |diff| <= 1e-9), as before.
+
+This narrows where the identity is demonstrated and widens nothing else. The knob's own
+diff is guarded by `if be_lock_r`; the only unguarded additions are one `abs()` and a
+false-`if`.

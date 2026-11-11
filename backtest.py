@@ -334,7 +334,7 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, exit_par
     """
     _ALLOWED = {"trailing_atr_factor", "trailing_post_tp1_factor",
                 "trailing_advance_min_ratio", "max_position_hours",
-                "vol_expansion_exit_mult", "partial_enabled"}
+                "vol_expansion_exit_mult", "partial_enabled", "be_lock_r"}
     ep = exit_params or {}
     unknown = set(ep) - _ALLOWED
     if unknown:
@@ -358,6 +358,14 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, exit_par
     tp2 = tp2_raw if tp2_raw else None
 
     trail = sl
+    # H-PLK (2026-11-11-futures-profit-lock-prereg.md): breakeven lock. Absent or None =
+    # off, and then nothing below runs, so every existing output is unchanged. When a
+    # bar's CLOSE is favourable by `be_lock_r` x the initial stop distance, the trail is
+    # raised to entry from the NEXT bar on (never the bar that armed it). One-way: it
+    # never lowers a trail that is already past entry.
+    be_lock_r = ep.get("be_lock_r")
+    lock_risk = abs(entry - sl)
+    lock_pending = lock_done = False
     _default_trail = (FUTURES_CONFIG.get("trailing_atr_factor", 0.9) if mode == "futures"
                       else RISK_CONFIG.get("trailing_atr_factor", 1.0))
     base_trail_factor = ep.get("trailing_atr_factor", _default_trail)
@@ -393,6 +401,10 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, exit_par
         c = df.iloc[j]
         high, low = c["high"], c["low"]
         atr_now = c.get("ATR_14", atr_entry)
+
+        if lock_pending:
+            trail = max(trail, entry) if stype == "BUY" else min(trail, entry)
+            lock_pending = False
 
         # Time exit
         age = j - entry_idx
@@ -483,6 +495,12 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, exit_par
                 exit_pnl = _net_pnl(stype, entry, trail, partial_closed, partial_pnl, mode)
                 outcome = "WIN" if exit_pnl > 0 else "LOSS"
                 return _make_trade(df, entry_idx, j, signal, outcome, entry, trail, exit_pnl)
+
+        if be_lock_r and not lock_done and lock_risk > 0:
+            favourable = (c["close"] - entry) if stype == "BUY" else (entry - c["close"])
+            if favourable >= be_lock_r * lock_risk:
+                lock_pending = lock_done = True
+                signal["_lock_armed"] = True
 
     # Ran out of candles — still open
     return _make_trade(df, entry_idx, entry_idx + max_hold, signal, "OPEN",
