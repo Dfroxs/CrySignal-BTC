@@ -25,6 +25,16 @@ config change.
 
 ---
 
+## 2026-11-11 — results: H-TRL FAIL (futures trail width)
+
+Instrument `scripts/trail_futures_ic.py` (`69025ee`), scored after its smoke commit and a
+retry fix (`fcff53d`) following two network-failed attempts (archived). Arm A 2/10 cells,
+pooled -0.148pp; Arm B 3/20, -0.271pp; Arm C -0.228 / -0.098pp, BUY -0.169, SELL -0.235.
+A 2.5 trail gives back less (3.84 -> 3.29pp) and earns less. Nothing changes in config or
+trading. `docs/superpowers/specs/2026-11-10-futures-trail-results.md`.
+
+---
+
 ## 2026-11-11 — chore: nakhoda-alloc removed from the VPS; morning_check and docs follow
 
 The owner had `nakhoda-alloc` (service, user unit and `~/playground/Nakhoda`) removed from
