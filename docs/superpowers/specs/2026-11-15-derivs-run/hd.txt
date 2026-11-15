@@ -1,0 +1,14 @@
+H-D  rows {'ETHUSDT': 1375, 'SOLUSDT': 1375, 'BNBUSDT': 1375, 'XRPUSDT': 1375, 'DOGEUSDT': 1375, 'BTCUSDT': 683}  gaps {'ETHUSDT': 0, 'SOLUSDT': 0, 'BNBUSDT': 0, 'XRPUSDT': 0, 'DOGEUSDT': 0, 'BTCUSDT': 0}
+
+ls_global        H-D1        pooled +0.047 [-0.060, +0.165]  → INCONCLUSIVE
+  ETH +0.132  SOL -0.038  BNB +0.222  XRP +0.013  DOGE -0.094   BTC(run 3) +0.282 n=683   4h +0.022 12h +0.017
+ls_top_position  screen      pooled -0.029 [-0.117, +0.066]  → no lead
+  ETH -0.017  SOL +0.022  BNB +0.003  XRP -0.119  DOGE -0.032   BTC(run 3) +0.075 n=683   4h +0.004 12h -0.002
+oi_change_24h    screen      pooled +0.023 [-0.064, +0.107]  → no lead
+  ETH -0.006  SOL +0.001  BNB +0.097  XRP +0.013  DOGE +0.011   BTC(run 3) +0.246 n=683   4h +0.007 12h +0.007
+ls_top_account   descriptive pooled +0.043 [-0.062, +0.164]  → —
+  ETH +0.115  SOL -0.035  BNB +0.193  XRP +0.047  DOGE -0.103   BTC(run 3) +0.273 n=683   4h +0.024 12h +0.019
+taker            descriptive pooled -0.008 [-0.039, +0.019]  → —
+  ETH +0.004  SOL +0.029  BNB +0.004  XRP -0.064  DOGE -0.013   BTC(run 3) -0.062 n=683   4h +0.023 12h -0.016
+
+written → docs/superpowers/specs/2026-11-15-derivs-run/hd_result.json

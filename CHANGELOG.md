@@ -25,6 +25,17 @@ config change.
 
 ---
 
+## 2026-11-15 — results: H-RGL and H-D, both INCONCLUSIVE
+
+The two run-3 hypotheses already due. H-RGL: 6 regime-blocked spot BUYs at -1.066pp vs
+random bearish-regime -1.060pp, 90% CI on the blocked arm [-1.79, -0.15]; the gate neither
+visibly helps nor hurts. H-D: `ls_global` pooled IC +0.047 [-0.060, +0.165] over 5 alts
+(INCONCLUSIVE), other stats no lead; BTC alone +0.282 is a lead, not a criterion. Futures
+hypotheses (H-V1, H-V2 futures, H-S, H-X) wait for 2026-11-16. Nothing changes in config
+or code. `docs/superpowers/specs/2026-11-15-run3-due-results.md`.
+
+---
+
 ## 2026-11-12 — chore(scripts): Arm C recordings are cached on disk
 
 `scripts/trail_futures_ic.py::record_window` (used by `trail_futures_ic.py` and
