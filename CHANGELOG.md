@@ -14,6 +14,12 @@ held coin is ignored, opposite or not), entry at the bar close, stop 1.5 x ATR(1
 only if free cash covers it). `run_once` walks open positions through the newly
 closed bars before asking, and opens after storing the picks; a book failure is logged and
 never costs a scan. The model never sees the book, so H-SC is unchanged (prereg addendum).
+Third book (owner): "BTC + filter Claude", the same BTC positions with Claude's entry opinion
+as a veto (`dashboard.claude_filter`): DISAGREE dropped, AGREE / no opinion / errored kept, as
+a fail-open gate would. Display only. Live at the time: 1,010.87 USD (+1.09%) vs 1,001.81
+unfiltered; 5 kept (+10.84 pp), 11 dropped (-8.99 pp). All 16 were already read when H-S was
+scored (in-sample), so the panel counts positions opened from 2026-11-16 20:00 UTC separately
+as fresh evidence; it also says a vetoed slot could have gone to another signal.
 The BTC bot is also shown as a 1,000 USD account (owner's choice: the scanner's rule), display
 only: its run-3 positions, spot and futures in one account, each sized at 10% of realised
 equity when it opened (`dashboard.usd_account`). Live at the time: 1,001.81 USD (+0.18%), 16
