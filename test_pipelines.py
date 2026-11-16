@@ -6028,7 +6028,7 @@ def test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel():
         page = dsh.render(f)
         assert "Semua berjalan normal" not in page, "a blind futures cycle is an issue"
         assert "data futures Binance kosong" in page and "+3,50 pp" in page and "#1 futures SELL" not in page
-        assert "Seberapa dekat ke sinyal" in page and 'id="tab-scanner"' in page and 'id="tab-btc"' in page and "fetch(" not in page, "the page calls nothing"
+        assert "Kapan bot membuka posisi berikutnya?" in page and 'id="tab-scanner"' in page and 'id="tab-btc"' in page and "fetch(" not in page, "the page calls nothing"
         assert dsh._nice_ticks(1.08, 7.17) == [2.0, 4.0, 6.0]
         assert dsh.issues({"host": {"services": {"bot": "active"}}, "db": {"last_cycle_age_min": 5,
                                                                            "last": {}}, "errors": []}) == []
