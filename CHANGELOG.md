@@ -14,7 +14,12 @@ held coin is ignored, opposite or not), entry at the bar close, stop 1.5 x ATR(1
 only if free cash covers it). `run_once` walks open positions through the newly
 closed bars before asking, and opens after storing the picks; a book failure is logged and
 never costs a scan. The model never sees the book, so H-SC is unchanged (prereg addendum).
-Dashboard no longer BTC-only (owner): it opens with "Dua buku" (BTC bot in pp beside the
+Dashboard in tabs (owner: "urutannya kacau, gunakan tab"): status, health and a two-book
+summary stay on top; below, tabs "Scanner 9 koin" (demo account, open positions, nine coins,
+account history, H-SC progress), "Bot BTC" (distance to signal, positions, market, macro,
+gates, Claude's BTC opinions) and "Sistem & biaya". The chosen tab survives the 5-minute
+reload (URL hash, then localStorage), arrow keys move between tabs. Earlier draft, same day:
+it opened with "Dua buku" (BTC bot in pp beside the
 scanner account's equity, realised, floating, free cash), then "Sembilan koin" (price,
 1h/24h/7d return, vs universe, funding, OI, L/S, Claude's latest pick and reason, the demo
 position per coin, all from the context Claude saw), then the demo account (stats, open
