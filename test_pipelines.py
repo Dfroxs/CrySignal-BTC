@@ -5806,6 +5806,137 @@ def test_flip_shadow_eval_value_verdict_and_replay_follow_the_prereg():
     assert e.verdict_of(list(np.r_[np.ones(13) * 0.5, -np.ones(12) * 0.4]))[0] == "INCONCLUSIVE"
 
 
+def _scanner_get(n_bars=210, now_ms=None, lag=()):
+    """A fake Binance fapi: every coin trends up at its own rate; `lag` coins stop one bar
+    early. The last kline is still forming at `now_ms`."""
+    import time
+    from agents.scanner import BAR_MS, UNIVERSE
+    now_ms = now_ms or int(time.time() * 1000) // BAR_MS * BAR_MS - 2 * BAR_MS + 300_000
+    forming = now_ms // BAR_MS * BAR_MS
+
+    def get(path, params=None):
+        sym = (params or {}).get("symbol", "")
+        coin = sym[:-4]
+        if path == "/fapi/v1/premiumIndex":
+            return [{"symbol": c + "USDT", "lastFundingRate": "0.0001", "markPrice": "101",
+                     "indexPrice": "100"} for c in UNIVERSE]
+        if path == "/fapi/v1/klines":
+            end = forming - (2 * BAR_MS if coin in lag else 0)
+            k = 1 + UNIVERSE.index(coin) / 1000
+            return [[end - (n_bars - 1 - j) * BAR_MS, 100 * k ** j, 100 * k ** j * 1.01,
+                     100 * k ** j * 0.99, 100 * k ** j, 10 + j % 3] for j in range(n_bars)]
+        if path.endswith("openInterestHist"):
+            return [{"sumOpenInterestValue": str(1000 + j)} for j in range(25)]
+        if path.endswith("globalLongShortAccountRatio"):
+            return [{"longShortRatio": "1.5"}]
+        if path.endswith("takerlongshortRatio"):
+            raise RuntimeError("451")
+        raise AssertionError(path)
+    return get, now_ms
+
+
+def test_scanner_snapshot_uses_closed_bars_and_passes_numbers_only():
+    import json
+    from agents import scanner as s
+    get, now = _scanner_get(lag=("DOGE",))
+    snap = s.snapshot(now, get)
+    forming = now // s.BAR_MS * s.BAR_MS
+    assert snap["bar_close_ms"] == forming, "the newest CLOSED bar ends where the forming one starts"
+    assert snap["coins"]["DOGE"] is None, "a coin one bar behind is stale, passed as missing"
+    btc = snap["coins"]["BTC"]
+    assert btc["ret_1h_pct"] == 0.0 and btc["basis_pct"] == 1.0 and btc["ls_ratio"] == 1.5
+    assert btc["taker_ratio"] is None, "a failing side field is None, not a dead coin"
+    assert snap["coins"]["ETH"]["ret_24h_pct"] > 0
+    ctx = s.build_context(snap)
+    flat = json.dumps(ctx)
+    assert "close\"" not in flat.replace("bar_closed", "") and "bar_open_ms" not in flat
+    for c, d in ctx["coins"].items():
+        assert d is None or all(v is None or isinstance(v, (int, float)) for v in d.values()), c
+    assert abs(sum(d["ret_24h_vs_universe_pct"] for d in ctx["coins"].values() if d)) < 1e-2
+    p = s.parse_picks('x {"BTC": {"side": "LONG", "confidence": 70, "reason": "ok"}} y', ["BTC", "ETH"])
+    assert p["BTC"]["side"] == "LONG" and p["ETH"]["side"] == "NONE"
+    for bad in ('{"BTC": {"side": "BUY", "confidence": 5}}', '{"BTC": {"side": "LONG", "confidence": 101}}', "no"):
+        try:
+            s.parse_picks(bad, ["BTC"])
+        except ValueError:
+            continue
+        raise AssertionError(bad)
+
+
+def test_scanner_run_once_stores_dedupes_and_logs_a_failure_as_data():
+    import json
+    import os
+    import sqlite3
+    import tempfile
+    from types import SimpleNamespace as NS
+    from agents import scanner as s
+    d = tempfile.mkdtemp()
+    db, usage = os.path.join(d, "scan.db"), os.path.join(d, "usage.jsonl")
+    get, now = _scanner_get()
+    seen = {}
+
+    def ask(prompt, system=None, provider=None, model=None, max_tokens=None):
+        seen.update(prompt=prompt, provider=provider, model=model)
+        return NS(text=json.dumps({"SOL": {"side": "LONG", "confidence": 60, "reason": "kuat"},
+                                   "XRP": {"side": "SHORT", "confidence": 55, "reason": "lemah"}}),
+                  provider="anthropic", model="claude-opus-5-5", input_tokens=3000,
+                  output_tokens=1000)
+    cid = s.run_once(ask, get, db, now, usage)
+    assert cid and seen["provider"] == "anthropic" and seen["model"] == s.DEFAULT_MODEL
+    con = sqlite3.connect(db)
+    row = con.execute("SELECT bar_close, error, n_coins, cost_usd, timestamp FROM scan_cycles").fetchone()
+    assert row[1] is None and row[2] == 9 and abs(row[3] - (3000 * 4 + 1000 * 20) / 1e6) < 1e-9
+    assert row[4] > row[0], "answer stored after the bar closed"
+    picks = dict(con.execute("SELECT coin, side FROM scan_picks").fetchall())
+    assert len(picks) == 9 and picks["SOL"] == "LONG" and picks["XRP"] == "SHORT" and picks["BTC"] == "NONE"
+    assert json.loads(open(usage).read())["purpose"] == "scanner"
+    assert s.run_once(ask, get, db, now, usage) is None, "the same bar is never asked twice"
+
+    def boom(*a, **k):
+        raise RuntimeError("overloaded")
+    cid2 = s.run_once(boom, get, db, now + s.BAR_MS, usage)
+    err = con.execute("SELECT error FROM scan_cycles WHERE id = ?", (cid2,)).fetchone()[0]
+    assert "overloaded" in err
+    assert con.execute("SELECT COUNT(*) FROM scan_picks WHERE cycle_id = ?", (cid2,)).fetchone()[0] == 0
+    con.close()
+    src = open("run_bot.py").read() + open("trading/paper.py").read()
+    assert "scanner" not in src, "the scanner must stay outside the trading path"
+
+
+def test_scanner_eval_excess_day_unit_verdict_and_leakage():
+    import json
+    import numpy as np
+    import pandas as pd
+    import scripts.scanner_eval as e
+    t = pd.Timestamp("2026-12-01 10:00")
+    idx = pd.date_range("2026-12-01 00:00", periods=200, freq="h")
+    closes = {c: pd.Series(100.0, index=idx) for c in ("BTC", "ETH", "SOL")}
+    closes["SOL"][idx >= t + pd.Timedelta(hours=1)] = 110.0   # SOL +10%, others flat
+    cyc = pd.DataFrame({"id": [1], "bar_close": [t], "model": ["m"], "error": [None],
+                        "timestamp": [t + pd.Timedelta(minutes=6)], "cost_usd": [0.04],
+                        "context": [json.dumps({"bar_closed_utc": "2026-12-01 10:00"})]})
+    picks = pd.DataFrame({"cycle_id": [1, 1, 1], "coin": ["SOL", "BTC", "ETH"],
+                          "side": ["LONG", "SHORT", "NONE"], "confidence": [80, 40, 10]})
+    pv = e.pick_values(cyc, picks, closes, 24)
+    m = 10 / 3
+    sol, btc = pv.set_index("coin").loc["SOL"], pv.set_index("coin").loc["BTC"]
+    assert abs(sol.excess - (10 - m)) < 1e-9 and abs(btc.excess - m) < 1e-9, pv
+    assert abs(sol.net - (10 - e.COST_PP)) < 1e-9 and len(pv) == 2, "NONE is not a pick"
+    assert len(e.day_values(pv)) == 1, "the unit is the day, not the pick"
+    assert e.leakage_ok(cyc) == []
+    late = cyc.assign(timestamp=[t - pd.Timedelta(minutes=1)])
+    assert e.leakage_ok(late) == [1]
+    lo, hi = e.block_ci(np.ones(100))
+    assert lo == hi == 1.0
+    assert e.verdict_of(np.ones(89), 500, 0.0)[0] == "INCONCLUSIVE", "90 days needed"
+    assert e.verdict_of(np.ones(100), 299, 0.0)[0] == "INCONCLUSIVE", "300 picks needed"
+    assert e.verdict_of(np.ones(100), 500, 0.21)[0] == "INCONCLUSIVE", "health discard"
+    assert e.verdict_of(np.ones(100), 500, 0.0)[0] == "PASS"
+    assert e.verdict_of(-np.ones(100), 500, 0.0)[0] == "FAIL"
+    noisy = np.r_[np.ones(50) * 0.1, -np.ones(50) * 0.09]
+    assert e.verdict_of(noisy, 500, 0.0)[0] == "INCONCLUSIVE"
+
+
 def test_send_signal_alert_survives_a_formatter_error():
     """A formatter exception used to propagate into run_bot's Phase 4 and skip the
     position-open/close messages queued after the hourly card."""
@@ -6234,6 +6365,9 @@ if __name__ == "__main__":
     run("H-FLP-C flip shadow: ask, log, no raise",  test_flip_shadow_asks_before_the_flip_logs_one_row_and_never_raises)
     run("H-FLP-C table + hook precede the close",   test_flip_opinions_table_and_run_bot_hook_precede_the_close)
     run("H-FLP-C eval: value, verdict, replay",     test_flip_shadow_eval_value_verdict_and_replay_follow_the_prereg)
+    run("H-SC scanner: closed bars, numbers only",  test_scanner_snapshot_uses_closed_bars_and_passes_numbers_only)
+    run("H-SC scanner: store, dedupe, error row",   test_scanner_run_once_stores_dedupes_and_logs_a_failure_as_data)
+    run("H-SC eval: excess, days, verdict, leak",   test_scanner_eval_excess_day_unit_verdict_and_leakage)
     run("basis own checkpoint, no stale reason", test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason)
 
     print(f"\n{'══' * 20}")
