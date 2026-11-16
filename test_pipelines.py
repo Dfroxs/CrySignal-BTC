@@ -5690,6 +5690,15 @@ def test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel():
         assert abs(ac["realised"] - 1003.5) < 1e-9, "10% of 1,000 USD earning +3.5%"
         assert abs(ac["used"] - 100.35) < 1e-9, "the open position sized on equity at its open"
         assert abs(ac["upnl"] - op["move_pct"] / 100 * 100.35) < 1e-9 and ac["curve"][0][1] == 1000
+        cf = dsh.claude_filter([{"id": 1, "opened_at": "2026-11-17 01:01:00", "closed_at": "2026-11-17 05:00:00",
+                                 "pnl_pct": -2.0, "signal_id": 7},
+                                {"id": 2, "opened_at": "2026-11-18 01:01:00", "closed_at": "2026-11-18 05:00:00",
+                                 "pnl_pct": 4.0, "signal_id": 8},
+                                {"id": 3, "opened_at": "2026-11-19 01:01:00", "closed_at": "2026-11-19 05:00:00",
+                                 "pnl_pct": 1.0, "signal_id": None}], [], {7: "DISAGREE", 8: "AGREE"}, now)
+        assert (cf["kept"], cf["vetoed"], cf["vetoed_pnl"], cf["kept_pnl"]) == (2, 1, -2.0, 5.0), \
+            "only DISAGREE is dropped; no opinion is kept"
+        assert abs(cf["realised"] - (1000 + 4.0 + 1.004)) < 1e-9 and cf["fresh_kept"] == 2
         assert f["scanner"] is None and f["host"]["services"]["Q&A"] == "active"
         page = dsh.render(f)
         assert "Semua berjalan normal" not in page, "a blind futures cycle is an issue"

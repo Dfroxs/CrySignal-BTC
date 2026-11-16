@@ -134,6 +134,30 @@ def usd_account(closed, open_, start=ACCOUNT_START_USD, frac=ACCOUNT_FRACTION):
             "used": used, "cash": realised - used, "curve": curve}
 
 
+# Third book (owner, 2026-11-16): the BTC bot as if Claude's entry opinion were a veto.
+# Positions it DISAGREED with are dropped; AGREE, no opinion or an errored one are kept, as a
+# veto gate that fails open would. Counterfactual only: a vetoed position would have freed its
+# slot for another signal, which this cannot see. Positions opened before CLAUDE_FRESH_FROM had
+# already been read when H-S was scored, so only later ones are fresh evidence.
+CLAUDE_FRESH_FROM = datetime(2026, 11, 16, 20, 0, tzinfo=UTC)
+
+
+def claude_filter(closed, open_, verdict, now):
+    keep = lambda p: verdict.get(p.get("signal_id")) != "DISAGREE"
+    kc = [c for c in closed if c["pnl_pct"] is not None and keep(c)]
+    ko = [o for o in open_ if keep(o)]
+    vetoed = [c for c in closed if c["pnl_pct"] is not None and not keep(c)]
+    fresh = lambda xs: [x for x in xs if (_dt(x["opened_at"]) or now) >= CLAUDE_FRESH_FROM]
+    acc = usd_account(kc, ko)
+    acc.update(kept=len(kc), vetoed=len(vetoed), vetoed_open=len(open_) - len(ko),
+               vetoed_pnl=sum(c["pnl_pct"] for c in vetoed), kept_pnl=sum(c["pnl_pct"] for c in kc),
+               fresh_kept=len(fresh(kc)), fresh_vetoed=len(fresh(vetoed)),
+               fresh_kept_pnl=sum(c["pnl_pct"] for c in fresh(kc)),
+               fresh_vetoed_pnl=sum(c["pnl_pct"] for c in fresh(vetoed)),
+               vetoed_rows=vetoed[::-1][:CLOSED_ROWS])
+    return acc
+
+
 def _book(rows):
     """Statistics of closed positions [(opened, closed, pnl, outcome)] in closing order."""
     pn = [r[2] for r in rows]
@@ -195,7 +219,7 @@ def db_facts(db, now, run_start=None):
         f["prices"] = q(f"SELECT {_ts('timestamp')}, price FROM cycle_log WHERE mode='futures' "
                         f"AND {_ts('timestamp')} >= ? ORDER BY {_ts('timestamp')}", d7)
         cols = ("id", "mode", "type", "entry_price", "stop_loss", "trailing_stop", "take_profit",
-                "tp2", "opened_at", "partial_closed")
+                "tp2", "opened_at", "partial_closed", "signal_id")
         f["open"] = [dict(zip(cols, r)) for r in q(
             f"SELECT {', '.join(cols)} FROM paper_positions WHERE closed_at IS NULL ORDER BY id")]
         for p in f["open"]:
@@ -210,7 +234,7 @@ def db_facts(db, now, run_start=None):
             p["hours"] = ((now - _dt(p["opened_at"])).total_seconds() / 3600
                           if _dt(p["opened_at"]) else None)
         cols = ("id", "mode", "type", "entry_price", "exit_price", "opened_at", "closed_at",
-                "outcome", "pnl_pct")
+                "outcome", "pnl_pct", "signal_id")
         closed = [dict(zip(cols, r)) for r in q(
             f"SELECT {', '.join(cols)} FROM paper_positions WHERE closed_at IS NOT NULL "
             f"ORDER BY {_ts('closed_at')}")]
@@ -218,6 +242,11 @@ def db_facts(db, now, run_start=None):
             closed = [c for c in closed if (_dt(c["opened_at"]) or now) >= run_start]
         f["closed_recent"] = closed[::-1][:CLOSED_ROWS]
         f["account"] = usd_account([c for c in closed if c["pnl_pct"] is not None], f["open"])
+        if "shadow_opinions" in tables:
+            verdict = dict(q("SELECT signal_id, verdict FROM shadow_opinions WHERE provider='anthropic' "
+                             "AND error IS NULL AND verdict IS NOT NULL AND signal_id IS NOT NULL "
+                             "ORDER BY id"))
+            f["claude_account"] = claude_filter(closed, f["open"], verdict, now)
         f["curve"], f["totals"] = {}, {}
         for mode in ("spot", "futures"):
             rows = [(_dt(c["opened_at"]), _dt(c["closed_at"]), c["pnl_pct"], c["outcome"])
@@ -500,7 +529,7 @@ summary:focus-visible,a:focus-visible{outline:2px solid var(--buy);outline-offse
 .err{border:1px solid var(--bad);color:var(--bad);border-radius:6px;padding:10px 14px;margin:12px 0}
 .meta{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(220px,100%),1fr));gap:4px 24px;font-size:14px;color:var(--ink2)}
 .meta b{color:var(--ink);font-weight:500}
-.books{margin-top:22px}
+.books{margin-top:22px;grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr))}
 a.book{display:block;text-decoration:none;color:inherit}
 a.book:hover{border-color:var(--ink2)}
 .book h3 span{font-weight:400;color:var(--mute);font-size:13px;margin-left:6px}
@@ -760,6 +789,15 @@ def _overview(s, d):
                 f'{_pnl((ac["equity"] / ac["start"] - 1) * 100, 2, "%")}</small></dd></div>' if ac else "")
              + f'<div><dt>Futures / spot</dt><dd>{_pnl(fu.get("sum"), 1, " pp")} / {_pnl(sp.get("sum"), 1, " pp")}</dd></div>'
              f'<div><dt>Terbuka</dt><dd>{len(d.get("open") or [])}</dd></div></dl></a>')
+    ca = d.get("claude_account")
+    if ca:
+        P.append('<a class="panel book" href="#btc" data-tab="btc"><h3>BTC + filter Claude '
+                 '<span>posisi yang ditolak Claude dibuang</span></h3><dl class="kv">'
+                 f'<div><dt>Ekuitas</dt><dd>${_n(ca["equity"])}<small>'
+                 f'{_pnl((ca["equity"] / ca["start"] - 1) * 100, 2, "%")}</small></dd></div>'
+                 f'<div><dt>Diambil / dibuang</dt><dd>{ca["kept"]} / {ca["vetoed"]}</dd></div>'
+                 f'<div><dt>Data baru</dt><dd>{ca["fresh_kept"] + ca["fresh_vetoed"]}<small>posisi</small></dd></div>'
+                 '</dl></a>')
     if bk:
         ret = (bk["equity"] / bk["start"] - 1) * 100
         P.append('<a class="panel book" href="#scanner" data-tab="scanner"><h3>Scanner 9 koin '
@@ -967,6 +1005,35 @@ def render(f):
                  + "".join(f"<div><dt>{k}</dt><dd>{v}</dd></div>" for k, v in kv) + "</dl></div><div>"
                  + chart([{"n": "", "c": "var(--ink)", "p": ac["curve"]}], width=560, height=170,
                          y_fmt="{:,.0f}", label="ekuitas akun BTC") + "</div></div>")
+    ca = d.get("claude_account")
+    if ca:
+        ret = (ca["equity"] / ca["start"] - 1) * 100
+        base = (ac["equity"] / ac["start"] - 1) * 100 if ac else None
+        kv = [("Ekuitas", f'${_n(ca["equity"])}<small>{_pnl(ret, 2, "%")}</small>'),
+              ("Tanpa filter", f'${_n(ac["equity"])}<small>{_pnl(base, 2, "%")}</small>' if ac else "–"),
+              ("Posisi diambil", f'{ca["kept"]}<small>{_pnl(ca["kept_pnl"], 2, " pp")}</small>'),
+              ("Posisi dibuang", f'{ca["vetoed"]}<small>{_pnl(ca["vetoed_pnl"], 2, " pp")}</small>'),
+              ("Data baru: diambil", f'{ca["fresh_kept"]}<small>{_pnl(ca["fresh_kept_pnl"], 2, " pp")}</small>'),
+              ("Data baru: dibuang", f'{ca["fresh_vetoed"]}<small>{_pnl(ca["fresh_vetoed_pnl"], 2, " pp")}</small>')]
+        rows = [[f"#{c['id']}", e(c["mode"]), _dir(c["type"]), _t(c["closed_at"]), e(str(c["outcome"])),
+                 _pnl(c["pnl_pct"], 2, "%")] for c in ca["vetoed_rows"]]
+        P.append('<h3 style="margin-top:26px">Akun $1.000 dengan filter Claude</h3>'
+                 '<p class="note" style="margin-top:0">Posisi bot yang sama, tapi yang sinyal pembukanya '
+                 'ditolak Claude (DISAGREE) dibuang; tanpa opini tetap diambil. Hanya tampilan. Posisi '
+                 f'sebelum {CLAUDE_FRESH_FROM:%d %b %H:%M} UTC sudah dipakai saat H-S dinilai, jadi hanya '
+                 '"data baru" yang merupakan bukti segar. Posisi yang dibuang mungkin akan diganti sinyal '
+                 'lain di dunia nyata; itu tidak terlihat di sini.</p>'
+                 '<div class="cols"><div><dl class="kv">'
+                 + "".join(f"<div><dt>{k}</dt><dd>{v}</dd></div>" for k, v in kv) + "</dl></div><div>"
+                 + chart([{"n": "filter Claude", "c": "var(--ink)", "p": ca["curve"]},
+                          {"n": "tanpa filter", "c": "var(--mute)", "dash": True,
+                           "p": ac["curve"] if ac else []}],
+                         width=560, height=170, y_fmt="{:,.0f}", label="ekuitas dengan dan tanpa filter Claude")
+                 + '<div class="legend"><span><i style="background:var(--ink)"></i>filter Claude</span>'
+                   '<span><i style="background:var(--mute)"></i>tanpa filter</span></div></div></div>'
+                 + ('<details><summary>Posisi yang dibuang Claude</summary>' + _table(
+                     ["id", "mode", "arah", "ditutup", "hasil", "P&L"], rows, num=(5,)) + "</details>"
+                    if rows else ""))
     since = man.get("started_at")
     P.append(f'<h3 style="margin-top:22px">Kinerja buku{f" sejak run dimulai {_t(since)}" if since else ""}</h3>'
              + _book_table(d.get("totals") or {}))
