@@ -4,6 +4,23 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-17 — results: H-FLP INCONCLUSIVE (flip too rare to test); flip shadow built, not deployed
+
+`docs/superpowers/specs/2026-11-16-futures-flip-results.md`. Scored once from `165d34b`.
+Fidelity 8/10, identity 0 differences. Arm D had **2 flips** in 4.5 years of ETH/BNB/XRP/LINK
+(30 required) and Arm C had 0 on BTC: only 2.7% of signals have an opposite one within 72
+bars, and none of 372 BTC trades saw one during its hold. Arm D pooled mean monthly diff
+-0.023pp, CI [-0.068, +0.015], ahead in 0/4 assets. The instrument printed FAIL because
+`verdict()` tests the sign before the flip count; the prereg's Inert clause makes it
+INCONCLUSIVE, which is what is reported (instrument not edited after the run). The live flip
+stays; nothing licensed. Also committed, **not deployed** (touches `run_bot.py`, restart needs
+the owner's go): `agents/flip_shadow.py` (FLIP/HOLD opinion before the close, background
+thread, logged only), table `shadow_flip_opinions` + `history.log_flip_opinion`, the
+`run_bot.py` hook, `scripts/flip_shadow_eval.py` (H-FLP-C scorer, 20 events minimum). Tests
+315/315.
+
+---
+
 ## 2026-11-16 — feat: flip_at simulator knob and the H-FLP instrument (not yet run)
 
 `backtest._simulate_forward` gains `exit_params["flip_at"]` (default absent = off): a position

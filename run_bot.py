@@ -737,6 +737,14 @@ def run_cycle():
                 ) or [])
             opp_positions = [p for p in get_open_positions("futures") if p["type"] == opp_dir]
             flipped = False
+            if opp_positions:
+                # Flip shadow (agents/flip_shadow.py, H-FLP-C): Claude says FLIP or HOLD
+                # BEFORE the close below. Logged, never acted on, background thread.
+                try:
+                    from agents.flip_shadow import run_flip_shadow
+                    run_flip_shadow(opp_positions, futures_signal, background=True)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("flip shadow skipped: %s", e)
 
             for opp in opp_positions:
                 entry = opp["entry_price"]

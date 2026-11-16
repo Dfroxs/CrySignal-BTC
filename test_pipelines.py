@@ -5720,6 +5720,92 @@ def test_flip_instrument_months_ci_and_verdict_follow_the_prereg():
     assert v(0.1, 0.02, 4, 29, [1.0, 2.0]) == "INCONCLUSIVE", "fewer than 30 flips: underpowered"
 
 
+def test_flip_shadow_asks_before_the_flip_logs_one_row_and_never_raises():
+    """H-FLP-C: one FLIP/HOLD opinion per opposite position, built from the exit-shadow
+    facts plus the opposite signal; a provider failure is a stored error, not an exception;
+    nothing is asked without a position, a price or a provider."""
+    import types
+    import agents.flip_shadow as fs
+    pos = {"id": 15, "mode": "futures", "type": "SELL", "entry_price": 75000.0,
+           "stop_loss": 76500.0, "take_profit": 72000.0, "tp2": 69000.0, "atr": 400.0,
+           "opened_at": "2026-11-08T23:01:02+00:00", "partial_closed": 0}
+    sig = {"type": "BUY", "entry_price": 74900.0, "stop_loss": 73900.0, "take_profit": 76900.0,
+           "strength": 6.4, "_threshold": 5.2, "confidence": "NORMAL", "mode": "futures",
+           "buy_score": 6.4, "sell_score": 1.0, "atr": 400.0}
+    ctx = fs.build_flip_context(pos, sig)
+    o = ctx["opposite_signal"]
+    assert o["side"] == "BUY" and o["strength"] == 6.4 and o["confidence"] == "NORMAL"
+    assert o["stop_vs_price_pct"] < 0 < o["target_vs_price_pct"], o
+    assert ctx["position"]["side"] and "exit_rules" in ctx
+    assert fs.parse_flip_opinion('{"verdict":"HOLD","confidence":60,"reason":"x"}')["verdict"] == "HOLD"
+    for bad in ('{"verdict":"CLOSE","confidence":60}', '{"verdict":"FLIP","confidence":160}', "nope"):
+        try:
+            fs.parse_flip_opinion(bad)
+            raise AssertionError(f"accepted {bad!r}")
+        except ValueError:
+            pass
+    rows = []
+    reply = types.SimpleNamespace(text='{"verdict":"FLIP","confidence":70,"reason":"ok"}',
+                                  model="m", input_tokens=10, output_tokens=5)
+    n = fs.run_flip_shadow([pos], sig, providers=("anthropic",), ask_fn=lambda *a, **k: reply,
+                           log_fn=rows.append)
+    assert n == 1 and len(rows) == 1 and rows[0]["verdict"] == "FLIP" and rows[0]["error"] is None
+    assert rows[0]["position_id"] == 15 and rows[0]["new_side"] == "BUY" and rows[0]["price"] == 74900.0
+
+    def boom(*a, **k):
+        raise RuntimeError("api down")
+    rows.clear()
+    fs.run_flip_shadow([pos], sig, providers=("anthropic",), ask_fn=boom, log_fn=rows.append)
+    assert len(rows) == 1 and rows[0]["verdict"] is None and "api down" in rows[0]["error"]
+    assert fs.run_flip_shadow([], sig, providers=("anthropic",), ask_fn=boom, log_fn=rows.append) == 0
+    assert fs.run_flip_shadow([pos], sig, providers=(), ask_fn=boom, log_fn=rows.append) == 0
+    assert fs.run_flip_shadow([pos], dict(sig, entry_price=None), providers=("anthropic",),
+                              ask_fn=boom, log_fn=rows.append) == 0
+
+
+def test_flip_opinions_table_and_run_bot_hook_precede_the_close():
+    """The opinion is stored through history, and run_bot asks BEFORE it closes the opposite
+    position (the answer can never depend on the close)."""
+    history, saved, path = _temp_history_db()
+    try:
+        con = history._conn()
+        cols = {r[1] for r in con.execute("PRAGMA table_info(shadow_flip_opinions)")}
+        assert set(history._FLIP_COLS) <= cols, set(history._FLIP_COLS) - cols
+        history.log_flip_opinion({"timestamp": "2026-11-16T10:01:00", "position_id": 1,
+                                  "provider": "anthropic", "verdict": "HOLD"})
+        assert con.execute("SELECT verdict FROM shadow_flip_opinions").fetchone()[0] == "HOLD"
+    finally:
+        _restore_history_db(history, saved, path)
+    src = open("run_bot.py").read()
+    assert src.index("run_flip_shadow(opp_positions") < src.index("for opp in opp_positions:")
+
+
+def test_flip_shadow_eval_value_verdict_and_replay_follow_the_prereg():
+    """H-FLP-C scoring: value = pnl(chosen branch) - pnl(other); verdict needs 20 events,
+    a positive mean and a CI above zero."""
+    import numpy as np
+    import pandas as pd
+    import scripts.flip_shadow_eval as e
+    closes = [1000.0, 1000, 995, 990, 985, 980, 975, 970, 965, 960] + [900.0] * 90
+    df = _exit_fixture(closes, atr=10.0)
+    df.index = pd.date_range("2026-01-01 00:00", periods=len(closes), freq="h")
+    held = {"type": "BUY", "entry_price": 1000.0, "stop_loss": 940.0, "take_profit": 1100.0,
+            "tp2": 1200.0, "atr": 10.0, "opened_at": "2026-01-01T01:01:00+00:00"}
+    assert e.bar_index(df, "2026-01-01T01:01:00+00:00") == 0, "scored bar = the one that just closed"
+    assert e.bar_index(df, "2026-01-01 06:01:00") == 5
+    hold = e.replay(df, 0, held)
+    flipped = e.replay(df, 0, held, flip_at=4)
+    assert flipped > hold and flipped < 0, (flipped, hold)
+    ev = lambda v, new=None: e.event_value(df, held, new, v, "2026-01-01 05:01:00")
+    assert abs(ev("FLIP") - (flipped - hold)) < 1e-9 and abs(ev("HOLD") + (flipped - hold)) < 1e-9
+    assert e.event_value(df, held, None, "HOLD", "2026-01-01 01:01:00") is None, "flip bar must follow entry"
+    assert e.verdict_of([1.0] * 19)[0] == "INCONCLUSIVE"
+    assert e.verdict_of([1.0] * 25)[0] == "PASS"
+    assert e.verdict_of([-1.0] * 25)[0] == "FAIL"
+    assert e.verdict_of(list(np.r_[np.ones(12), -np.ones(12)]))[0] == "FAIL"
+    assert e.verdict_of(list(np.r_[np.ones(13) * 0.5, -np.ones(12) * 0.4]))[0] == "INCONCLUSIVE"
+
+
 def test_send_signal_alert_survives_a_formatter_error():
     """A formatter exception used to propagate into run_bot's Phase 4 and skip the
     position-open/close messages queued after the hourly card."""
@@ -6145,6 +6231,9 @@ if __name__ == "__main__":
     run("H-FLP flip_at knob, off when absent",     test_flip_at_closes_at_the_bar_close_after_its_own_stops_and_is_off_when_absent)
     run("H-FLP sequence: flip vs skip vs gate",   test_flip_sequence_baseline_flips_and_candidate_skips_the_opposite_signal)
     run("H-FLP months, CI, verdict per prereg",   test_flip_instrument_months_ci_and_verdict_follow_the_prereg)
+    run("H-FLP-C flip shadow: ask, log, no raise",  test_flip_shadow_asks_before_the_flip_logs_one_row_and_never_raises)
+    run("H-FLP-C table + hook precede the close",   test_flip_opinions_table_and_run_bot_hook_precede_the_close)
+    run("H-FLP-C eval: value, verdict, replay",     test_flip_shadow_eval_value_verdict_and_replay_follow_the_prereg)
     run("basis own checkpoint, no stale reason", test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason)
 
     print(f"\n{'══' * 20}")
