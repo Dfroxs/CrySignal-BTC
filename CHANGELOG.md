@@ -4,6 +4,21 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-16 — results: H-V1 rel_ic_dir PASS, H-S PASS (thin), H-X INCONCLUSIVE, H-V2 descriptive
+
+`docs/superpowers/specs/2026-11-16-run3-futures-results.md`, scored after the futures
+gate (2026-11-16 00:00 UTC) from a fresh VPS snapshot. H-V1: `rel_ic_dir` +0.126
+[+0.046, +0.211] PASS, `rel_engine_dir` -0.090 FAIL; the passing variant's own IC is +0.023
+(CI spans 0), so "less wrong than base", not predictive. H-V2: 7 trades per book,
+descriptive, fidelity 5/10 unmatched annotated (3 flip artefacts under the 11-10 amendment,
+2 macro-close by my reading, stated in the doc). H-S: +3.206pp [+2.015, +4.425] PASS by the
+registered rule, but the 20 AGREE opinions are about 4-6 episodes and the 24h descriptive
+statistic does not show it. H-X: 12 positions, +0.761pp [-0.577, +1.916] INCONCLUSIVE.
+No config or live code change; `rel_ic_dir` and a Claude veto gate become run-4 backlog
+candidates needing their own pre-registrations.
+
+---
+
 ## 2026-11-10 — docs: pre-registration H-TRL (futures trail)
 
 `docs/superpowers/specs/2026-11-10-futures-trail-prereg.md`, written before any figure.

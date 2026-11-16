@@ -1,0 +1,33 @@
+{
+ "results": {
+  "anthropic": {
+   "n_agree": 20,
+   "n_disagree": 93,
+   "mean_agree": 2.835,
+   "mean_disagree": -0.37061290322580637,
+   "diff": 3.2056129032258065,
+   "ci": [
+    2.014582231182796,
+    4.4254220161290325
+   ],
+   "verdict": "PASS"
+  }
+ },
+ "descriptive_24h": {
+  "anthropic": {
+   "n_agree": 20,
+   "n_disagree": 94,
+   "mean_agree": 0.10124868286225999,
+   "mean_disagree": -0.20971120110868896,
+   "diff": 0.310959883970949,
+   "ci": [
+    -0.512942609672792,
+    1.1516520519181939
+   ],
+   "verdict": "INCONCLUSIVE"
+  }
+ },
+ "errors": {
+  "anthropic": 0
+ }
+}

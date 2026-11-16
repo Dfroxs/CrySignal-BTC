@@ -1,0 +1,2 @@
+data/snap_futures.db  scored opinions=328  errors={'anthropic': 0}
+anthropic  positions=12 opinions=328 CLOSE share=0.10670731707317073 mean value=0.7614285853658538 CI=[-0.5768442382433356, 1.9156298945336272] → INCONCLUSIVE

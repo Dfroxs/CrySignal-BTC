@@ -1,0 +1,55 @@
+{
+ "start": "2026-10-09 12:34:20",
+ "cycle_health": {
+  "cycles": 915,
+  "variants_null_share": 0.0,
+  "funding_placeholder_share": 0.0,
+  "discard": false
+ },
+ "positions_opened": {
+  "futures": 11,
+  "spot": 5
+ },
+ "signal_blocks": {
+  "already_open": 49,
+  "breakout_chase": 1,
+  "confidence_first": 17,
+  "fakeout_first": 3,
+  "flip_unprofitable": 1,
+  "psy_sl_first": 3,
+  "pyramid_confidence": 11,
+  "pyramid_min_distance": 5,
+  "reentry_first": 3,
+  "regime_bearish": 24,
+  "regime_counter": 5,
+  "sr_first": 7,
+  "stale_cache": 213
+ },
+ "shadow": {
+  "shadow_opinions": {
+   "anthropic": {
+    "calls": 145,
+    "errors": 0,
+    "discard": false
+   },
+   "deepseek": {
+    "calls": 29,
+    "errors": 5,
+    "discard": false
+   }
+  },
+  "shadow_exit_opinions": {
+   "anthropic": {
+    "calls": 441,
+    "errors": 0,
+    "discard": false
+   },
+   "deepseek": {
+    "calls": 113,
+    "errors": 2,
+    "discard": false
+   }
+  }
+ },
+ "discard": false
+}

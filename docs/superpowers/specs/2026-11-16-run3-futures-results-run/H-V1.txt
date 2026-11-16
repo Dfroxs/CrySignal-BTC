@@ -1,0 +1,29 @@
+data/snap_futures.db  futures  2026-10-17 15:00:00 → 2026-11-16 15:00:00  cycles=721
+health: variants NULL 0.0% (≤5%), funding placeholder 0.0% (≤10%)
+
+H-L  field IC vs fwd 24h
+  H-L1 basis_pct  IC=+0.170  [+0.051, +0.282]  n=697  → PASS
+  H-L2 ls_ratio   IC=-0.066  [-0.312, +0.213]  n=697  → INCONCLUSIVE
+
+H-V1 IC(variant net) − IC(base net), paired
+  rel_engine_dir  Δ=-0.090  [-0.140, -0.031]  n=697  → FAIL
+  rel_ic_dir      Δ=+0.126  [+0.046, +0.211]  n=697  → PASS
+
+descriptive (never a criterion): every field and book, IC vs fwd 24h
+  funding_rate         IC=+0.233  [+0.061, +0.385]  n=697
+  ls_ratio             IC=-0.066  [-0.312, +0.213]  n=697
+  oi_change            IC=+0.097  [+0.037, +0.156]  n=697
+  basis_pct            IC=+0.170  [+0.051, +0.282]  n=697
+  taker_ratio          IC=+0.016  [-0.050, +0.074]  n=697
+  fear_greed           IC=+0.124  [-0.126, +0.364]  n=697
+  dxy_change           IC=-0.102  [-0.285, +0.098]  n=697
+  sp500_change         IC=-0.163  [-0.381, +0.078]  n=697
+  vix_change           IC=+0.139  [-0.075, +0.328]  n=656
+  gold_change          IC=-0.237  [-0.494, -0.030]  n=482
+  btc_dom              IC=-0.123  [-0.309, +0.090]  n=697
+  stablecoin_b         IC=+0.309  [+0.072, +0.526]  n=697
+  net_base             IC=-0.103  [-0.264, +0.052]  n=697
+  net_rel_engine_dir   IC=-0.193  [-0.345, -0.034]  n=697
+  net_rel_ic_dir       IC=+0.023  [-0.120, +0.150]  n=697
+
+written → docs/superpowers/specs/2026-11-16-run3-futures-results-run/live_ic_hv1.json
