@@ -5612,6 +5612,52 @@ def test_scanner_eval_excess_day_unit_verdict_and_leakage():
     assert e.verdict_of(noisy, 500, 0.0)[0] == "INCONCLUSIVE"
 
 
+def test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel():
+    import os
+    import sqlite3
+    import tempfile
+    from datetime import UTC, datetime
+    from agents import dashboard as dsh
+    h, saved, path = _temp_history_db()
+    try:
+        con = h._conn()
+        con.execute("INSERT INTO cycle_log (timestamp, mode, type, price, strength, threshold, "
+                    "funding_rate) VALUES ('2026-11-16 15:01:02', 'futures', 'HOLD', 65000, 4.2, 5.1, 0)")
+        con.execute("INSERT INTO paper_positions (type, entry_price, stop_loss, take_profit, "
+                    "opened_at, mode) VALUES ('SELL', 66000, 67000, 64000, '2026-11-16T10:01:00+00:00', 'futures')")
+        con.execute("INSERT INTO paper_positions (type, entry_price, stop_loss, take_profit, opened_at, "
+                    "closed_at, outcome, pnl_pct, mode) VALUES ('BUY', 60000, 59000, 62000, "
+                    "'2026-11-01 01:01:00', '2026-11-02 02:00:00', "
+                    "'WIN', 3.5, 'spot')")
+        con.commit()
+        before = os.path.getmtime(path), os.path.getsize(path)
+        run = lambda cmd: "active"
+        now = datetime(2026, 11, 16, 15, 30, tzinfo=UTC)
+        f = dsh.collect(dsh.ROOT, path, os.path.join(tempfile.mkdtemp(), "none.db"), now, run)
+        assert f["db"]["last_cycle_age_min"] == 29.0 and f["db"]["futures_blind_24h"] == 1
+        op = f["db"]["open"][0]
+        assert abs(op["move_pct"] - (66000 - 65000) / 66000 * 100) < 1e-9, "SELL gains when price falls"
+        assert f["db"]["totals"]["spot"] == {"n": 1, "sum": 3.5, "win": 100}
+        assert f["scanner"] is None and f["host"]["services"]["spotsignal-qa"] == "active"
+        page = dsh.render(f)
+        assert "Posisi terbuka" in page and "+3.50pp" in page and "<script" not in page
+        assert (os.path.getmtime(path), os.path.getsize(path)) == before, "the dashboard wrote to the DB"
+        try:
+            sqlite3.connect(f"file:{path}?mode=ro", uri=True).execute("DELETE FROM cycle_log")
+        except sqlite3.OperationalError:
+            pass
+        else:
+            raise AssertionError("mode=ro did not refuse a write")
+        broken = dsh.collect(dsh.ROOT, "/nonexistent/x.db", "/nonexistent/s.db", now, run)
+        assert broken["db"] is None and any(e.startswith("db:") for e in broken["errors"])
+        assert "class=err" in dsh.render(broken), "a broken panel is shown, not raised"
+    finally:
+        _restore_history_db(h, saved, path)
+    src = open("agents/dashboard.py").read()
+    assert '("127.0.0.1", args.port)' in src and "0.0.0.0" not in src
+    assert "run_bot" not in src.replace("run_bot.py", "") and "import trading" not in src
+
+
 def test_send_signal_alert_survives_a_formatter_error():
     """A formatter exception used to propagate into run_bot's Phase 4 and skip the
     position-open/close messages queued after the hourly card."""
@@ -6031,6 +6077,7 @@ if __name__ == "__main__":
     run("H-SC scanner: closed bars, numbers only",  test_scanner_snapshot_uses_closed_bars_and_passes_numbers_only)
     run("H-SC scanner: store, dedupe, error row",   test_scanner_run_once_stores_dedupes_and_logs_a_failure_as_data)
     run("H-SC eval: excess, days, verdict, leak",   test_scanner_eval_excess_day_unit_verdict_and_leakage)
+    run("dashboard: read-only, local, no blank",    test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel)
     run("basis own checkpoint, no stale reason", test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason)
 
     print(f"\n{'══' * 20}")

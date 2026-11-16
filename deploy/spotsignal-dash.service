@@ -1,0 +1,22 @@
+# Read-only VPS dashboard (agents/dashboard.py). USER unit — no sudo:
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/spotsignal-dash.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now spotsignal-dash
+# Binds 127.0.0.1:8080 only. From your own machine:
+#   ssh -N -L 8080:localhost:8080 dmonk@<vps>     then open http://localhost:8080
+[Unit]
+Description=SpotSignal read-only dashboard (127.0.0.1:8080)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/playground/CrySignal-BTC
+ExecStart=%h/playground/CrySignal-BTC/venv/bin/python -m agents.dashboard --port 8080
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=30
+MemoryMax=150M
+Nice=10
+
+[Install]
+WantedBy=default.target
