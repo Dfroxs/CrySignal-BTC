@@ -6011,6 +6011,10 @@ def test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel():
         book = f["db"]["totals"]["spot"]
         assert (book["n"], book["sum"], book["win"], book["max_dd"]) == (1, 3.5, 100, 0.0) and abs(book["hold_h"] - 24.98) < 0.01
         assert f["db"]["curve"]["spot"][0][1] == 0.0, "the curve starts from zero"
+        ac = f["db"]["account"]
+        assert abs(ac["realised"] - 1003.5) < 1e-9, "10% of 1,000 USD earning +3.5%"
+        assert abs(ac["used"] - 100.35) < 1e-9, "the open position sized on equity at its open"
+        assert abs(ac["upnl"] - op["move_pct"] / 100 * 100.35) < 1e-9 and ac["curve"][0][1] == 1000
         assert f["scanner"] is None and f["host"]["services"]["Q&A"] == "active"
         page = dsh.render(f)
         assert "Semua berjalan normal" not in page, "a blind futures cycle is an issue"

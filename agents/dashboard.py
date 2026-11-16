@@ -108,6 +108,32 @@ _LAST = ("ts", "type", "price", "buy", "sell", "strength", "threshold", "gap", "
          "gold_chg", "btc_dom", "stable", "news", "rsi", "atr", "ema200", "htf", "reasons", "open")
 
 
+ACCOUNT_START_USD, ACCOUNT_FRACTION = 1000.0, 0.10   # the scanner's demo-account rule
+
+
+def usd_account(closed, open_, start=ACCOUNT_START_USD, frac=ACCOUNT_FRACTION):
+    """Translate a book kept in percent into a USD account: each position is `frac` of the
+    realised equity at the moment it opened. Display only; nothing is traded or stored.
+    `closed` items need opened_at, closed_at, pnl_pct; `open_` items opened_at, move_pct."""
+    events = sorted([(_dt(c["opened_at"]), 0, i, "c") for i, c in enumerate(closed)] +
+                    [(_dt(c["closed_at"]), 1, i, "c") for i, c in enumerate(closed)] +
+                    [(_dt(o["opened_at"]), 0, i, "o") for i, o in enumerate(open_)],
+                    key=lambda x: (x[0] or datetime.min.replace(tzinfo=UTC), x[1]))
+    realised, size, curve = start, {}, []
+    for t, kind, i, src in events:
+        if kind == 0:
+            size[(src, i)] = realised * frac
+            if not curve and t:
+                curve.append((t.timestamp(), start))
+        else:
+            realised += closed[i]["pnl_pct"] / 100 * size.get(("c", i), start * frac)
+            curve.append((t.timestamp(), round(realised, 2)))
+    upnl = sum((o.get("move_pct") or 0) / 100 * size.get(("o", i), 0) for i, o in enumerate(open_))
+    used = sum(size.get(("o", i), 0) for i in range(len(open_)))
+    return {"start": start, "realised": realised, "upnl": upnl, "equity": realised + upnl,
+            "used": used, "cash": realised - used, "curve": curve}
+
+
 def _book(rows):
     """Statistics of closed positions [(opened, closed, pnl, outcome)] in closing order."""
     pn = [r[2] for r in rows]
@@ -191,6 +217,7 @@ def db_facts(db, now, run_start=None):
         if run_start:
             closed = [c for c in closed if (_dt(c["opened_at"]) or now) >= run_start]
         f["closed_recent"] = closed[::-1][:CLOSED_ROWS]
+        f["account"] = usd_account([c for c in closed if c["pnl_pct"] is not None], f["open"])
         f["curve"], f["totals"] = {}, {}
         for mode in ("spot", "futures"):
             rows = [(_dt(c["opened_at"]), _dt(c["closed_at"]), c["pnl_pct"], c["outcome"])
@@ -725,11 +752,13 @@ def _overview(s, d):
     bk = (s or {}).get("book")
     tot = d.get("totals") or {}
     fu, sp = tot.get("futures") or {}, tot.get("spot") or {}
+    ac = d.get("account")
     P = ['<div class="cols books">']
     P.append('<a class="panel book" href="#btc" data-tab="btc"><h3>Bot BTC <span>paper run, diuji hipotesis</span></h3>'
              '<dl class="kv">'
-             f'<div><dt>Futures</dt><dd>{_pnl(fu.get("sum"), 2, " pp")}<small>{fu.get("n", 0)} posisi</small></dd></div>'
-             f'<div><dt>Spot</dt><dd>{_pnl(sp.get("sum"), 2, " pp")}<small>{sp.get("n", 0)} posisi</small></dd></div>'
+             + (f'<div><dt>Ekuitas</dt><dd>${_n(ac["equity"])}<small>'
+                f'{_pnl((ac["equity"] / ac["start"] - 1) * 100, 2, "%")}</small></dd></div>' if ac else "")
+             + f'<div><dt>Futures / spot</dt><dd>{_pnl(fu.get("sum"), 1, " pp")} / {_pnl(sp.get("sum"), 1, " pp")}</dd></div>'
              f'<div><dt>Terbuka</dt><dd>{len(d.get("open") or [])}</dd></div></dl></a>')
     if bk:
         ret = (bk["equity"] / bk["start"] - 1) * 100
@@ -924,6 +953,20 @@ def render(f):
         tail = (f" Terakhir ditutup: #{lc['id']} {lc['mode']} {lc['type']}, {lc['outcome']}, "
                 f"{_n(lc['pnl_pct'], 2, True)}% ({_ago(now, _dt(lc['closed_at']))}).") if lc else ""
         P.append(f'<p class="empty">Tidak ada posisi terbuka.{e(tail)}</p>')
+    ac = d.get("account")
+    if ac:
+        ret = (ac["equity"] / ac["start"] - 1) * 100
+        kv = [("Ekuitas", f'${_n(ac["equity"])}<small>{_pnl(ret, 2, "%")}</small>'),
+              ("Terealisasi", _pnl(ac["realised"] - ac["start"], 2, " USD")),
+              ("Mengambang", _pnl(ac["upnl"], 2, " USD")),
+              ("Kas bebas", f'${_n(ac["cash"])}<small>${_n(ac["used"])} di posisi</small>')]
+        P.append('<h3 style="margin-top:22px">Akun $1.000</h3><p class="note" style="margin-top:0">'
+                 'Posisi bot yang sama, diterjemahkan ke dolar dengan aturan akun scanner: tiap posisi '
+                 '10% dari ekuitas terealisasi saat dibuka, spot dan futures dalam satu akun. Hanya '
+                 'tampilan; bot tidak diubah.</p><div class="cols"><div><dl class="kv">'
+                 + "".join(f"<div><dt>{k}</dt><dd>{v}</dd></div>" for k, v in kv) + "</dl></div><div>"
+                 + chart([{"n": "", "c": "var(--ink)", "p": ac["curve"]}], width=560, height=170,
+                         y_fmt="{:,.0f}", label="ekuitas akun BTC") + "</div></div>")
     since = man.get("started_at")
     P.append(f'<h3 style="margin-top:22px">Kinerja buku{f" sejak run dimulai {_t(since)}" if since else ""}</h3>'
              + _book_table(d.get("totals") or {}))

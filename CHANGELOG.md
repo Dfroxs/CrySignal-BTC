@@ -14,6 +14,10 @@ held coin is ignored, opposite or not), entry at the bar close, stop 1.5 x ATR(1
 only if free cash covers it). `run_once` walks open positions through the newly
 closed bars before asking, and opens after storing the picks; a book failure is logged and
 never costs a scan. The model never sees the book, so H-SC is unchanged (prereg addendum).
+The BTC bot is also shown as a 1,000 USD account (owner's choice: the scanner's rule), display
+only: its run-3 positions, spot and futures in one account, each sized at 10% of realised
+equity when it opened (`dashboard.usd_account`). Live at the time: 1,001.81 USD (+0.18%), 16
+closed positions. The bot, its sizing and its percent P&L are unchanged.
 Dashboard in tabs (owner: "urutannya kacau, gunakan tab"): status, health and a two-book
 summary stay on top; below, tabs "Scanner 9 koin" (demo account, open positions, nine coins,
 account history, H-SC progress), "Bot BTC" (distance to signal, positions, market, macro,
