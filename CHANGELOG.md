@@ -4,6 +4,24 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-17 — feat: Claude multi-coin scanner (H-SC), log-only, not deployed
+
+Pre-registered first (`2026-11-17-claude-scanner-prereg.md`, `72b218e`). `agents/scanner.py`:
+once an hour (cron `:05`) Claude Opus 5.5 gets numbers only for nine USD-M perps (BTC, ETH,
+SOL, BNB, XRP, DOGE, ADA, LINK, AVAX: returns, ATR, volume, EMA50/200, 24h range, funding,
+basis, OI change, L/S, taker ratio, return vs universe) on closed 1h bars and answers
+LONG/SHORT/NONE per coin. Stored in its own `data/scanner.db` (exact prompt kept per cycle,
+one row per bar, a model failure is an error row); cost into `data/llm_usage.jsonl` so the
+ops report's budget counts it. Separate process: run_bot and the trading path never import
+it, so deploying it restarts no window. `scripts/scanner_eval.py` scores H-SC: excess return
+vs the universe mean in the chosen direction, day as the unit, 7-day block bootstrap,
+PASS needs 90 days and 300 picks. Three tests (318/318). Smoke on the VPS from `/tmp` (bot,
+repo and DB untouched): all nine coins and every field fetched; one real call, 7.8 s,
+2,994 in / 558 out tokens, $0.023 (about $17/month hourly, half the prereg's estimate).
+
+
+---
+
 ## 2026-10-17 — feat(config): futures runs without the three anti-chase vetoes (design decision)
 
 Owner design decision for data yield, not a test result. `config.VETOES_DISABLED["futures"]`
