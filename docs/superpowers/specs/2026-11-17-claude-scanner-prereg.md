@@ -118,7 +118,8 @@ error-free opinion after deployment.
 Owner's decision, for data yield: every LONG/SHORT pick now also opens a **demo** position in
 `scan_positions` (`data/scanner.db`), one per coin, entry at the decision bar's close, stop
 1.5 x ATR(1h), target 3 x ATR, closed at the close 24h after entry, a bar touching both
-levels counted as the stop, 0.20pp round trip, 100 USD notional. Fixed before any position
+levels counted as the stop, 0.20pp round trip. A 1,000 USD demo account (owner): each position is 10% of realised
+equity at entry, opened only if the free cash covers it. Fixed before any position
 existed. The model never sees the book, so the picks H-SC scores are unchanged, and **H-SC's
 criteria, statistic and dates are unchanged**: it is still scored on `excess` per day from
 `scan_picks`, never on this book. The book's P&L is reported beside H-SC and licenses nothing.

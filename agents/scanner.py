@@ -255,6 +255,7 @@ def connect(path=DB_PATH):
             exit        REAL,
             outcome     TEXT,                    -- STOP / TARGET / TIME
             pnl_pct     REAL,                    -- after BOOK_COST_PP
+            size_usd    REAL,                    -- BOOK_FRACTION of realised equity at entry
             pnl_usd     REAL
         );
         CREATE INDEX IF NOT EXISTS idx_scan_pos_open ON scan_positions(coin, closed_bar);
@@ -266,11 +267,23 @@ def connect(path=DB_PATH):
 # Design decision for data yield (owner 2026-11-16), fixed before any result: every
 # LONG/SHORT pick opens one position per coin at the bar close; stop 1.5 x ATR(1h), target
 # 3 x ATR, closed at the close of the bar 24h after entry; a bar touching both levels counts
-# as the stop. The model never sees this book, so H-SC's picks are unaffected by it.
+# as the stop. A 1,000 USD demo account: each position is 10% of realised equity (it
+# compounds), opened only if the cash not already in positions covers it. The model never
+# sees this book, so H-SC's picks are unaffected by it.
 
 BOOK_STOP_ATR, BOOK_TARGET_ATR, BOOK_HOLD_H = 1.5, 3.0, 24
 BOOK_COST_PP = 0.20                  # futures round trip, as the H-SC prereg's net figure
-BOOK_NOTIONAL_USD = 100.0            # of a 1,000 USD virtual account, one slot per coin
+BOOK_START_USD = 1000.0              # owner, 2026-11-16
+BOOK_FRACTION = 0.10                 # of realised equity per position; 9 coins fit in 90%
+
+
+def book_account(con):
+    """(realised equity, USD tied up in open positions)."""
+    real = con.execute("SELECT COALESCE(SUM(pnl_usd), 0) FROM scan_positions "
+                       "WHERE closed_bar IS NOT NULL").fetchone()[0]
+    used = con.execute("SELECT COALESCE(SUM(size_usd), 0) FROM scan_positions "
+                       "WHERE closed_bar IS NULL").fetchone()[0]
+    return BOOK_START_USD + real, used
 
 
 def book_levels(side, entry, atr_pct):
@@ -279,19 +292,19 @@ def book_levels(side, entry, atr_pct):
     return entry - d * BOOK_STOP_ATR * a, entry + d * BOOK_TARGET_ATR * a
 
 
-def _close_pos(con, pid, side, entry, bar_close_ms, exit_px, outcome):
+def _close_pos(con, pid, side, entry, size, bar_close_ms, exit_px, outcome):
     d = 1 if side == "LONG" else -1
     pct = d * (exit_px / entry - 1) * 100 - BOOK_COST_PP
     con.execute("UPDATE scan_positions SET closed_bar=?, exit=?, outcome=?, pnl_pct=?, pnl_usd=? "
                 "WHERE id=?", (_iso(bar_close_ms), exit_px, outcome, round(pct, 4),
-                               round(pct / 100 * BOOK_NOTIONAL_USD, 4), pid))
+                               round(pct / 100 * size, 4), pid))
 
 
 def manage_book(con, snap):
     """Walk every open position through the closed bars after its entry. Returns closes."""
     closed = 0
-    for pid, coin, side, opened, entry, stop, target in con.execute(
-            "SELECT id, coin, side, opened_bar, entry, stop, target FROM scan_positions "
+    for pid, coin, side, opened, entry, stop, target, size in con.execute(
+            "SELECT id, coin, side, opened_bar, entry, stop, target, size_usd FROM scan_positions "
             "WHERE closed_bar IS NULL").fetchall():
         f = snap["coins"].get(coin)
         if not f:
@@ -305,30 +318,37 @@ def manage_book(con, snap):
             hit_stop = lo <= stop if side == "LONG" else hi >= stop
             hit_tgt = hi >= target if side == "LONG" else lo <= target
             if hit_stop or hit_tgt:
-                _close_pos(con, pid, side, entry, end, stop if hit_stop else target,
+                _close_pos(con, pid, side, entry, size, end, stop if hit_stop else target,
                            "STOP" if hit_stop else "TARGET")
                 closed += 1
                 break
             if end >= deadline:
-                _close_pos(con, pid, side, entry, end, cl, "TIME")
+                _close_pos(con, pid, side, entry, size, end, cl, "TIME")
                 closed += 1
                 break
     return closed
 
 
 def open_book(con, cid, picks, snap, bar_close_ms):
-    """One position per coin: a pick for a coin already held is ignored."""
+    """One position per coin: a pick for a coin already held is ignored, and one the free cash
+    cannot cover is skipped. Size = BOOK_FRACTION of realised equity."""
     held = {r[0] for r in con.execute("SELECT coin FROM scan_positions WHERE closed_bar IS NULL")}
+    equity, used = book_account(con)
+    size = round(equity * BOOK_FRACTION, 2)
     opened = 0
     for coin, p in picks.items():
         f = snap["coins"].get(coin)
         if p["side"] == "NONE" or coin in held or not f or not f.get("atr_pct"):
             continue
+        if size <= 0 or used + size > equity:
+            logger.info("book: no cash for %s (%.2f used of %.2f)", coin, used, equity)
+            continue
         stop, target = book_levels(p["side"], f["close"], f["atr_pct"])
         con.execute("INSERT INTO scan_positions (coin, side, cycle_id, confidence, opened_bar, "
-                    "entry, stop, target, atr_pct) VALUES (?,?,?,?,?,?,?,?,?)",
+                    "entry, stop, target, atr_pct, size_usd) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (coin, p["side"], cid, p["confidence"], _iso(bar_close_ms), f["close"],
-                     stop, target, f["atr_pct"]))
+                     stop, target, f["atr_pct"], size))
+        used += size
         opened += 1
     return opened
 
