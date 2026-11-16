@@ -4,6 +4,57 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-17 — feat: dashboard redesign, more information (owner: "jelek sekali, lengkapi")
+
+`agents/dashboard.py` rewritten around one question per section. Opens with a plain-words
+verdict ("Semua berjalan normal." or the list of what needs a look) and a status strip
+(bot uptime, Q&A, cycle age, futures data, RAM, disk, backup age, log errors). Hero: BUY and
+SELL score against the threshold per mode, with a sentence saying why nothing fired, plus 72h
+score charts. Added: book statistics since the run started (profit factor, drawdown, average
+win/loss, hold time, outcomes), P&L curves from zero, BTC 7-day price with entries and exits,
+the market fields the engine read (funding, basis, L/S, OI, taker, F&G, RSI, EMA200 distance,
+HTF, DXY, S&P, VIX, gold, BTC.D, stablecoins, news), the score reasons, the macro agenda with
+countdown (flags the 2h close window), gate blocks 24h/7d, Claude 7-day verdict counts,
+run facts (start, futures restart, running commit vs run commit). Colour encodes direction
+(BUY blue, SELL orange, validated for colour-vision deficiency in light and dark), charts have
+a hover crosshair, Barlow / Barlow Condensed type, responsive to phone width. Still read-only,
+localhost-only, no trading-path import. Test updated (319/319).
+
+---
+
+## 2026-11-17 — feat: read-only VPS dashboard (not deployed)
+
+`agents/dashboard.py`, standard library only, bound to 127.0.0.1:8080 and reached through an
+SSH tunnel (`ssh -N -L 8080:localhost:8080 dmonk@<vps>`). One page, reloads every 5 minutes:
+services, last-cycle age, blind futures cycles, RAM, disk, DB size, latest backup; last cycle
+per mode (score vs threshold, funding, basis); open positions with their raw move; cumulative
+closed P&L per mode (inline SVG); recent closes; gate blocks over 24h; latest Claude entry,
+exit and flip opinions; the scanner's newest picks and its progress toward H-SC's 90 days /
+300 picks; LLM cost (same figures as the ops report). Every DB is opened `mode=ro`, a failing
+panel shows an error box instead of blanking the page, nothing from the trading path is
+imported, so it restarts no window. User unit `deploy/spotsignal-dash.service` (150 MB cap).
+Rendered once on the VPS from `/tmp` against the live DB. One test (319/319).
+
+---
+
+## 2026-11-17 — feat: Claude multi-coin scanner (H-SC), log-only, not deployed
+
+Pre-registered first (`2026-11-17-claude-scanner-prereg.md`, `72b218e`). `agents/scanner.py`:
+once an hour (cron `:05`) Claude Opus 5.5 gets numbers only for nine USD-M perps (BTC, ETH,
+SOL, BNB, XRP, DOGE, ADA, LINK, AVAX: returns, ATR, volume, EMA50/200, 24h range, funding,
+basis, OI change, L/S, taker ratio, return vs universe) on closed 1h bars and answers
+LONG/SHORT/NONE per coin. Stored in its own `data/scanner.db` (exact prompt kept per cycle,
+one row per bar, a model failure is an error row); cost into `data/llm_usage.jsonl` so the
+ops report's budget counts it. Separate process: run_bot and the trading path never import
+it, so deploying it restarts no window. `scripts/scanner_eval.py` scores H-SC: excess return
+vs the universe mean in the chosen direction, day as the unit, 7-day block bootstrap,
+PASS needs 90 days and 300 picks. Three tests (318/318). Smoke on the VPS from `/tmp` (bot,
+repo and DB untouched): all nine coins and every field fetched; one real call, 7.8 s,
+2,994 in / 558 out tokens, $0.023 (about $17/month hourly, half the prereg's estimate).
+
+
+---
+
 ## 2026-10-17 — feat(config): futures runs without the three anti-chase vetoes (design decision)
 
 Owner design decision for data yield, not a test result. `config.VETOES_DISABLED["futures"]`
