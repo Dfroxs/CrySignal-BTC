@@ -111,6 +111,66 @@ a statement that vetoing beats the gates already in place.
 - The original 24h-return statistic, reported as descriptive and never a criterion, does
   not show it: AGREE +0.101 vs DISAGREE -0.210, difference +0.311, CI [-0.513, +1.152].
 
+### H-S, descriptive follow-up: episodes instead of opinions (added 2026-11-16, after the verdict)
+
+`scripts/shadow_cluster.py`, output in `2026-11-16-run3-futures-results-run/hs_cluster/`.
+Same 113 scored opinions and the same per-opinion trade P&L as `shadow_eval.py` (it
+reproduces +3.206pp). **None of this changes the verdict above**, which is the registered
+statistic. The three groupings were fixed before their numbers were seen; the
+stratified and within-episode cuts at the bottom were **added after** the pooled result
+showed a direction mix, so they are post-hoc and should be read as such.
+
+**1. The registered difference with episodes as the resampling unit** (episode = run of
+the same mode and direction with gaps under 12h / 24h, or a calendar day per mode):
+
+| grouping | episodes (with AGREE) | diff | 90% CI | drop the most influential episode |
+|---|---|---|---|---|
+| runs, gap < 12h | 42 (9) | +3.206 | [+0.025, +4.804] | +0.522 |
+| runs, gap < 24h | 38 (8) | +3.206 | [-0.004, +4.429] | +0.489 |
+| calendar day x mode | 35 (9) | +3.206 | [+0.359, +4.853] | +1.222 |
+| futures only, gap < 12h | 14 | +3.370 | [+0.265, +5.166] | |
+
+The PASS (lower bound +2.015) does not survive the change of unit: the lower bound moves
+to **-0.004 to +0.359** depending on the grouping, i.e. on or just above zero. Under the
+24h grouping it would not be a PASS. Dropping the one largest episode cuts the difference
+from +3.2 to +0.5 (gap groupings).
+
+**2. Where the difference comes from.** Mean per-opinion trade P&L by mode, direction and
+verdict:
+
+| | AGREE n / mean | DISAGREE n / mean |
+|---|---|---|
+| futures SELL | 11 / **+5.53** | 19 / **+2.47** |
+| futures BUY | 5 / -0.19 | 29 / -1.00 |
+| spot BUY | 4 / -0.80 | 45 / -1.16 |
+
+Eleven of the 20 AGREE opinions are shorts taken in the 2026-11-10 to 11-13 drop (BTC
+73.7k to 68.9k), a stretch in which even the shorts Claude DISAGREED with averaged +2.47pp.
+Most DISAGREE opinions are BUYs, which lost. So a large part of the pooled gap is
+direction composition: shorts in a falling month against longs.
+
+**3. Post-hoc controls for that** (1,000 resamples; the unit is the episode, gap < 12h,
+then calendar day):
+
+| control | estimate | 90% CI |
+|---|---|---|
+| within mode x direction (AGREE-weighted), gap < 12h | +1.959 | [+0.212, +3.036] |
+| within mode x direction, calendar day | +1.959 | [+0.265, +2.977] |
+| within the same episode (episode mean removed), gap < 12h | **+0.109** | [-0.459, +0.457], permutation p = 0.36 |
+| within the same episode, calendar day | **-0.048** | [-0.888, +0.655], permutation p = 0.62 |
+
+**Reading.** Every stratum has AGREE above DISAGREE (+3.06 SELL, +0.81 futures BUY,
++0.36 spot), so the sign is consistent. Once direction is held fixed the difference is
+about +2pp and the clustered interval still sits above zero. But **inside one episode,
+the hours Claude agreed with did not do better than the hours it disagreed with**
+(+0.11 and -0.05pp, both indistinguishable from zero). What the evidence supports is
+that Claude's AGREE separated *which stretches* of the month were good for the signal's
+direction, not *which hours within a stretch*. With 8 or 9 episodes that contain an AGREE,
+and two of them (the 11-10 and 11-12/13 SELL runs) carrying the effect, that is a thin
+basis for a veto gate. It is a reason to pre-register a veto-gate test with episode-level
+counting and a longer window, not evidence that the gate works. The PASS stands as
+registered and licenses exactly that and nothing more.
+
 ## H-X: does following CLOSE/HOLD beat the bot's own exits?
 
 Claude, 12 closed positions, 328 opinions (guards: 8 positions, 30 opinions, met). CLOSE

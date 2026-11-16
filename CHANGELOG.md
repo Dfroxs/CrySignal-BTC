@@ -14,7 +14,10 @@ descriptive, fidelity 5/10 unmatched annotated (3 flip artefacts under the 11-10
 2 macro-close by my reading, stated in the doc). H-S: +3.206pp [+2.015, +4.425] PASS by the
 registered rule, but the 20 AGREE opinions are about 4-6 episodes and the 24h descriptive
 statistic does not show it. H-X: 12 positions, +0.761pp [-0.577, +1.916] INCONCLUSIVE.
-No config or live code change; `rel_ic_dir` and a Claude veto gate become run-4 backlog
+Descriptive follow-up `scripts/shadow_cluster.py`: with episodes as the unit the H-S CI lower
+bound is -0.004 to +0.36 (not +2.02), dropping one episode cuts +3.2 to +0.5, and within one
+episode AGREE vs DISAGREE is +0.11pp (p 0.36); the pooled gap is partly shorts-in-a-drop vs
+longs. Verdict unchanged. No config or live code change; `rel_ic_dir` and a Claude veto gate become run-4 backlog
 candidates needing their own pre-registrations.
 
 ---
