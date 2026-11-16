@@ -4,6 +4,24 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-17 — feat: dashboard redesign, more information (owner: "jelek sekali, lengkapi")
+
+`agents/dashboard.py` rewritten around one question per section. Opens with a plain-words
+verdict ("Semua berjalan normal." or the list of what needs a look) and a status strip
+(bot uptime, Q&A, cycle age, futures data, RAM, disk, backup age, log errors). Hero: BUY and
+SELL score against the threshold per mode, with a sentence saying why nothing fired, plus 72h
+score charts. Added: book statistics since the run started (profit factor, drawdown, average
+win/loss, hold time, outcomes), P&L curves from zero, BTC 7-day price with entries and exits,
+the market fields the engine read (funding, basis, L/S, OI, taker, F&G, RSI, EMA200 distance,
+HTF, DXY, S&P, VIX, gold, BTC.D, stablecoins, news), the score reasons, the macro agenda with
+countdown (flags the 2h close window), gate blocks 24h/7d, Claude 7-day verdict counts,
+run facts (start, futures restart, running commit vs run commit). Colour encodes direction
+(BUY blue, SELL orange, validated for colour-vision deficiency in light and dark), charts have
+a hover crosshair, Barlow / Barlow Condensed type, responsive to phone width. Still read-only,
+localhost-only, no trading-path import. Test updated (319/319).
+
+---
+
 ## 2026-11-17 — feat: read-only VPS dashboard (not deployed)
 
 `agents/dashboard.py`, standard library only, bound to 127.0.0.1:8080 and reached through an

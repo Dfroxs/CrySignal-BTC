@@ -5637,10 +5637,17 @@ def test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel():
         assert f["db"]["last_cycle_age_min"] == 29.0 and f["db"]["futures_blind_24h"] == 1
         op = f["db"]["open"][0]
         assert abs(op["move_pct"] - (66000 - 65000) / 66000 * 100) < 1e-9, "SELL gains when price falls"
-        assert f["db"]["totals"]["spot"] == {"n": 1, "sum": 3.5, "win": 100}
-        assert f["scanner"] is None and f["host"]["services"]["spotsignal-qa"] == "active"
+        book = f["db"]["totals"]["spot"]
+        assert (book["n"], book["sum"], book["win"], book["max_dd"]) == (1, 3.5, 100, 0.0) and abs(book["hold_h"] - 24.98) < 0.01
+        assert f["db"]["curve"]["spot"][0][1] == 0.0, "the curve starts from zero"
+        assert f["scanner"] is None and f["host"]["services"]["Q&A"] == "active"
         page = dsh.render(f)
-        assert "Posisi terbuka" in page and "+3.50pp" in page and "<script" not in page
+        assert "Semua berjalan normal" not in page, "a blind futures cycle is an issue"
+        assert "data futures Binance kosong" in page and "+3,50 pp" in page and "#1 futures SELL" not in page
+        assert "Seberapa dekat ke sinyal" in page and "fetch(" not in page, "the page calls nothing"
+        assert dsh._nice_ticks(1.08, 7.17) == [2.0, 4.0, 6.0]
+        assert dsh.issues({"host": {"services": {"bot": "active"}}, "db": {"last_cycle_age_min": 5,
+                                                                           "last": {}}, "errors": []}) == []
         assert (os.path.getmtime(path), os.path.getsize(path)) == before, "the dashboard wrote to the DB"
         try:
             sqlite3.connect(f"file:{path}?mode=ro", uri=True).execute("DELETE FROM cycle_log")
@@ -5650,7 +5657,8 @@ def test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel():
             raise AssertionError("mode=ro did not refuse a write")
         broken = dsh.collect(dsh.ROOT, "/nonexistent/x.db", "/nonexistent/s.db", now, run)
         assert broken["db"] is None and any(e.startswith("db:") for e in broken["errors"])
-        assert "class=err" in dsh.render(broken), "a broken panel is shown, not raised"
+        page = dsh.render(broken)
+        assert 'class="err"' in page and "panel db gagal dibaca" in page, "a broken panel is shown, not raised"
     finally:
         _restore_history_db(h, saved, path)
     src = open("agents/dashboard.py").read()
