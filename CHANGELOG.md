@@ -4,6 +4,21 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-17 — feat: read-only VPS dashboard (not deployed)
+
+`agents/dashboard.py`, standard library only, bound to 127.0.0.1:8080 and reached through an
+SSH tunnel (`ssh -N -L 8080:localhost:8080 dmonk@<vps>`). One page, reloads every 5 minutes:
+services, last-cycle age, blind futures cycles, RAM, disk, DB size, latest backup; last cycle
+per mode (score vs threshold, funding, basis); open positions with their raw move; cumulative
+closed P&L per mode (inline SVG); recent closes; gate blocks over 24h; latest Claude entry,
+exit and flip opinions; the scanner's newest picks and its progress toward H-SC's 90 days /
+300 picks; LLM cost (same figures as the ops report). Every DB is opened `mode=ro`, a failing
+panel shows an error box instead of blanking the page, nothing from the trading path is
+imported, so it restarts no window. User unit `deploy/spotsignal-dash.service` (150 MB cap).
+Rendered once on the VPS from `/tmp` against the live DB. One test (319/319).
+
+---
+
 ## 2026-11-17 — feat: Claude multi-coin scanner (H-SC), log-only, not deployed
 
 Pre-registered first (`2026-11-17-claude-scanner-prereg.md`, `72b218e`). `agents/scanner.py`:
