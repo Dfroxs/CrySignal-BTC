@@ -137,6 +137,18 @@ revoke them in OKX if they are no longer wanted. `spotsignal` and `spotsignal-qa
 touched and were `active` after. `scripts/morning_check.sh` no longer checks allocbot.
 Where this file still says "two bots" or describes allocbot, it is history. Free memory
 went from ~70 to ~195 MB.
+
+**2026-11-16 19:04 UTC: pulled `e7b6755` (PR #39), no bot restart, no window restarts.**
+Two new standalone processes; the trading-path diff `d1d490b..e7b6755` is empty (new
+files only: `agents/scanner.py`, `agents/dashboard.py`, `scripts/scanner_eval.py`, the
+H-SC prereg, `deploy/spotsignal-dash.service`, tests). (1) **Dashboard**: user unit
+`spotsignal-dash`, `127.0.0.1:8080`, read-only DB; open with
+`ssh -N -L 8080:localhost:8080 dmonk@45.151.155.178`, then `http://localhost:8080`.
+(2) **Claude scanner (H-SC)**: cron `5 * * * *` → `data/scanner.db`, log `data/scanner.log`,
+cost in `data/llm_usage.jsonl` (about $0.022 a call, ~$17/month). First cycle 19:04 UTC (bar
+19:00, 9 coins, no error). H-SC's scored window starts at that first error-free opinion;
+verdict needs 90 days and 300 picks. `spotsignal` and `spotsignal-qa` stayed `active`. The
+flip shadow (`develop`, touches `run_bot.py`) is **not** deployed.
 ---
 
 ## New session? Do this first
