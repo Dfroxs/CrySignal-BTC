@@ -541,6 +541,29 @@ border:0;border-bottom:3px solid transparent;padding:12px 16px 11px;cursor:point
 .tabs button:focus-visible{outline:2px solid var(--buy);outline-offset:-2px}
 .tabpanel[hidden]{display:none}
 .tabpanel>section:first-child{margin-top:28px}
+.status{display:flex;gap:10px;align-items:center;font-size:16px;margin:14px 0 4px;color:var(--ink)}
+.status.bad{color:var(--bad)}.status a{color:inherit}
+.sr{position:absolute;left:-9999px}
+.cards{display:grid;gap:16px;margin-top:20px;grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr))}
+.card{display:block;text-decoration:none;color:inherit}
+a.card:hover{border-color:var(--ink2)}
+.card h3{font:600 20px/1.2 "Barlow Condensed",Barlow,sans-serif;margin:0}
+.card .who{color:var(--mute);font-size:13px;margin:2px 0 12px}
+.card .money{font:600 40px/1 "Barlow Condensed",Barlow,sans-serif;margin:0}
+.card .delta{margin:6px 0 0;font-size:14px}
+.card .line{margin:10px 0 0;color:var(--ink2);font-size:14px}
+.feed ul{list-style:none;margin:0;padding:0}
+.feed li{display:grid;grid-template-columns:110px 150px 1fr;gap:10px;padding:8px 0;border-bottom:1px solid var(--rule2);font-size:15px}
+.feed .when{color:var(--mute)}.feed .book{color:var(--ink2);font-weight:500}
+.picks{list-style:none;margin:0;padding:0}
+.picks li{padding:10px 0;border-bottom:1px solid var(--rule2);font-size:16px}
+.picks .why{display:block;color:var(--ink2);font-size:14px;margin-top:2px}
+details.tech,details.glossary{margin-top:40px;border-top:1px solid var(--rule);padding-top:14px}
+details.tech>summary,details.glossary>summary{font:600 18px/1.2 "Barlow Condensed",Barlow,sans-serif;color:var(--ink2)}
+details.tech[open]>summary{margin-bottom:16px}
+.glossary dl{display:grid;grid-template-columns:150px 1fr;gap:6px 14px;font-size:14px}
+.glossary dt{font-weight:600}.glossary dd{margin:0;color:var(--ink2)}
+@media (max-width:560px){.feed li{grid-template-columns:1fr;gap:0}.glossary dl{grid-template-columns:1fr}}
 @media (max-width:560px){main{padding:18px 16px 48px}.rails{grid-template-columns:1fr}
 .cols,.cols3{grid-template-columns:1fr}.bars{grid-template-columns:110px 1fr 34px 34px}
 td.r{min-width:180px}}
@@ -736,7 +759,7 @@ def _rail(mode, l):
     rows = []
     for k, (side, v) in enumerate((("BUY", l["buy"]), ("SELL", l["sell"]))):
         cls = side.lower()
-        lab = f' data-l="ambang {_n(thr)}"' if k == 0 else ""
+        lab = f' data-l="garis {_n(thr)}"' if k == 0 else ""
         rows.append(f'<div class="trow"><span class="lbl {cls}">{side}</span>'
                     f'<div class="track" role="img" aria-label="skor {side} {_n(v)} dari ambang {_n(thr)}">'
                     f'<div class="fill {cls}" style="width:{pct(v):.1f}%"></div>'
@@ -747,14 +770,14 @@ def _rail(mode, l):
     lead = max(sides, key=lambda x: x[1])
     gap = (lead[1] - thr)
     if l["type"] in ("BUY", "SELL"):
-        say = f"Sinyal {l['type']} menyala di siklus ini."
+        say = f"Sinyal {l['type']} menyala jam ini."
     elif gap >= 0:
-        say = (f"Skor {lead[0]} sudah di atas ambang, tapi siklus ini HOLD: "
-               f"filter lain (konfirmasi, gate, atau zona mati) menahannya.")
+        say = (f"Nilai {lead[0]} sudah melewati garis, tapi pemeriksaan keamanan bot menahannya, "
+               f"jadi belum ada posisi.")
     else:
-        say = f"Skor {lead[0]} butuh {_n(-gap)} poin lagi untuk menyentuh ambang."
+        say = f"Nilai {lead[0]} masih kurang {_n(-gap)} poin dari garis."
     if mode == "spot":
-        say += " Spot hanya membuka BUY."
+        say += " Spot hanya bisa membeli (LONG)."
     return (f'<div class="rail"><h3>{mode.capitalize()} <span>{_t(l["ts"])} UTC · harga '
             f'{_n(l["price"])}</span></h3>{"".join(rows)}<p class="note">{say}</p></div>')
 
@@ -776,405 +799,352 @@ def _book_table(totals):
                    "profit factor", "drawdown", "lama", "hasil"], rows, num=(1, 2, 3, 4, 5, 6, 7, 8))
 
 
-def _overview(s, d):
-    """Both books side by side: shown above the tabs."""
-    bk = (s or {}).get("book")
-    tot = d.get("totals") or {}
-    fu, sp = tot.get("futures") or {}, tot.get("spot") or {}
-    ac = d.get("account")
-    P = ['<div class="cols books">']
-    P.append('<a class="panel book" href="#btc" data-tab="btc"><h3>Bot BTC <span>paper run, diuji hipotesis</span></h3>'
-             '<dl class="kv">'
-             + (f'<div><dt>Ekuitas</dt><dd>${_n(ac["equity"])}<small>'
-                f'{_pnl((ac["equity"] / ac["start"] - 1) * 100, 2, "%")}</small></dd></div>' if ac else "")
-             + f'<div><dt>Futures / spot</dt><dd>{_pnl(fu.get("sum"), 1, " pp")} / {_pnl(sp.get("sum"), 1, " pp")}</dd></div>'
-             f'<div><dt>Terbuka</dt><dd>{len(d.get("open") or [])}</dd></div></dl></a>')
-    ca = d.get("claude_account")
-    if ca:
-        P.append('<a class="panel book" href="#btc" data-tab="btc"><h3>BTC + filter Claude '
-                 '<span>posisi yang ditolak Claude dibuang</span></h3><dl class="kv">'
-                 f'<div><dt>Ekuitas</dt><dd>${_n(ca["equity"])}<small>'
-                 f'{_pnl((ca["equity"] / ca["start"] - 1) * 100, 2, "%")}</small></dd></div>'
-                 f'<div><dt>Diambil / dibuang</dt><dd>{ca["kept"]} / {ca["vetoed"]}</dd></div>'
-                 f'<div><dt>Data baru</dt><dd>{ca["fresh_kept"] + ca["fresh_vetoed"]}<small>posisi</small></dd></div>'
-                 '</dl></a>')
-    if bk:
-        ret = (bk["equity"] / bk["start"] - 1) * 100
-        P.append('<a class="panel book" href="#scanner" data-tab="scanner"><h3>Scanner 9 koin '
-                 '<span>akun demo dari pick Claude</span></h3><dl class="kv">'
-                 f'<div><dt>Ekuitas</dt><dd>${_n(bk["equity"])}<small>{_pnl(ret, 2, "%")}</small></dd></div>'
-                 f'<div><dt>Kas bebas</dt><dd>${_n(bk["cash"])}</dd></div>'
-                 f'<div><dt>Terbuka</dt><dd>{len(bk["open"])}</dd></div></dl></a>')
-    else:
-        P.append('<div class="panel book"><h3>Scanner 9 koin</h3><p class="empty">Scanner belum '
-                 'berjalan di host ini.</p></div>')
-    P.append("</div>")
-    return "".join(P)
+OUTCOME = {"WIN": "kena target", "LOSS": "kena stop", "TARGET": "kena target", "STOP": "kena stop",
+           "TIME": "batas 24 jam", "TIME_EXIT": "batas waktu", "MACRO_CLOSE": "ditutup jelang berita ekonomi",
+           "FLIP": "ditutup, sinyal berbalik", "BREAKER_CLOSE": "ditutup pengaman", "VOL_EXIT": "ditutup, pasar terlalu liar"}
+
+
+def _side(side):
+    """BUY/LONG and SELL/SHORT as one plain label with an arrow; colour = direction."""
+    up = str(side) in ("BUY", "LONG")
+    return (f'<span class="dir {"LONG" if up else "SHORT"}" title="{"bertaruh harga naik" if up else "bertaruh harga turun"}">'
+            f'{"LONG ↑" if up else "SHORT ↓"}</span>')
+
+
+def _out(o):
+    return e(OUTCOME.get(str(o), str(o)))
+
+
+def _money(v, sign=False):
+    if v is None:
+        return "–"
+    s = _n(abs(v))
+    return (("+" if v >= 0 else "−") if sign else ("−" if v < 0 else "")) + "$" + s
+
+
+def _card(title, who, acct, lines, tab):
+    if not acct:
+        return (f'<div class="panel card"><h3>{title}</h3><p class="who">{who}</p>'
+                '<p class="empty">Belum berjalan.</p></div>')
+    chg = acct["equity"] - acct["start"]
+    pct = chg / acct["start"] * 100
+    cls = "pos" if chg > 0 else "neg" if chg < 0 else "mute"
+    return (f'<a class="panel card" href="#{tab}" data-tab="{tab}"><h3>{title}</h3><p class="who">{who}</p>'
+            f'<p class="money">{_money(acct["equity"])}</p>'
+            f'<p class="delta {cls}">{_money(chg, True)} ({_n(pct, 2, True)}%) dari modal {_money(acct["start"])}</p>'
+            f'<p class="line">{lines}</p></a>')
+
+
+def _events(d, s, now):
+    """Opens and closes from all books, newest first: (time, book, sentence)."""
+    ev = []
+    for p in d.get("closed_recent") or []:
+        o, c_ = _dt(p["opened_at"]), _dt(p["closed_at"])
+        if o:
+            ev.append((o, "Bot BTC", f'membuka {_side(p["type"])} BTC ({e(p["mode"])})'))
+        if c_:
+            ev.append((c_, "Bot BTC", f'menutup {_side(p["type"])} BTC: {_pnl(p["pnl_pct"], 2, "%")}, {_out(p["outcome"])}'))
+    for p in d.get("open") or []:
+        o = _dt(p["opened_at"])
+        if o:
+            ev.append((o, "Bot BTC", f'membuka {_side(p["type"])} BTC ({e(p["mode"])})'))
+    bk = (s or {}).get("book") or {}
+    for p in bk.get("closed") or []:
+        o, c_ = _dt(p["opened_bar"]), _dt(p["closed_bar"])
+        if o:
+            ev.append((o, "Claude pilih koin", f'membuka {_side(p["side"])} {e(p["coin"])}'))
+        if c_:
+            ev.append((c_, "Claude pilih koin", f'menutup {_side(p["side"])} {e(p["coin"])}: '
+                       f'{_pnl(p["pnl_usd"], 2, " $")} ({_n(p["pnl_pct"], 2, True)}%), {_out(p["outcome"])}'))
+    for p in bk.get("open") or []:
+        o = _dt(p["opened_bar"])
+        if o:
+            ev.append((o, "Claude pilih koin", f'membuka {_side(p["side"])} {e(p["coin"])} senilai {_money(p.get("size_usd"))}'))
+    ev.sort(key=lambda x: x[0], reverse=True)
+    return ev
+
+
+def _health_rows(f, now):
+    h, d = f.get("host") or {}, f.get("db") or {}
+    rows = []
+    def add(ok, name, val, why):
+        rows.append((ok, name, val, why))
+    for name, st in (h.get("services") or {}).items():
+        add(st == "active", {"bot": "Bot BTC", "Q&A": "Bot tanya-jawab Telegram"}.get(name, name),
+            "berjalan" if st == "active" else st, "proses di VPS")
+    age = d.get("last_cycle_age_min")
+    add(age is not None and age <= MAX_CYCLE_AGE_MIN, "Siklus terakhir",
+        "–" if age is None else f"{age:.0f} menit lalu", "bot menghitung tiap jam; lebih dari 75 menit = macet")
+    blind = d.get("futures_blind_24h")
+    add(blind == 0, "Data Binance futures", "lengkap" if blind == 0 else f"{blind} siklus kosong" if blind else "–",
+        "funding, basis, OI; kalau kosong bot bekerja setengah buta")
+    mem, disk = h.get("mem_available_mb"), h.get("disk_used_pct")
+    add(mem is None or mem >= MIN_MEM_MB, "Memori bebas", f"{mem:.0f} MB" if mem is not None else "–", "VPS 1 GB; di bawah 150 MB berbahaya")
+    add(disk is None or disk <= MAX_DISK_PCT, "Disk terpakai", f"{disk:.0f}%" if disk is not None else "–", "di atas 85% perlu dibersihkan")
+    ba = h.get("backup_age_h")
+    add(ba is None or ba <= MAX_BACKUP_AGE_H, "Backup database", f"{ba:.0f} jam lalu" if ba is not None else "–", "harian jam 03:00 UTC")
+    le = h.get("log_errors")
+    add(not le, "Error di log", "tidak ada" if le == 0 else f"{le} baris" if le else "–", "400 baris terakhir paper_run.log")
+    return rows
 
 
 def _scanner_tab(s):
-    """The scanner tab: account, open positions, the nine coins, history, H-SC progress."""
     if not s:
         return '<p class="empty">Scanner belum berjalan di host ini.</p>'
-    bk, P = s.get("book"), []
+    bk, P = s.get("book") or {}, []
+    P.append('<section><h2>Posisi yang sedang berjalan</h2>')
+    if bk.get("open"):
+        rows = [[f"<b>{e(p['coin'])}</b>", _side(p["side"]), _money(p.get("size_usd")),
+                 _pnl(p["upnl"], 2, " $"), _pnl(p["move_pct"], 2, "%"), _t(p["opened_bar"]),
+                 f'{_n(p["stop"], 4)} / {_n(p["target"], 4)}'] for p in bk["open"]]
+        P.append(_table(["koin", "arah", "modal", "untung/rugi sekarang", "%", "dibuka", "stop / target"],
+                        rows, num=(2, 3, 4)))
+        P.append('<p class="note">Posisi ditutup otomatis saat harga menyentuh stop (rugi dibatasi) '
+                 'atau target (untung diambil), paling lama 24 jam.</p>')
+    else:
+        P.append('<p class="empty">Tidak ada posisi. Posisi baru dibuka saat Claude memilih LONG atau SHORT.</p>')
+    P.append("</section>")
+    picks = [c for c in (s.get("coins") or []) if c["pick"] and c["pick"][0] != "NONE"]
+    bar = (s.get("last") or [None, None])[1]
+    P.append(f'<section><h2>Pilihan Claude jam ini</h2><p class="lede">Bar {_t(bar)} UTC. Claude melihat '
+             'angka sembilan koin dan memilih mana yang layak, atau tidak ada sama sekali.</p>')
+    if picks:
+        P.append('<ul class="picks">' + "".join(
+            f'<li><b>{e(c["coin"])}</b> {_side(c["pick"][0])} <span class="mute">yakin {c["pick"][1]}%</span>'
+            f'<span class="why">{e(c["pick"][2] or "")}</span></li>' for c in picks) + "</ul>")
+    else:
+        P.append('<p class="empty">Jam ini Claude tidak memilih koin mana pun.</p>')
+    P.append("</section>")
     if bk:
         st = bk["stats"]
-        ret = (bk["equity"] / bk["start"] - 1) * 100
-        P.append('<section><h2>Akun demo</h2><p class="lede">Saldo awal $' + _n(bk["start"], 0) +
-                 '. Setiap pick LONG/SHORT dibuka sebagai posisi 10% dari ekuitas terealisasi: stop '
-                 '1,5×ATR, target 3×ATR, paling lama 24 jam, satu posisi per koin, biaya 0,20pp. '
-                 'Untuk mengumpulkan data, bukan klaim profit.</p>')
-        kv = [("Ekuitas", f'${_n(bk["equity"])}<small>{_pnl(ret, 2, "%")}</small>'),
-              ("Terealisasi", _pnl(bk["realised"] - bk["start"], 2, " USD")),
-              ("Mengambang", _pnl(bk["upnl"], 2, " USD")),
-              ("Kas bebas", f'${_n(bk["cash"])}<small>${_n(bk["used"])} di posisi</small>'),
-              ("Ditutup", str(st["n"])), ("Menang", f'{st["win"]}%' if st["win"] is not None else "–"),
-              ("Profit factor", _n(st.get("pf")) if st.get("pf") is not None else "–"),
-              ("Drawdown", _pnl(-st["max_dd"], 2, " pp") if st["n"] else "–"),
-              ("Rata menang / kalah", f'{_pnl(st.get("avg_win"))} / {_pnl(st.get("avg_loss"))}' if st["n"] else "–"),
-              ("Hasil exit", e(", ".join(f"{k} {v}" for k, v in (st.get("outcomes") or {}).items())) or "–")]
-        P.append('<div class="panel"><dl class="kv">' + "".join(
-            f"<div><dt>{k}</dt><dd>{v}</dd></div>" for k, v in kv) + "</dl></div>")
-        P.append('<h3 style="margin-top:22px">Posisi terbuka</h3>')
-        if bk["open"]:
-            rows = [[f"<b>{e(p['coin'])}</b>", _dir(p["side"]), _t(p["opened_bar"]),
-                     _n(p.get("size_usd")), _n(p["entry"], 4), _n(p["price"], 4),
-                     _pnl(p["move_pct"], 2, "%"), _pnl(p["upnl"], 2), _n(p["stop"], 4),
-                     _n(p["target"], 4)] for p in bk["open"]]
-            P.append(_table(["koin", "arah", "dibuka", "ukuran $", "entry", "harga", "gerak", "USD",
-                             "stop", "target"], rows, num=(3, 4, 5, 6, 7, 8, 9)))
-        else:
-            P.append('<p class="empty">Tidak ada posisi demo terbuka.</p>')
-        P.append("</section>")
+        rows = [[f"<b>{e(p['coin'])}</b>", _side(p["side"]), _t(p["closed_bar"]), _out(p["outcome"]),
+                 _pnl(p["pnl_usd"], 2, " $"), _pnl(p["pnl_pct"], 2, "%")] for p in bk["closed"]]
+        P.append('<section><h2>Hasil sejauh ini</h2>')
+        if st["n"]:
+            P.append(f'<p class="lede">{st["n"]} posisi selesai: {round(st["n"] * st["win"] / 100)} untung, '
+                     f'{st["n"] - round(st["n"] * st["win"] / 100)} rugi.</p>')
+        P.append('<div class="cols"><div><h3>Nilai akun (dolar)</h3>'
+                 + chart([{"n": "", "c": "var(--ink)", "p": bk["curve"]}], width=560, height=190,
+                         y_fmt="${:,.0f}", label="nilai akun Claude pilih koin") + "</div><div><h3>Posisi terakhir yang selesai</h3>"
+                 + (_table(["koin", "arah", "selesai", "cara selesai", "hasil", "%"], rows, num=(4, 5))
+                    if rows else '<p class="empty">Belum ada posisi yang selesai.</p>') + "</div></div></section>")
     coins = s.get("coins") or []
+    det = []
     if coins:
         rows = []
         for c in coins:
             f = c["f"] or {}
-            pk, ps = c["pick"], c["pos"]
-            pick = (f'{_dir(pk[0])} <span class="mute">{_n(pk[1], 0)}</span>'
-                    if pk and pk[0] != "NONE" else '<span class="mute">–</span>')
-            reason = (f'<td class="r">{e(pk[2] or "")}</td>' if pk and pk[0] != "NONE"
-                      else '<td class="r"></td>')
-            pos = (f'{_dir(ps["side"])} {_pnl(ps["move_pct"], 2, "%")}' if ps else '<span class="mute">–</span>')
             rows.append([f"<b>{e(c['coin'])}</b>", _n(c["price"], 4 if (c["price"] or 0) < 10 else 2),
                          _pnl(f.get("ret_1h_pct")), _pnl(f.get("ret_24h_pct")), _pnl(f.get("ret_7d_pct")),
                          _pnl(f.get("ret_24h_vs_universe_pct")), _n(f.get("funding_pct"), 4, True),
-                         _pnl(f.get("oi_change_24h_pct")), _n(f.get("ls_ratio")), pick, pos, reason])
-        bar = (s.get("last") or [None, None])[1]
-        P.append(f'<section><h2>Sembilan koin</h2><p class="lede">Bar {_t(bar)} UTC, angka yang sama '
-                 'dengan yang dilihat Claude. Return dalam persen.</p><div class="panel">' + _table(
-                     ["koin", "harga", "1 j", "24 j", "7 h", "vs rata 24 j", "funding", "OI 24 j",
-                      "L/S", "pick Claude", "posisi demo", "alasan"], rows,
-                     num=(1, 2, 3, 4, 5, 6, 7, 8)) + "</div></section>")
-    if bk:
-        rows = [[f"<b>{e(p['coin'])}</b>", _dir(p["side"]), _t(p["closed_bar"]), e(str(p["outcome"])),
-                 _pnl(p["pnl_pct"], 2, "%"), _pnl(p["pnl_usd"], 2)] for p in bk["closed"]]
-        P.append('<section><h2>Riwayat akun</h2><div class="cols"><div><h3>Ekuitas terealisasi (USD)</h3>'
-                 + chart([{"n": "", "c": "var(--ink)", "p": bk["curve"]}], width=560, height=190,
-                         y_fmt="{:,.0f}", label="ekuitas akun demo scanner") + "</div><div>"
-                 '<h3>Ditutup terakhir</h3>' + (_table(["koin", "arah", "ditutup", "hasil", "P&L", "USD"],
-                                                       rows, num=(4, 5)) if rows else
-                                                '<p class="empty">Belum ada posisi yang ditutup.</p>')
-                 + "</div></div></section>")
+                         _pnl(f.get("oi_change_24h_pct")), _n(f.get("ls_ratio"))])
+        det.append('<h3>Angka sembilan koin yang dilihat Claude</h3>' + _table(
+            ["koin", "harga", "1 jam %", "24 jam %", "7 hari %", "vs rata-rata %", "funding %", "OI 24 jam %", "long/short"],
+            rows, num=(1, 2, 3, 4, 5, 6, 7, 8)))
+    if bk and bk["stats"]["n"]:
+        st = bk["stats"]
+        det.append('<h3 style="margin-top:18px">Statistik akun</h3><dl class="kv">' + "".join(
+            f"<div><dt>{k}</dt><dd>{v}</dd></div>" for k, v in [
+                ("Profit factor", _n(st.get("pf")) if st.get("pf") is not None else "–"),
+                ("Penurunan terdalam", _pnl(-st["max_dd"], 2, "%")),
+                ("Rata untung / rugi", f'{_pnl(st.get("avg_win"))} / {_pnl(st.get("avg_loss"))}'),
+                ("Kas bebas", _money(bk["cash"]))]) + "</dl>")
     lastc = s["last"]
-    P.append('<section><h2>Uji H-SC</h2><p class="lede">Apakah koin pilihan Claude lebih baik dari '
-             'koin acak ke arah yang sama. Verdict baru keluar setelah 90 hari dan 300 pick; '
-             'sebelum itu angka hanya deskriptif.</p><dl class="kv">'
-             f'<div><dt>Pick</dt><dd>{s["n_picks"]}<small>dari 300</small></dd></div>'
-             f'<div><dt>Hari dengan pick</dt><dd>{s["days"]}<small>dari 90</small></dd></div>'
-             f'<div><dt>Siklus</dt><dd>{s["cycles"]}<small>{s["errors"]} error</small></dd></div>'
-             f'<div><dt>Biaya scanner</dt><dd>${s["usd"]:.2f}</dd></div>'
-             f'<div><dt>Bar terakhir</dt><dd>{_t(lastc[1]) if lastc else "–"}</dd></div>'
-             "</dl></section>")
+    det.append('<h3 style="margin-top:18px">Uji statistik H-SC</h3><p class="note">Apakah koin pilihan Claude '
+               'lebih baik dari koin acak. Hasil resmi baru keluar setelah 90 hari dan 300 pilihan.</p><dl class="kv">'
+               f'<div><dt>Pilihan</dt><dd>{s["n_picks"]}<small>dari 300</small></dd></div>'
+               f'<div><dt>Hari</dt><dd>{s["days"]}<small>dari 90</small></dd></div>'
+               f'<div><dt>Panggilan Claude</dt><dd>{s["cycles"]}<small>{s["errors"]} gagal</small></dd></div>'
+               f'<div><dt>Biaya</dt><dd>${s["usd"]:.2f}</dd></div></dl>')
+    P.append('<details class="tech"><summary>Detail teknis</summary>' + "".join(det) + "</details>")
     return "".join(P)
 
 
-def render(f):
-    now = f["now"]
-    h, d, c, s = f.get("host") or {}, f.get("db") or {}, f.get("cost"), f.get("scanner")
-    man, macro = f.get("manifest") or {}, f.get("macro")
+def _btc_tab(f, now):
+    d, man, macro = f.get("db") or {}, f.get("manifest") or {}, f.get("macro")
     last = d.get("last") or {}
-    probs = issues(f)
-    P = [f"<!doctype html><html lang=id><head><meta charset=utf-8>"
-         f"<meta name=viewport content='width=device-width,initial-scale=1'>"
-         f"<meta http-equiv=refresh content={REFRESH_S}><title>SpotSignal VPS</title>"
-         f"<link rel=preconnect href=https://fonts.gstatic.com crossorigin>"
-         f"<link rel=stylesheet href='{FONTS}'><style>{CSS}</style></head><body><main>"]
-
-    # ── Status
-    P.append(f'<div class="top"><h1>SpotSignal · paper run di VPS</h1>'
-             f'<span class="stamp">Diperbarui {now:%d %b %H:%M} UTC, muat ulang otomatis tiap '
-             f'{REFRESH_S // 60} menit</span></div>')
-    if probs:
-        P.append(f'<p class="verdict bad">{len(probs)} hal perlu dicek: {e("; ".join(probs))}.</p>')
+    ac, ca = d.get("account"), d.get("claude_account")
+    P = ['<section><h2>Posisi yang sedang berjalan</h2>']
+    if d.get("open"):
+        rows = [[_side(p["type"]), e(p["mode"]), _t(p["opened_at"]), _n(p["entry_price"]), _n(p["price"]),
+                 _pnl(p["move_pct"], 2, "%"), _n(p["stop"])] for p in d["open"]]
+        P.append(_table(["arah", "jenis", "dibuka", "harga masuk", "harga sekarang", "untung/rugi", "stop"],
+                        rows, num=(3, 4, 5, 6)))
     else:
-        P.append('<p class="verdict">Semua berjalan normal.</p>')
-    n_open = len(d.get("open") or [])
-    nxt = (macro or [None])[0] if macro else None
-    sub = [f"Bot BTC: {n_open} posisi terbuka." if n_open else "Bot BTC: tidak ada posisi terbuka."]
-    bk = (s or {}).get("book")
-    if bk:
-        sub.append(f"Akun demo scanner: ${_n(bk['equity'])} "
-                   f"({_n((bk['equity'] / bk['start'] - 1) * 100, 2, True)}%), {len(bk['open'])} posisi.")
-    if nxt:
-        sub.append(f"Agenda makro berikutnya: {e(nxt['event'] or '')} dalam {_until(now, nxt['t'])}.")
-    P.append(f'<p class="sub">{" ".join(sub)}</p>')
-    for err in f["errors"]:
-        P.append(f'<div class="err">Panel tidak terbaca: {e(err)}</div>')
-    pills = []
-    for name, st in (h.get("services") or {}).items():
-        extra = f" sejak {_ago(now, h.get('bot_since'))}" if name == "bot" and st == "active" and h.get("bot_since") else ""
-        pills.append(("" if st == "active" else "bad", f"{name}", f"{st}{extra}"))
-    age = d.get("last_cycle_age_min")
-    pills.append(("" if age is not None and age <= MAX_CYCLE_AGE_MIN else "bad", "siklus",
-                  "–" if age is None else f"{age:.0f} mnt lalu"))
-    blind = d.get("futures_blind_24h")
-    pills.append(("" if blind == 0 else "warn", "data futures",
-                  "lengkap 24 jam" if blind == 0 else f"{blind} siklus kosong 24 jam" if blind else "–"))
-    mem, disk = h.get("mem_available_mb"), h.get("disk_used_pct")
-    pills.append(("" if mem and mem >= MIN_MEM_MB else "bad" if mem is not None else "idle", "RAM",
-                  f"{mem:.0f} MB bebas" if mem is not None else "–"))
-    pills.append(("" if disk is not None and disk <= MAX_DISK_PCT else "bad" if disk is not None else "idle",
-                  "disk", f"{disk:.0f}%" if disk is not None else "–"))
-    ba = h.get("backup_age_h")
-    pills.append(("" if ba is not None and ba <= MAX_BACKUP_AGE_H else "warn" if ba is not None else "idle",
-                  "backup", f"{ba:.0f} jam lalu" if ba is not None else "–"))
-    le = h.get("log_errors")
-    pills.append(("" if not le else "warn", "log", "bersih" if le == 0 else f"{le} baris error" if le else "–"))
-    P.append('<ul class="pills">' + "".join(
-        f'<li><span class="dot {cls}" aria-hidden="true"></span>{e(k)} <b>{e(v)}</b></li>'
-        for cls, k, v in pills) + "</ul>")
-    P.append(_overview(s, d))
-    P.append('<nav class="tabs" role="tablist" aria-label="Bagian dashboard">'
-             '<button role="tab" id="t-scanner" aria-controls="tab-scanner" data-tab="scanner">Scanner 9 koin</button>'
-             '<button role="tab" id="t-btc" aria-controls="tab-btc" data-tab="btc">Bot BTC</button>'
-             '<button role="tab" id="t-sistem" aria-controls="tab-sistem" data-tab="sistem">Sistem &amp; biaya</button>'
-             '</nav>')
-    P.append('<div class="tabpanel" role="tabpanel" id="tab-scanner" aria-labelledby="t-scanner">'
-             + _scanner_tab(s) + '</div><div class="tabpanel" role="tabpanel" id="tab-btc" aria-labelledby="t-btc">')
-
-    # ── Hero: distance to a signal
-    P.append('<section><h2>Seberapa dekat ke sinyal</h2><p class="lede">Skor siklus terakhir '
-             'dibanding ambangnya. Sinyal menyala saat salah satu skor melewati garis, lalu masih '
-             'harus lolos gate sebelum posisi dibuka.</p><div class="rails panel">'
-             + _rail("futures", last.get("futures")) + _rail("spot", last.get("spot")) + "</div>")
+        lc = (d.get("closed_recent") or [None])[0]
+        P.append('<p class="empty">Tidak ada posisi BTC.' + (
+            f' Terakhir: {_side(lc["type"])} {_pnl(lc["pnl_pct"], 2, "%")}, {_out(lc["outcome"])}, '
+            f'{_ago(now, _dt(lc["closed_at"]))}.' if lc else "") + "</p>")
+    P.append("</section>")
+    fut = last.get("futures")
+    P.append('<section><h2>Kapan bot membuka posisi berikutnya?</h2><p class="lede">Bot memberi nilai untuk '
+             'arah naik (BUY) dan turun (SELL) tiap jam. Posisi baru dibuka kalau salah satu nilai melewati '
+             'garis putih dan lolos pemeriksaan keamanan.</p><div class="rails panel">'
+             + _rail("futures", fut) + _rail("spot", last.get("spot")) + "</div></section>")
+    if macro:
+        items = []
+        for ev in macro[:3]:
+            soon = 0 <= (ev["t"] - now).total_seconds() <= MACRO_CLOSE_H * 3600
+            items.append(f'<li class="{"soon" if soon else ""}"><span class="when">{_until(now, ev["t"])}</span>'
+                         f'<span>{e(ev["event"] or "")}<br><span class="mute">{ev["t"]:%d %b %H:%M} UTC'
+                         f'{" · bot sedang menahan diri" if soon else ""}</span></span></li>')
+        P.append('<section><h2>Berita ekonomi penting berikutnya</h2><p class="lede">Dua jam sebelum berita '
+                 'ini bot menutup posisi dan tidak membuka yang baru.</p>'
+                 f'<ul class="agenda">{"".join(items)}</ul></section>')
+    if ac:
+        rows = [[_side(p["type"]), e(p["mode"]), _t(p["closed_at"]), _out(p["outcome"]), _pnl(p["pnl_pct"], 2, "%")]
+                for p in d.get("closed_recent") or []]
+        legend = ('<div class="legend"><span><i style="background:var(--ink)"></i>dengan saran Claude</span>'
+                  '<span><i style="background:var(--mute)"></i>bot apa adanya</span></div>') if ca else ""
+        ser = ([{"n": "dengan Claude", "c": "var(--ink)", "p": ca["curve"]}] if ca else []) + \
+              [{"n": "bot apa adanya", "c": "var(--mute)" if ca else "var(--ink)", "dash": bool(ca), "p": ac["curve"]}]
+        P.append('<section><h2>Hasil sejauh ini</h2><p class="lede">Modal $1.000, tiap posisi 10% dari '
+                 'nilai akun. Garis putus-putus: bot apa adanya. Garis tebal: kalau posisi yang tidak '
+                 'disetujui Claude dilewati.</p><div class="cols"><div><h3>Nilai akun (dolar)</h3>'
+                 + chart(ser, width=560, height=200, y_fmt="${:,.0f}", label="nilai akun BTC") + legend
+                 + '</div><div><h3>Posisi terakhir yang selesai</h3>'
+                 + _table(["arah", "jenis", "selesai", "cara selesai", "hasil"], rows, num=(4,)) + "</div></div>")
+        if ca:
+            P.append(f'<p class="note">Saran Claude: {ca["kept"]} posisi diambil, {ca["vetoed"]} dilewati. '
+                     f'Semua posisi sebelum {CLAUDE_FRESH_FROM:%d %b} sudah dipakai untuk menilai Claude, jadi '
+                     f'baru {ca["fresh_kept"] + ca["fresh_vetoed"]} posisi yang benar-benar bukti baru.</p>')
+        P.append("</section>")
+    det = []
+    since = man.get("started_at")
+    det.append(f'<h3>Statistik{f" sejak {_t(since)}" if since else ""}</h3>' + _book_table(d.get("totals") or {}))
     sc = d.get("scores") or {}
     blocks = []
     for m in ("futures", "spot"):
         rows = sc.get(m) or []
         ser = [{"n": "BUY", "c": "var(--buy)", "p": [(_dt(r[0]).timestamp(), r[1] or 0) for r in rows]},
                {"n": "SELL", "c": "var(--sell)", "p": [(_dt(r[0]).timestamp(), r[2] or 0) for r in rows]},
-               {"n": "ambang", "c": "var(--mute)", "dash": True,
-                "p": [(_dt(r[0]).timestamp(), r[3] or 0) for r in rows]}]
-        blocks.append(f'<div><h3>{m.capitalize()}, 72 jam</h3>'
-                      + chart(ser, width=560, height=200, label=f"skor {m} 72 jam") + "</div>")
-    P.append('<div class="legend" style="margin-top:18px"><span><i style="background:var(--buy)"></i>skor BUY</span>'
-             '<span><i style="background:var(--sell)"></i>skor SELL</span>'
-             '<span><i style="background:var(--mute)"></i>ambang</span></div>'
-             f'<div class="cols">{"".join(blocks)}</div></section>')
-
-    # ── Positions
-    P.append('<section><h2>Posisi</h2>')
-    if d.get("open"):
-        rows = [[f"#{p['id']}", e(p["mode"]), _dir(p["type"]), _t(p["opened_at"]),
-                 _n(p["hours"], 0, suffix=" j"), _n(p["entry_price"]), _n(p["price"]),
-                 _pnl(p["move_pct"], 2, "%"), _n(p["stop"]), _pnl(p["to_stop_pct"], 2, "%"),
-                 _n(p["take_profit"]), "ya" if p["partial_closed"] else "belum"]
-                for p in d["open"]]
-        P.append('<div class="panel">' + _table(
-            ["id", "mode", "arah", "dibuka", "umur", "entry", "harga", "gerak", "stop",
-             "ke stop", "TP1", "TP1 kena"], rows, num=(4, 5, 6, 7, 8, 9, 10)) +
-            '<p class="note">Gerak dihitung kasar dari harga siklus terakhir, belum termasuk biaya.</p></div>')
-    else:
-        lc = (d.get("closed_recent") or [None])[0]
-        tail = (f" Terakhir ditutup: #{lc['id']} {lc['mode']} {lc['type']}, {lc['outcome']}, "
-                f"{_n(lc['pnl_pct'], 2, True)}% ({_ago(now, _dt(lc['closed_at']))}).") if lc else ""
-        P.append(f'<p class="empty">Tidak ada posisi terbuka.{e(tail)}</p>')
-    ac = d.get("account")
-    if ac:
-        ret = (ac["equity"] / ac["start"] - 1) * 100
-        kv = [("Ekuitas", f'${_n(ac["equity"])}<small>{_pnl(ret, 2, "%")}</small>'),
-              ("Terealisasi", _pnl(ac["realised"] - ac["start"], 2, " USD")),
-              ("Mengambang", _pnl(ac["upnl"], 2, " USD")),
-              ("Kas bebas", f'${_n(ac["cash"])}<small>${_n(ac["used"])} di posisi</small>')]
-        P.append('<h3 style="margin-top:22px">Akun $1.000</h3><p class="note" style="margin-top:0">'
-                 'Posisi bot yang sama, diterjemahkan ke dolar dengan aturan akun scanner: tiap posisi '
-                 '10% dari ekuitas terealisasi saat dibuka, spot dan futures dalam satu akun. Hanya '
-                 'tampilan; bot tidak diubah.</p><div class="cols"><div><dl class="kv">'
-                 + "".join(f"<div><dt>{k}</dt><dd>{v}</dd></div>" for k, v in kv) + "</dl></div><div>"
-                 + chart([{"n": "", "c": "var(--ink)", "p": ac["curve"]}], width=560, height=170,
-                         y_fmt="{:,.0f}", label="ekuitas akun BTC") + "</div></div>")
-    ca = d.get("claude_account")
-    if ca:
-        ret = (ca["equity"] / ca["start"] - 1) * 100
-        base = (ac["equity"] / ac["start"] - 1) * 100 if ac else None
-        kv = [("Ekuitas", f'${_n(ca["equity"])}<small>{_pnl(ret, 2, "%")}</small>'),
-              ("Tanpa filter", f'${_n(ac["equity"])}<small>{_pnl(base, 2, "%")}</small>' if ac else "–"),
-              ("Posisi diambil", f'{ca["kept"]}<small>{_pnl(ca["kept_pnl"], 2, " pp")}</small>'),
-              ("Posisi dibuang", f'{ca["vetoed"]}<small>{_pnl(ca["vetoed_pnl"], 2, " pp")}</small>'),
-              ("Data baru: diambil", f'{ca["fresh_kept"]}<small>{_pnl(ca["fresh_kept_pnl"], 2, " pp")}</small>'),
-              ("Data baru: dibuang", f'{ca["fresh_vetoed"]}<small>{_pnl(ca["fresh_vetoed_pnl"], 2, " pp")}</small>')]
-        rows = [[f"#{c['id']}", e(c["mode"]), _dir(c["type"]), _t(c["closed_at"]), e(str(c["outcome"])),
-                 _pnl(c["pnl_pct"], 2, "%")] for c in ca["vetoed_rows"]]
-        P.append('<h3 style="margin-top:26px">Akun $1.000 dengan filter Claude</h3>'
-                 '<p class="note" style="margin-top:0">Posisi bot yang sama, tapi yang sinyal pembukanya '
-                 'ditolak Claude (DISAGREE) dibuang; tanpa opini tetap diambil. Hanya tampilan. Posisi '
-                 f'sebelum {CLAUDE_FRESH_FROM:%d %b %H:%M} UTC sudah dipakai saat H-S dinilai, jadi hanya '
-                 '"data baru" yang merupakan bukti segar. Posisi yang dibuang mungkin akan diganti sinyal '
-                 'lain di dunia nyata; itu tidak terlihat di sini.</p>'
-                 '<div class="cols"><div><dl class="kv">'
-                 + "".join(f"<div><dt>{k}</dt><dd>{v}</dd></div>" for k, v in kv) + "</dl></div><div>"
-                 + chart([{"n": "filter Claude", "c": "var(--ink)", "p": ca["curve"]},
-                          {"n": "tanpa filter", "c": "var(--mute)", "dash": True,
-                           "p": ac["curve"] if ac else []}],
-                         width=560, height=170, y_fmt="{:,.0f}", label="ekuitas dengan dan tanpa filter Claude")
-                 + '<div class="legend"><span><i style="background:var(--ink)"></i>filter Claude</span>'
-                   '<span><i style="background:var(--mute)"></i>tanpa filter</span></div></div></div>'
-                 + ('<details><summary>Posisi yang dibuang Claude</summary>' + _table(
-                     ["id", "mode", "arah", "ditutup", "hasil", "P&L"], rows, num=(5,)) + "</details>"
-                    if rows else ""))
-    since = man.get("started_at")
-    P.append(f'<h3 style="margin-top:22px">Kinerja buku{f" sejak run dimulai {_t(since)}" if since else ""}</h3>'
-             + _book_table(d.get("totals") or {}))
-    curves = []
-    for m in ("futures", "spot"):
-        pts = (d.get("curve") or {}).get(m) or []
-        curves.append(f'<div><h3>{m.capitalize()}: P&amp;L kumulatif (pp)</h3>'
-                      + chart([{"n": "", "c": "var(--ink)", "p": pts}], width=560, height=190, zero=True,
-                              y_fmt="{:+.1f}", label=f"P&L kumulatif {m}") + "</div>")
-    P.append(f'<div class="cols" style="margin-top:18px">{"".join(curves)}</div>')
-
+               {"n": "garis", "c": "var(--mute)", "dash": True, "p": [(_dt(r[0]).timestamp(), r[3] or 0) for r in rows]}]
+        blocks.append(f'<div><h3>Nilai {m}, 72 jam</h3>' + chart(ser, width=560, height=190, label=f"nilai {m}") + "</div>")
+    det.append(f'<div class="cols" style="margin-top:18px">{"".join(blocks)}</div>')
     prices = d.get("prices") or []
     marks = []
     for p in d.get("marks") or []:
         col = "var(--buy)" if p["type"] == "BUY" else "var(--sell)"
         o = _dt(p["opened_at"])
         if o and p["entry_price"]:
-            marks.append((o.timestamp(), p["entry_price"], col, True,
-                          f"#{p['id']} {p['mode']} {p['type']} dibuka {_n(p['entry_price'])}"))
+            marks.append((o.timestamp(), p["entry_price"], col, True, f"#{p['id']} dibuka"))
         cdt = _dt(p.get("closed_at"))
         if cdt and p.get("exit_price"):
-            marks.append((cdt.timestamp(), p["exit_price"], col, False,
-                          f"#{p['id']} ditutup {p['outcome']} {_n(p['pnl_pct'], 2, True)}%"))
+            marks.append((cdt.timestamp(), p["exit_price"], col, False, f"#{p['id']} ditutup {_n(p['pnl_pct'], 2, True)}%"))
     t_range = None
     if prices:
         t_range = (_dt(prices[0][0]).timestamp(), _dt(prices[-1][0]).timestamp())
         marks = [m for m in marks if t_range[0] <= m[0] <= t_range[1]]
-    P.append('<h3 style="margin-top:22px">BTC 7 hari, dengan entri (titik penuh) dan exit (titik kosong)</h3>'
-             + chart([{"n": "", "c": "var(--ink2)", "p": [(_dt(t).timestamp(), px) for t, px in prices]}],
-                     height=240, y_fmt="{:,.0f}", markers=marks, t_range=t_range, label="harga BTC 7 hari"))
-    rows = [[f"#{p['id']}", e(p["mode"]), _dir(p["type"]), _t(p["opened_at"]), _t(p["closed_at"]),
-             e(str(p["outcome"])), _n(p["entry_price"]), _n(p["exit_price"]), _pnl(p["pnl_pct"], 2, "%")]
-            for p in d.get("closed_recent") or []]
-    P.append('<details open><summary>Posisi tertutup terakhir</summary>' + _table(
-        ["id", "mode", "arah", "dibuka", "ditutup", "hasil", "entry", "exit", "P&L"], rows,
-        num=(6, 7, 8)) + "</details></section>")
-
-    # ── Market
-    fu = last.get("futures") or {}
+    det.append('<h3 style="margin-top:18px">Harga BTC 7 hari (titik penuh = masuk, titik kosong = keluar)</h3>'
+               + chart([{"n": "", "c": "var(--ink2)", "p": [(_dt(t).timestamp(), px) for t, px in prices]}],
+                       height=220, y_fmt="{:,.0f}", markers=marks, t_range=t_range, label="harga BTC"))
+    fu = fut or {}
     htf = fu.get("htf") or {}
     ema = ((fu["price"] - fu["ema200"]) / fu["ema200"] * 100) if fu.get("price") and fu.get("ema200") else None
-    chg = lambda v, c, nd=2: f"{_n(v, nd)}<small>{_n(c, 2, True, '%')}</small>" if v is not None else "–"
     kv = [("Funding", _n(fu.get("funding"), 4, True, "%")), ("Basis", _n(fu.get("basis"), 3, True, "%")),
-          ("Long/short akun", _n(fu.get("ls"))), ("Open interest", _n(fu.get("oi"), 2, True, "%")),
+          ("Long/short", _n(fu.get("ls"))), ("Open interest", _n(fu.get("oi"), 2, True, "%")),
           ("Taker beli/jual", _n(fu.get("taker"), 3)), ("Fear & Greed", _n(fu.get("fng"), 0)),
-          ("RSI 1j", _n(fu.get("rsi"), 1)), ("Jarak EMA200 1j", _n(ema, 2, True, "%")),
-          ("ATR 1j", _n(fu.get("atr"), 0)),
-          ("Tren 4j / 1h", f"{e(str(htf.get('4h', '–')))} / {e(str(htf.get('1d', '–')))}"),
-          ("DXY", chg(fu.get("dxy"), fu.get("dxy_chg"))),
-          ("S&amp;P 500", chg(fu.get("sp"), fu.get("sp_chg"), 0)),
-          ("VIX", chg(fu.get("vix"), fu.get("vix_chg"))),
-          ("Emas", chg(fu.get("gold"), fu.get("gold_chg"), 0)),
-          ("Dominasi BTC", _n(fu.get("btc_dom"), 1, suffix="%")),
-          ("Stablecoin", _n(fu.get("stable"), 1, suffix=" mlr")), ("Sentimen berita", e(str(fu.get("news") or "–")))]
-    P.append(f'<section><h2>Pasar saat siklus futures terakhir</h2><p class="lede">{_t(fu.get("ts"))} UTC. '
-             'Angka yang sama dengan yang dibaca engine.</p><div class="panel"><dl class="kv">'
-             + "".join(f"<div><dt>{k}</dt><dd>{v}</dd></div>" for k, v in kv) + "</dl></div>")
+          ("RSI", _n(fu.get("rsi"), 1)), ("Jarak EMA200", _n(ema, 2, True, "%")),
+          ("Tren 4 jam / harian", f"{e(str(htf.get('4h', '–')))} / {e(str(htf.get('1d', '–')))}"),
+          ("DXY", _n(fu.get("dxy"))), ("VIX", _n(fu.get("vix"))), ("Dominasi BTC", _n(fu.get("btc_dom"), 1, suffix="%"))]
+    det.append('<h3 style="margin-top:18px">Pasar saat perhitungan terakhir</h3><dl class="kv">'
+               + "".join(f"<div><dt>{k}</dt><dd>{v}</dd></div>" for k, v in kv) + "</dl>")
     reasons = fu.get("reasons") or []
-    sp_reasons = (last.get("spot") or {}).get("reasons") or []
-    P.append('<div class="cols" style="margin-top:20px">')
-    P.append('<div><h3>Alasan skor futures</h3>' + ('<ul class="reasons">' + "".join(
-        f"<li>{e(r)}</li>" for r in reasons) + "</ul>" if reasons else '<p class="empty">–</p>') + "</div>")
-    P.append('<div><h3>Alasan skor spot</h3>' + ('<ul class="reasons">' + "".join(
-        f"<li>{e(r)}</li>" for r in sp_reasons) + "</ul>" if sp_reasons else '<p class="empty">–</p>') + "</div>")
-    P.append("</div></section>")
-
-    # ── Macro + gates
-    P.append('<section class="cols">')
-    if macro is not None:
-        items = []
-        for ev in macro:
-            soon = 0 <= (ev["t"] - now).total_seconds() <= MACRO_CLOSE_H * 3600
-            fc = f"perkiraan {ev['forecast']}, sebelumnya {ev['previous']}" if ev.get("forecast") not in (None, "", "N/A") else ""
-            items.append(f'<li class="{"soon" if soon else ""}"><span class="when">{_until(now, ev["t"])}</span>'
-                         f'<span>{e(ev["event"] or "")}<br><span class="mute">{ev["t"]:%d %b %H:%M} UTC'
-                         f'{" · " + e(fc) if fc else ""}{" · bot menutup posisi & menahan sinyal" if soon else ""}'
-                         f'</span></span></li>')
-        P.append('<div><h2>Agenda makro</h2><p class="lede">Event USD berdampak tinggi. Dua jam '
-                 'sebelumnya bot menahan sinyal dan menutup posisi.</p>'
-                 + (f'<ul class="agenda">{"".join(items)}</ul>' if items else '<p class="empty">Tidak ada event terjadwal.</p>')
-                 + "</div>")
+    if reasons:
+        det.append('<h3 style="margin-top:18px">Alasan nilai futures</h3><ul class="reasons">'
+                   + "".join(f"<li>{e(r)}</li>" for r in reasons) + "</ul>")
     gb = d.get("blocks") or {}
-    blk = []
-    for m in ("futures", "spot"):
-        rows = gb.get(m) or []
-        top = max([r[2] for r in rows] or [1])
-        blk.append(f'<h3 style="margin-top:12px">{m.capitalize()}</h3>' + (
-            '<div class="bars"><span class="h">gate</span><span class="h">7 hari</span>'
-            '<span class="h n">24 j</span><span class="h n">7 h</span>'
-            + "".join(f'<span>{e(g)}</span><div class="b" style="width:{n7 / top * 100:.0f}%"></div>'
-                      f'<span class="n" style="text-align:right">{n24}</span>'
-                      f'<span style="text-align:right">{n7}</span>' for g, n24, n7 in rows) + "</div>"
-            if rows else '<p class="empty">Tidak ada sinyal diblokir 7 hari terakhir.</p>'))
-    P.append('<div><h2>Sinyal yang diblokir gate</h2><p class="lede">Sinyal yang lolos ambang tapi '
-             'ditahan sebelum posisi dibuka.</p>' + "".join(blk) + "</div></section>")
-
-    # ── Claude
-    labels = {"entry": ("Opini atas sinyal", "AGREE/DISAGREE per sinyal yang menyala (H-S)"),
-              "exit": ("Opini atas posisi terbuka", "CLOSE/HOLD tiap jam selama posisi terbuka (H-X)"),
-              "flip": ("Opini sebelum flip", "FLIP/HOLD saat sinyal berlawanan muncul (H-FLP-C)")}
-    P.append('<section><h2>Opini Claude atas bot BTC</h2><p class="lede">Semua opini dicatat saja, tidak pernah '
-             'mengubah trade.</p><div class="cols3">')
+    rows = [[e(m), e(g), str(n24), str(n7)] for m in ("futures", "spot") for g, n24, n7 in gb.get(m) or []]
+    det.append('<h3 style="margin-top:18px">Sinyal yang ditahan pemeriksaan keamanan</h3>'
+               + (_table(["jenis", "pemeriksaan", "24 jam", "7 hari"], rows, num=(2, 3)) if rows
+                  else '<p class="empty">Tidak ada dalam 7 hari terakhir.</p>'))
+    labels = {"entry": "Opini Claude atas sinyal (setuju/tidak)", "exit": "Opini Claude atas posisi terbuka (tutup/tahan)",
+              "flip": "Opini Claude sebelum berbalik arah"}
     for key, data in (d.get("opinions") or {}).items():
-        title, what = labels[key]
-        stats = data["stats"]
-        st = "".join(f'<p class="big">{x["n"]}<span class="mute" style="font:400 14px Barlow"> opini 7 hari, '
-                     f'{x["provider"]}</span></p><p class="note">'
-                     + e(", ".join(f"{k} {v}" for k, v in sorted(x["verdicts"].items())))
-                     + (f' · <span class="neg">{x["errors"]} error</span>' if x["errors"] else "")
-                     + "</p>" for x in stats) or '<p class="empty">Tidak ada opini 7 hari terakhir.</p>'
-        rows = [[_t(ts), e(str(m)), _dir(side), e(str(v)) if v else '<span class="neg">error</span>',
+        rows = [[_t(ts), e(str(m)), _side(side) if side else "–", e(str(v)) if v else '<span class="neg">gagal</span>',
                  _n(conf, 0), f'<td class="r">{e(str(err if err else r or ""))}</td>']
-                for ts, m, side, p, v, conf, r, err in data["rows"]]
-        P.append(f'<div class="panel"><h3>{title}</h3><p class="note" style="margin-top:0">{what}</p>{st}'
-                 f'<details><summary>{len(rows)} opini terakhir</summary>'
-                 + _table(["waktu", "mode", "arah", "verdict", "yakin", "alasan"], rows, num=(4,))
-                 + "</details></div>")
-    P.append("</div></section>")
+                for ts, m, side, p_, v, conf, r, err in data["rows"]]
+        det.append(f'<h3 style="margin-top:18px">{labels[key]}</h3>'
+                   + _table(["waktu", "jenis", "arah", "opini", "yakin", "alasan"], rows, num=(4,)))
+    P.append('<details class="tech"><summary>Detail teknis</summary>' + "".join(det) + "</details>")
+    return "".join(P)
 
-    # ── Cost + run
-    P.append('</div><div class="tabpanel" role="tabpanel" id="tab-sistem" aria-labelledby="t-sistem">')
-    P.append('<section class="cols">')
+
+def _system_tab(f, now):
+    h, d, c, man = f.get("host") or {}, f.get("db") or {}, f.get("cost"), f.get("manifest") or {}
+    rows = [[f'<span class="dot {"" if ok else "bad"}" aria-hidden="true"></span>', e(name), f"<b>{e(val)}</b>",
+             f'<span class="mute">{e(why)}</span>'] for ok, name, val, why in _health_rows(f, now)]
+    P = ['<section><h2>Kesehatan VPS</h2>' + _table(["", "bagian", "kondisi", "artinya"], rows) + "</section>"]
     if c:
         bud = c.get("budget")
         over = bud and c["llm_usd_projected_month"] > bud
-        prov = ", ".join(f"{p} ${v['usd']:.2f}" for p, v in (c.get("llm_cost_mtd") or {}).items())
-        P.append('<div><h2>Biaya API</h2><dl class="kv">'
-                 f'<div><dt>24 jam</dt><dd>${c["llm_usd_24h"]:.2f}</dd></div>'
+        P.append('<section><h2>Biaya Claude API</h2><dl class="kv">'
+                 f'<div><dt>24 jam terakhir</dt><dd>${c["llm_usd_24h"]:.2f}</dd></div>'
                  f'<div><dt>Bulan ini</dt><dd>${c["llm_usd_mtd"]:.2f}</dd></div>'
-                 f'<div><dt>Proyeksi akhir bulan</dt><dd class="{"neg" if over else ""}">'
-                 f'${c["llm_usd_projected_month"]:.2f}{f"<small>dari ${bud:.0f}</small>" if bud else ""}</dd></div>'
-                 f'</dl><p class="note">{e(prov)}. Angka yang sama dengan laporan ops harian.</p></div>')
-    meta = [("Run dimulai", f"{_t(man.get('started_at'))} UTC"),
-            ("Futures dihitung sejak", f"{_t(man.get('futures_restart_at'))} UTC"),
-            ("Commit di VPS", h.get("git_head") or "–"), ("Commit saat run dimulai", man.get("git_sha") or "–"),
-            ("Bot berjalan sejak", f"{_t(h.get('bot_since'))} UTC" if h.get("bot_since") else "–"),
-            ("Siklus 24 jam", _n(d.get("cycles_24h"), 0)), ("Database", f"{d.get('db_mb', '–')} MB"),
-            ("Backup terakhir", e(h.get("backup_latest") or "–"))]
-    P.append('<div><h2>Run</h2><div class="meta">' + "".join(
-        f"<div>{k}: <b>{v}</b></div>" for k, v in meta) + "</div></div></section>")
-    P.append(f"</div></main><script>{JS}</script></body></html>")
+                 f'<div><dt>Perkiraan akhir bulan</dt><dd class="{"neg" if over else ""}">'
+                 f'${c["llm_usd_projected_month"]:.2f}{f"<small>batas ${bud:.0f}</small>" if bud else ""}</dd></div></dl></section>')
+    meta = [("Run dimulai", f"{_t(man.get('started_at'))} UTC"), ("Bot berjalan sejak", f"{_t(h.get('bot_since'))} UTC" if h.get("bot_since") else "–"),
+            ("Versi kode di VPS", h.get("git_head") or "–"), ("Siklus 24 jam", _n(d.get("cycles_24h"), 0)),
+            ("Ukuran database", f"{d.get('db_mb', '–')} MB"), ("Backup terakhir", e(h.get("backup_latest") or "–"))]
+    P.append('<section><h2>Info run</h2><div class="meta">' + "".join(f"<div>{k}: <b>{v}</b></div>" for k, v in meta) + "</div></section>")
+    return "".join(P)
+
+
+def render(f):
+    now = f["now"]
+    d, s = f.get("db") or {}, f.get("scanner")
+    probs = issues(f)
+    P = [f"<!doctype html><html lang=id><head><meta charset=utf-8>"
+         f"<meta name=viewport content='width=device-width,initial-scale=1'>"
+         f"<meta http-equiv=refresh content={REFRESH_S}><title>SpotSignal VPS</title>"
+         f"<link rel=preconnect href=https://fonts.gstatic.com crossorigin>"
+         f"<link rel=stylesheet href='{FONTS}'><style>{CSS}</style></head><body><main>"]
+    P.append(f'<div class="top"><h1>SpotSignal · uang demo, bukan uang sungguhan</h1>'
+             f'<span class="stamp">Diperbarui {now:%d %b %H:%M} UTC · otomatis tiap {REFRESH_S // 60} menit</span></div>')
+    if probs:
+        P.append(f'<p class="status bad"><span class="dot bad" aria-hidden="true"></span>{len(probs)} hal perlu dicek: '
+                 f'{e("; ".join(probs))}. <a href="#sistem" data-tab="sistem">Lihat Sistem</a></p>')
+    else:
+        P.append('<p class="status"><span class="dot" aria-hidden="true"></span>Sistem sehat: bot berjalan, data '
+                 'lengkap, siklus terakhir tepat waktu.</p>')
+    for err in f["errors"]:
+        P.append(f'<div class="err">Bagian tidak terbaca: {e(err)}</div>')
+    ac, ca, bk = d.get("account"), d.get("claude_account"), (s or {}).get("book")
+    tot = d.get("totals") or {}
+    n_btc = sum((t or {}).get("n", 0) for t in tot.values())
+    P.append('<h2 class="sr">Uang demo</h2><div class="cards">')
+    P.append(_card("Bot BTC", "robot trading BTC, keputusannya sendiri", ac,
+                   f'{len(d.get("open") or [])} posisi berjalan · {n_btc} selesai', "btc"))
+    if ca:
+        P.append(_card("Bot BTC + saran Claude", "sama, tapi posisi yang tidak disetujui Claude dilewati", ca,
+                       f'{ca["kept"]} diambil · {ca["vetoed"]} dilewati', "btc"))
+    P.append(_card("Claude pilih koin", "Claude memilih dari 9 koin tiap jam", bk,
+                   (f'{len(bk["open"])} posisi berjalan · {bk["stats"]["n"]} selesai' if bk else ""), "scanner"))
+    P.append("</div>")
+    ev = _events(d, s, now)
+    recent = [x for x in ev if (now - x[0]).total_seconds() <= 86400]
+    head = "Yang terjadi 24 jam terakhir" if recent else "Kejadian terakhir"
+    show = recent[:10] if recent else ev[:5]
+    P.append(f'<section class="feed"><h2>{head}</h2>' + (
+        '<ul>' + "".join(f'<li><span class="when">{_ago(now, t)}</span><span class="book">{e(b)}</span>'
+                         f'<span>{txt}</span></li>' for t, b, txt in show) + "</ul>"
+        if show else '<p class="empty">Belum ada kejadian.</p>') + "</section>")
+    P.append('<nav class="tabs" role="tablist" aria-label="Bagian dashboard">'
+             '<button role="tab" id="t-scanner" aria-controls="tab-scanner" data-tab="scanner">Claude pilih koin</button>'
+             '<button role="tab" id="t-btc" aria-controls="tab-btc" data-tab="btc">Bot BTC</button>'
+             '<button role="tab" id="t-sistem" aria-controls="tab-sistem" data-tab="sistem">Sistem</button></nav>')
+    P.append('<div class="tabpanel" role="tabpanel" id="tab-scanner" aria-labelledby="t-scanner">' + _scanner_tab(s) + "</div>")
+    P.append('<div class="tabpanel" role="tabpanel" id="tab-btc" aria-labelledby="t-btc">' + _btc_tab(f, now) + "</div>")
+    P.append('<div class="tabpanel" role="tabpanel" id="tab-sistem" aria-labelledby="t-sistem">' + _system_tab(f, now) + "</div>")
+    P.append('<details class="glossary"><summary>Arti istilah</summary><dl>'
+             '<dt>LONG ↑</dt><dd>bertaruh harga naik; untung kalau harga naik.</dd>'
+             '<dt>SHORT ↓</dt><dd>bertaruh harga turun; untung kalau harga turun.</dd>'
+             '<dt>Stop</dt><dd>harga batas rugi; posisi ditutup otomatis di sana.</dd>'
+             '<dt>Target</dt><dd>harga ambil untung.</dd>'
+             '<dt>Untung/rugi sekarang</dt><dd>hasil kalau posisi ditutup saat ini; belum final.</dd>'
+             '<dt>Spot / futures</dt><dd>spot hanya bisa LONG; futures bisa LONG dan SHORT.</dd>'
+             '<dt>Uang demo</dt><dd>semua akun di halaman ini fiktif, untuk mengumpulkan data.</dd></dl></details>')
+    P.append(f"</main><script>{JS}</script></body></html>")
     return "".join(P)
 
 
