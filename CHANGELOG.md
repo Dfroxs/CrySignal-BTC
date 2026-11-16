@@ -10,12 +10,17 @@ Owner: "kenapa tidak dicoba sekalian, ini hanya uang demo". Every LONG/SHORT sca
 now opens a demo position in `scan_positions` (`data/scanner.db`): one per coin (a pick for a
 held coin is ignored, opposite or not), entry at the bar close, stop 1.5 x ATR(1h), target
 3 x ATR, closed at the close 24h after entry, a bar touching both counted as the stop,
-0.20pp round trip, 100 USD notional. `run_once` walks open positions through the newly
+0.20pp round trip, on a 1,000 USD demo account (each position 10% of realised equity, opened
+only if free cash covers it). `run_once` walks open positions through the newly
 closed bars before asking, and opens after storing the picks; a book failure is logged and
 never costs a scan. The model never sees the book, so H-SC is unchanged (prereg addendum).
-Dashboard: "Buku paper scanner" panel (open positions marked to the latest close, totals,
-win rate, profit factor, drawdown, outcomes, USD curve, recent closes). Separate from
-`paper_positions`: the BTC bot and its hypotheses are untouched. One test (320/320).
+Dashboard no longer BTC-only (owner): it opens with "Dua buku" (BTC bot in pp beside the
+scanner account's equity, realised, floating, free cash), then "Sembilan koin" (price,
+1h/24h/7d return, vs universe, funding, OI, L/S, Claude's latest pick and reason, the demo
+position per coin, all from the context Claude saw), then the demo account (stats, open
+positions with size and floating USD, equity curve, recent closes); the BTC sections follow,
+headed "Bot BTC". Separate from `paper_positions`: the BTC bot and its hypotheses are
+untouched. One test (320/320).
 
 ---
 

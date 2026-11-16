@@ -5608,7 +5608,20 @@ def test_scanner_paper_book_opens_one_per_coin_and_exits_stop_first_target_or_ti
     assert rows["SOL"][0] == "TIME", "the bar before entry must not stop it out"
     assert rows["SOL"][4] == s._iso(t0 + 24 * H), "time exit at the close 24h after entry"
     assert s.manage_book(con, snap2) == 0, "closed positions are never touched again"
+    usd = dict(con.execute("SELECT coin, pnl_usd FROM scan_positions"))
+    assert abs(usd["BTC"] - (-1.7)) < 1e-9 and abs(usd["ETH"] - 2.8) < 1e-9, "10% of 1,000 = 100 USD each"
+    equity, used = s.book_account(con)
+    assert used == 0 and abs(equity - (1000 + sum(usd.values()))) < 1e-9
     assert s.open_book(con, 3, {"BTC": {"side": "SHORT", "confidence": 90}}, snap, t0 + 30 * H) == 1
+    size = con.execute("SELECT size_usd FROM scan_positions ORDER BY id DESC LIMIT 1").fetchone()[0]
+    assert size == round(equity * 0.10, 2), "size compounds with realised equity"
+    saved = s.BOOK_FRACTION
+    try:
+        s.BOOK_FRACTION = 0.5             # BTC holds ~10%, so one more 50% fits and the next does not
+        two = {"ETH": {"side": "LONG", "confidence": 1}, "SOL": {"side": "LONG", "confidence": 1}}
+        assert s.open_book(con, 4, two, snap, t0 + 30 * H) == 1, "no position without the cash for it"
+    finally:
+        s.BOOK_FRACTION = saved
 
 
 def test_scanner_eval_excess_day_unit_verdict_and_leakage():
@@ -5677,7 +5690,7 @@ def test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel():
         page = dsh.render(f)
         assert "Semua berjalan normal" not in page, "a blind futures cycle is an issue"
         assert "data futures Binance kosong" in page and "+3,50 pp" in page and "#1 futures SELL" not in page
-        assert "Seberapa dekat ke sinyal" in page and "fetch(" not in page, "the page calls nothing"
+        assert "Bot BTC: seberapa dekat ke sinyal" in page and "Dua buku" in page and "fetch(" not in page, "the page calls nothing"
         assert dsh._nice_ticks(1.08, 7.17) == [2.0, 4.0, 6.0]
         assert dsh.issues({"host": {"services": {"bot": "active"}}, "db": {"last_cycle_age_min": 5,
                                                                            "last": {}}, "errors": []}) == []
