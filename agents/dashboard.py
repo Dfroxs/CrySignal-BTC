@@ -279,8 +279,31 @@ def scanner_facts(path):
                            "JOIN scan_cycles c ON c.id = p.cycle_id "
                            "WHERE p.side != 'NONE'").fetchone()[0]
         n_picks = con.execute("SELECT COUNT(*) FROM scan_picks WHERE side != 'NONE'").fetchone()[0]
-        return {"cycles": n, "errors": errs or 0, "usd": usd or 0.0, "last": last,
-                "picks": picks, "days": days, "n_picks": n_picks}
+        out = {"cycles": n, "errors": errs or 0, "usd": usd or 0.0, "last": last,
+               "picks": picks, "days": days, "n_picks": n_picks, "book": None}
+        if "scan_positions" in _tables(con):
+            px = dict(con.execute("SELECT coin, close FROM scan_picks WHERE cycle_id = ?",
+                                  (last[0],)).fetchall()) if last else {}
+            cols = ("id", "coin", "side", "confidence", "opened_bar", "entry", "stop", "target",
+                    "closed_bar", "exit", "outcome", "pnl_pct", "pnl_usd")
+            pos = [dict(zip(cols, r)) for r in con.execute(
+                f"SELECT {', '.join(cols)} FROM scan_positions ORDER BY id")]
+            opened = [p for p in pos if p["closed_bar"] is None]
+            for p in opened:
+                cur = px.get(p["coin"])
+                p["price"] = cur
+                p["move_pct"] = ((cur / p["entry"] - 1) * 100 * (1 if p["side"] == "LONG" else -1)
+                                 if cur else None)
+            closed = sorted((p for p in pos if p["closed_bar"]), key=lambda p: p["closed_bar"])
+            rows = [(_dt(p["opened_bar"]), _dt(p["closed_bar"]), p["pnl_pct"], p["outcome"])
+                    for p in closed]
+            acc, curve = 0.0, ([(rows[0][0].timestamp(), 0.0)] if rows else [])
+            for p in closed:
+                acc += p["pnl_usd"]
+                curve.append((_dt(p["closed_bar"]).timestamp(), round(acc, 2)))
+            out["book"] = {"open": opened, "closed": closed[::-1][:CLOSED_ROWS],
+                           "stats": _book(rows), "usd": round(acc, 2), "curve": curve}
+        return out
     finally:
         con.close()
 
@@ -862,6 +885,39 @@ def render(f):
                  + (_table(["koin", "arah", "yakin", "alasan"], rows, num=(2,)) if rows
                     else '<p class="empty">Jam terakhir: tidak ada koin yang dipilih.</p>') + "</div>")
     P.append("</div></section>")
+
+    # ── Scanner paper book
+    bk = (s or {}).get("book")
+    if bk is not None:
+        st = bk["stats"]
+        P.append('<section><h2>Buku paper scanner</h2><p class="lede">Setiap pick LONG/SHORT '
+                 'dibuka sebagai posisi demo $100: stop 1,5×ATR, target 3×ATR, ditutup paling '
+                 'lambat 24 jam, satu posisi per koin, biaya 0,20pp. Untuk mengumpulkan data, '
+                 'bukan klaim profit; skor H-SC tetap dihitung dari pick, bukan dari buku ini.</p>')
+        kv = [("Posisi terbuka", str(len(bk["open"]))), ("Ditutup", str(st["n"])),
+              ("Total", _pnl(bk["usd"], 2, " USD")), ("Total %", _pnl(st["sum"], 2, " pp")),
+              ("Menang", f'{st["win"]}%' if st["win"] is not None else "–"),
+              ("Profit factor", _n(st.get("pf")) if st.get("pf") is not None else "–"),
+              ("Drawdown", _pnl(-st["max_dd"], 2, " pp") if st["n"] else "–"),
+              ("Hasil", e(", ".join(f"{k} {v}" for k, v in (st.get("outcomes") or {}).items())) or "–")]
+        P.append('<div class="panel"><dl class="kv">' + "".join(
+            f"<div><dt>{k}</dt><dd>{v}</dd></div>" for k, v in kv) + "</dl></div>")
+        if bk["open"]:
+            rows = [[f"<b>{e(p['coin'])}</b>", _dir(p["side"]), _t(p["opened_bar"]),
+                     _n(p["entry"], 4), _n(p["price"], 4), _pnl(p["move_pct"], 2, "%"),
+                     _n(p["stop"], 4), _n(p["target"], 4), _n(p["confidence"], 0)] for p in bk["open"]]
+            P.append('<h3 style="margin-top:20px">Terbuka</h3>' + _table(
+                ["koin", "arah", "dibuka", "entry", "harga", "gerak", "stop", "target", "yakin"],
+                rows, num=(3, 4, 5, 6, 7, 8)))
+        P.append('<div class="cols" style="margin-top:20px"><div><h3>Kurva (USD, posisi tertutup)</h3>'
+                 + chart([{"n": "", "c": "var(--ink)", "p": bk["curve"]}], width=560, height=190,
+                         zero=True, y_fmt="{:+.2f}", label="kurva buku scanner") + "</div><div>")
+        rows = [[f"<b>{e(p['coin'])}</b>", _dir(p["side"]), _t(p["closed_bar"]), e(str(p["outcome"])),
+                 _pnl(p["pnl_pct"], 2, "%")] for p in bk["closed"]]
+        P.append('<h3>Ditutup terakhir</h3>' + (_table(["koin", "arah", "ditutup", "hasil", "P&L"], rows,
+                                                       num=(4,)) if rows else
+                                                '<p class="empty">Belum ada posisi yang ditutup.</p>')
+                 + "</div></div></section>")
 
     # ── Cost + run
     P.append('<section class="cols">')

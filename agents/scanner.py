@@ -123,6 +123,7 @@ def fetch_coin(coin, premium, now_ms, get=_get):
     if f is None:
         raise ValueError(f"{sym}: only {len(bars)} closed bars")
     f["bar_open_ms"] = bars[-1][0]
+    f["_bars"] = [(k[0], k[2], k[3], k[4]) for k in bars[-72:]]   # (open_ms, high, low, close)
     p = premium.get(sym) or {}
     f["funding_pct"] = _num(float(p["lastFundingRate"]) * 100, 5) if "lastFundingRate" in p else None
     mark, idx = _num(p.get("markPrice"), 8), _num(p.get("indexPrice"), 8)
@@ -178,7 +179,7 @@ def build_context(snap):
         if not f:
             coins[c] = None
             continue
-        d = {k: v for k, v in f.items() if k not in ("bar_open_ms", "close")}
+        d = {k: v for k, v in f.items() if k not in ("bar_open_ms", "close") and not k.startswith("_")}
         d["ret_24h_vs_universe_pct"] = (_num(f["ret_24h_pct"] - mean24)
                                         if mean24 is not None and f["ret_24h_pct"] is not None
                                         else None)
@@ -238,8 +239,98 @@ def connect(path=DB_PATH):
             close      REAL                  -- the coin's close at bar_close
         );
         CREATE INDEX IF NOT EXISTS idx_scan_picks_cycle ON scan_picks(cycle_id);
+        -- Paper book driven by the picks (design decision for data, not part of H-SC).
+        CREATE TABLE IF NOT EXISTS scan_positions (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            coin        TEXT NOT NULL,
+            side        TEXT NOT NULL,           -- LONG / SHORT
+            cycle_id    INTEGER REFERENCES scan_cycles(id),
+            confidence  INTEGER,
+            opened_bar  TEXT NOT NULL,           -- bar close the entry was priced at (UTC)
+            entry       REAL NOT NULL,
+            stop        REAL NOT NULL,
+            target      REAL NOT NULL,
+            atr_pct     REAL,
+            closed_bar  TEXT,                    -- close of the bar the exit happened in
+            exit        REAL,
+            outcome     TEXT,                    -- STOP / TARGET / TIME
+            pnl_pct     REAL,                    -- after BOOK_COST_PP
+            pnl_usd     REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_scan_pos_open ON scan_positions(coin, closed_bar);
     """)
     return con
+
+
+# ── Paper book ──────────────────────────────────────────────────────────────────────
+# Design decision for data yield (owner 2026-11-16), fixed before any result: every
+# LONG/SHORT pick opens one position per coin at the bar close; stop 1.5 x ATR(1h), target
+# 3 x ATR, closed at the close of the bar 24h after entry; a bar touching both levels counts
+# as the stop. The model never sees this book, so H-SC's picks are unaffected by it.
+
+BOOK_STOP_ATR, BOOK_TARGET_ATR, BOOK_HOLD_H = 1.5, 3.0, 24
+BOOK_COST_PP = 0.20                  # futures round trip, as the H-SC prereg's net figure
+BOOK_NOTIONAL_USD = 100.0            # of a 1,000 USD virtual account, one slot per coin
+
+
+def book_levels(side, entry, atr_pct):
+    d = 1 if side == "LONG" else -1
+    a = entry * atr_pct / 100
+    return entry - d * BOOK_STOP_ATR * a, entry + d * BOOK_TARGET_ATR * a
+
+
+def _close_pos(con, pid, side, entry, bar_close_ms, exit_px, outcome):
+    d = 1 if side == "LONG" else -1
+    pct = d * (exit_px / entry - 1) * 100 - BOOK_COST_PP
+    con.execute("UPDATE scan_positions SET closed_bar=?, exit=?, outcome=?, pnl_pct=?, pnl_usd=? "
+                "WHERE id=?", (_iso(bar_close_ms), exit_px, outcome, round(pct, 4),
+                               round(pct / 100 * BOOK_NOTIONAL_USD, 4), pid))
+
+
+def manage_book(con, snap):
+    """Walk every open position through the closed bars after its entry. Returns closes."""
+    closed = 0
+    for pid, coin, side, opened, entry, stop, target in con.execute(
+            "SELECT id, coin, side, opened_bar, entry, stop, target FROM scan_positions "
+            "WHERE closed_bar IS NULL").fetchall():
+        f = snap["coins"].get(coin)
+        if not f:
+            continue                         # missing this hour; the next fetch has the bars
+        t0 = int(datetime.fromisoformat(opened).timestamp() * 1000)
+        deadline = t0 + BOOK_HOLD_H * BAR_MS
+        for open_ms, hi, lo, cl in f["_bars"]:
+            end = open_ms + BAR_MS
+            if open_ms < t0:
+                continue
+            hit_stop = lo <= stop if side == "LONG" else hi >= stop
+            hit_tgt = hi >= target if side == "LONG" else lo <= target
+            if hit_stop or hit_tgt:
+                _close_pos(con, pid, side, entry, end, stop if hit_stop else target,
+                           "STOP" if hit_stop else "TARGET")
+                closed += 1
+                break
+            if end >= deadline:
+                _close_pos(con, pid, side, entry, end, cl, "TIME")
+                closed += 1
+                break
+    return closed
+
+
+def open_book(con, cid, picks, snap, bar_close_ms):
+    """One position per coin: a pick for a coin already held is ignored."""
+    held = {r[0] for r in con.execute("SELECT coin FROM scan_positions WHERE closed_bar IS NULL")}
+    opened = 0
+    for coin, p in picks.items():
+        f = snap["coins"].get(coin)
+        if p["side"] == "NONE" or coin in held or not f or not f.get("atr_pct"):
+            continue
+        stop, target = book_levels(p["side"], f["close"], f["atr_pct"])
+        con.execute("INSERT INTO scan_positions (coin, side, cycle_id, confidence, opened_bar, "
+                    "entry, stop, target, atr_pct) VALUES (?,?,?,?,?,?,?,?,?)",
+                    (coin, p["side"], cid, p["confidence"], _iso(bar_close_ms), f["close"],
+                     stop, target, f["atr_pct"]))
+        opened += 1
+    return opened
 
 
 def _iso(ms):
@@ -260,6 +351,10 @@ def run_once(ask_fn=None, get=_get, db_path=DB_PATH, now_ms=None, usage_path=USA
         if con.execute("SELECT 1 FROM scan_cycles WHERE bar_close = ?", (bar,)).fetchone():
             logger.info("bar %s already scanned", bar)
             return None
+        try:
+            manage_book(con, snap)           # exits first, on the bars closed since last cycle
+        except Exception as exc:  # noqa: BLE001 - the book must never cost a scan
+            logger.warning("paper book not managed: %s", exc)
         ctx = build_context(snap)
         prompt = "Scanner input (JSON):\n" + json.dumps(ctx, indent=1)
         rec = {"model": None, "error": None, "input_tokens": None, "output_tokens": None,
@@ -290,6 +385,10 @@ def run_once(ask_fn=None, get=_get, db_path=DB_PATH, now_ms=None, usage_path=USA
             "VALUES (?,?,?,?,?,?)",
             [(cid, c, p["side"], p["confidence"], p["reason"], snap["coins"][c]["close"])
              for c, p in picks.items()])
+        try:
+            open_book(con, cid, picks, snap, snap["bar_close_ms"])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("paper book not opened: %s", exc)
         con.commit()
         return cid
     finally:
