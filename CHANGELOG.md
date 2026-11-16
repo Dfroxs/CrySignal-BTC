@@ -4,6 +4,21 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-16 — docs: pre-registration H-FLP (futures close-and-flip), with a Claude arm
+
+`docs/superpowers/specs/2026-11-16-futures-flip-prereg.md`, written before any figure or
+instrument. One candidate, **flip off** (an opposite signal is skipped while a position
+is open, as same-direction ones already are), parameter-free. Baseline = the live flip,
+which the replay never modelled: needs a default-off `exit_params["flip_at"]` in
+`_simulate_forward` plus a flip-aware sequencer. Arms: BTC primary/confirmation (guard) and
+ETH, BNB, XRP, LINK 2022-2026 (fresh); monthly-sum criterion with a month-block CI;
+fidelity vs the 10 run-3 live positions as a discard. States that only #15 and #16 are
+genuine flip decisions (#14 was a stop breach mislabelled). Claude arm: log-only forward
+`FLIP`/`HOLD` shadow (not backtestable, training-data contamination), scoring pre-registered
+at >=20 events (about 6 months). No code, config or trading change yet.
+
+---
+
 ## 2026-11-16 — results: H-V1 rel_ic_dir PASS, H-S PASS (thin), H-X INCONCLUSIVE, H-V2 descriptive
 
 `docs/superpowers/specs/2026-11-16-run3-futures-results.md`, scored after the futures
