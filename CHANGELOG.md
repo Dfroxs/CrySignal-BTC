@@ -4,6 +4,21 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-16 — feat: scanner paper book (design decision for data, not a test)
+
+Owner: "kenapa tidak dicoba sekalian, ini hanya uang demo". Every LONG/SHORT scanner pick
+now opens a demo position in `scan_positions` (`data/scanner.db`): one per coin (a pick for a
+held coin is ignored, opposite or not), entry at the bar close, stop 1.5 x ATR(1h), target
+3 x ATR, closed at the close 24h after entry, a bar touching both counted as the stop,
+0.20pp round trip, 100 USD notional. `run_once` walks open positions through the newly
+closed bars before asking, and opens after storing the picks; a book failure is logged and
+never costs a scan. The model never sees the book, so H-SC is unchanged (prereg addendum).
+Dashboard: "Buku paper scanner" panel (open positions marked to the latest close, totals,
+win rate, profit factor, drawdown, outcomes, USD curve, recent closes). Separate from
+`paper_positions`: the BTC bot and its hypotheses are untouched. One test (320/320).
+
+---
+
 ## 2026-11-17 — feat: dashboard redesign, more information (owner: "jelek sekali, lengkapi")
 
 `agents/dashboard.py` rewritten around one question per section. Opens with a plain-words
