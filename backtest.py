@@ -334,7 +334,7 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, exit_par
     """
     _ALLOWED = {"trailing_atr_factor", "trailing_post_tp1_factor",
                 "trailing_advance_min_ratio", "max_position_hours",
-                "vol_expansion_exit_mult", "partial_enabled", "be_lock_r"}
+                "vol_expansion_exit_mult", "partial_enabled", "be_lock_r", "flip_at"}
     ep = exit_params or {}
     unknown = set(ep) - _ALLOWED
     if unknown:
@@ -366,6 +366,12 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, exit_par
     be_lock_r = ep.get("be_lock_r")
     lock_risk = abs(entry - sl)
     lock_pending = lock_done = False
+    # H-FLP (2026-11-16-futures-flip-prereg.md): the live close-and-flip, so the replay can
+    # model it. Absent or None = off, and then nothing below runs. When set to a bar index,
+    # a position still open after bar `flip_at`'s own stop, target and trail checks is
+    # closed at that bar's close, outcome FLIP, priced by the same _net_pnl as every other
+    # exit. A position that exits on or before that bar is untouched.
+    flip_at = ep.get("flip_at")
     _default_trail = (FUTURES_CONFIG.get("trailing_atr_factor", 0.9) if mode == "futures"
                       else RISK_CONFIG.get("trailing_atr_factor", 1.0))
     base_trail_factor = ep.get("trailing_atr_factor", _default_trail)
@@ -501,6 +507,11 @@ def _simulate_forward(df, entry_idx, signal, max_hold, timeframe, mode, exit_par
             if favourable >= be_lock_r * lock_risk:
                 lock_pending = lock_done = True
                 signal["_lock_armed"] = True
+
+        if flip_at is not None and j == flip_at:
+            exit_px = c["close"]
+            exit_pnl = _net_pnl(stype, entry, exit_px, partial_closed, partial_pnl, mode)
+            return _make_trade(df, entry_idx, j, signal, "FLIP", entry, exit_px, exit_pnl)
 
     # Ran out of candles — still open
     return _make_trade(df, entry_idx, entry_idx + max_hold, signal, "OPEN",

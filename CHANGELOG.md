@@ -4,6 +4,20 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-16 — feat: flip_at simulator knob and the H-FLP instrument (not yet run)
+
+`backtest._simulate_forward` gains `exit_params["flip_at"]` (default absent = off): a position
+still open after bar `flip_at`'s own stop/target/trail checks is closed at that bar's close,
+outcome `FLIP`, priced by `_net_pnl`. Identity check against the pre-knob simulator, 18,900
+simulations (BUY and SELL, three `exit_params`), 0 differences
+(`2026-11-16-futures-flip-run/identity.txt`). `scripts/flip_ic.py` scores every bar once and
+replays the same signal stream under the live flip and under flip-off, compared by calendar
+month; includes the fidelity check against the live book. Three tests added (312/312). Default-off
+research plumbing: no live code, config or trading change; `backtest.py` shows in the PAPER_RUN
+diff check.
+
+---
+
 ## 2026-11-16 — docs: pre-registration H-FLP (futures close-and-flip), with a Claude arm
 
 `docs/superpowers/specs/2026-11-16-futures-flip-prereg.md`, written before any figure or
