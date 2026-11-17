@@ -23,6 +23,12 @@ Bot restarted by killing the MainPID; systemd respawned it, pid 383220, active 1
 - **2026-11-18:** pulled `9c6ed5d` (PR #48, H-VR / H-BS prereg and its instrument) and
   restarted `spotsignal-dash` only. Those tests are scored on or after 2027-01-16 18:44:50
   UTC.
+- **2026-11-17 20:56 UTC:** pulled `b82fc22` (PRs #49 + #50). Bot restarted by MainPID, new
+  pid 385048, active 20:56:22. No position was open.
+  - **#50:** a live TP2 exit pays 2 cost sides and records its exit price. Booking only, so
+    no signal changes and no test window is cut.
+  - **#49:** scoring day. Cron `20 4 * * *` runs `agents.scoring_day`, logging to
+    `data/scoring/scoring_day.log`. Dry run: every test "not yet".
 
 **Run 3 started 2026-10-09 05:41:31 UTC at `c0e8764`** (manifest on the host; run 2's
 is archived as `paper_run_manifest.run2.json`, its final DB as
