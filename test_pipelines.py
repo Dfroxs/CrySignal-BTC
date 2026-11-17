@@ -654,7 +654,7 @@ def test_combined_telegram_returns_zero_without_credentials():
 
 # ── 10. Threshold & confidence consistency ───────────────────────────────────
 
-def _frame(close, end="2026-01-14 14:00"):
+def _frame(close, end="2026-01-14 14:00", freq="1h"):
     """Wrap a close series into an OHLCV frame carrying every indicator column
     generate_signals() needs. The index ends at 14:00 UTC so the session bump is
     the US −0.25. No network, no DB."""
@@ -672,7 +672,7 @@ def _frame(close, end="2026-01-14 14:00"):
         "low":    close - np.abs(rng.normal(70, 18, n)),
         "close":  close,
         "volume": np.abs(rng.normal(1000, 90, n)),
-    }, index=pd.date_range(end=end, periods=n, freq="1h"))
+    }, index=pd.date_range(end=end, periods=n, freq=freq))
     df['EMA_200'] = calculate_ema(df['close'], 200)
     df['RSI_14']  = calculate_rsi(df['close'])
     df['MACD'], df['MACD_Signal'], df['MACD_Histogram'] = calculate_macd(df['close'])
@@ -730,6 +730,57 @@ def test_spot_bumps_apply_in_full_too():
     expected = SPOT_THRESHOLD_MIN + sig["_regime"]["threshold_bump"] + _SESSION_BUMP
     assert abs(sig["_threshold"] - expected) < 0.011, \
         f"bumps were clipped: {sig['_threshold']} != {expected}"
+
+def test_session_bump_reads_the_hour_the_bar_closes_not_opens():
+    """Run 4, item 5: df.index is the bar's OPEN time. A 4h spot bar opened 04:00 is
+    decided at 08:01 (London, bump 0), not in the Asia session (+0.5); a 1h bar opened
+    07:00 likewise closes at 08:00."""
+    import numpy as np
+    from signals.engine import generate_signals
+    rng = np.random.default_rng(7)
+    close = 80_000 + np.arange(320) * 25 + rng.normal(0, 60, 320)
+    for end, freq in (("2026-01-14 04:00", "4h"), ("2026-01-14 07:00", "1h")):
+        sig = generate_signals(_frame(close, end=end, freq=freq), htf=None, market_structure=None,
+                               sr=None, mode="spot", threshold_override=4.0)
+        bump = sig["_threshold"] - 4.0 - sig["_regime"]["threshold_bump"]
+        assert abs(bump) < 1e-9, f"{freq} bar opened {end}: session bump {bump:+.2f}, expected 0 (closes 08:00)"
+    sig = generate_signals(_frame(close, end="2026-01-14 06:00", freq="1h"), htf=None,
+                           market_structure=None, sr=None, mode="futures", threshold_override=4.0)
+    assert abs(sig["_threshold"] - 4.0 - sig["_regime"]["threshold_bump"] - 0.5) < 1e-9, "07:00 close is still Asia"
+
+def test_htf_conflict_penalty_lands_on_the_side_that_finally_leads():
+    """Run 4, item 4: the -1.0 for a 4H-vs-1D conflict used to hit whichever side led
+    after conditions 1-6. Here BUY leads early (uptrend) but bearish market structure,
+    scored later, makes SELL lead: the penalty must land on SELL."""
+    from signals.engine import generate_signals
+    bear = {"bias": "BEARISH"}
+    ms = {"funding": {"bias": "BEARISH", "rate_pct": 0.05, "basis_bias": "BEARISH", "basis_pct": -0.1},
+          "long_short": dict(bear, ratio=2.5), "dxy": dict(bear, change_pct=0.6),
+          "sp500": dict(bear, change_pct=-1.2), "stablecoin": dict(bear, total_b=150),
+          "btc_dom": dict(bear, current=55), "open_interest": dict(bear, change_pct=-2.0),
+          "taker": dict(bear, ratio=0.8)}
+    htf = {"4h": "BULLISH", "1d": "BEARISH", "aligned": False, "4h_indicators": {}, "1d_indicators": {}}
+    sig = generate_signals(_synthetic_df(), htf=htf, market_structure=ms, sr=None,
+                           mode="futures", threshold_override=4.0)
+    pen = sig["_contributions"].get("htf_conflict_penalty")
+    assert pen == (0.0, -1.0), f"penalty must land on SELL, the final leader: {pen}"
+    assert sig["_contributions"]["htf"][0] >= 0 and any("HTF conflict penalty" in r for r in sig["reasons"])
+
+def test_macro_forced_hold_clears_levels_and_confidence():
+    """Run 4, item 6: a HOLD forced by a macro event must not carry a stop, a target
+    or a confidence tier, as every other gate already ensures."""
+    import signals.engine as eng
+    orig = eng.check_upcoming_macro_events
+    eng.check_upcoming_macro_events = lambda: (True, "CPI")
+    try:
+        out = eng.integrate_news_with_signal(
+            {"type": "BUY", "strength": 7.0, "_threshold": 4.3, "reasons": [], "confidence": "NORMAL",
+             "stop_loss": 79_000.0, "take_profit": 83_000.0, "tp2": 85_000.0},
+            {"fear_greed": {"value": 50}, "sentiment": "NEUTRAL"})
+    finally:
+        eng.check_upcoming_macro_events = orig
+    assert out["type"] == "HOLD"
+    assert (out["stop_loss"], out["take_profit"], out.get("tp2"), out["confidence"]) == (None, None, None, None), out
 
 def test_absolute_sanity_floor_holds():
     """A pathological override must not yield a zero or negative bar — below the
@@ -4024,6 +4075,40 @@ def test_hdr_scores_only_hours_hd_never_saw_with_eight_alts_and_btc_alone():
                                             for i, s in enumerate(hdr.ALTS)}}) == "INCONCLUSIVE", \
         "a CI above 0 still needs 6 of 8 alts positive"
 
+def test_veto_gate_episode_effect_follows_the_gate_and_guards_power():
+    import inspect
+    import pandas as pd
+    import scripts.veto_gate_eval as vg
+    assert str(vg.FROM) == "2026-11-17 00:00:00" and str(vg.SCORE_BY.date()) == "2027-02-15"
+    assert "refused" in inspect.getsource(vg.main)
+    t = lambda h: pd.Timestamp("2026-11-20") + pd.Timedelta(hours=h)
+    ops = pd.DataFrame([
+        # episode A: Claude vetoes the first signal, agrees an hour later -> later trade
+        (t(0), "futures", "SELL", "DISAGREE", None, -2.0), (t(1), "futures", "SELL", "AGREE", None, 1.0),
+        # episode B: Claude agrees at once -> gate changes nothing
+        (t(30), "futures", "BUY", "AGREE", None, 3.0), (t(31), "futures", "BUY", "DISAGREE", None, -9.0),
+        # episode C: disagrees with all -> no trade
+        (t(60), "futures", "BUY", "DISAGREE", None, -1.5), (t(61), "futures", "BUY", "DISAGREE", None, -1.0),
+        # episode D: an errored opinion fails open
+        (t(90), "spot", "BUY", None, "timeout", 0.7),
+        # episode E: first trade cannot be replayed -> dropped, never filled
+        (t(120), "futures", "SELL", "AGREE", None, float("nan")),
+    ], columns=["ts", "mode", "signal_type", "verdict", "error", "pnl"])
+    eff = vg.episode_effects(ops).set_index("start")
+    assert len(eff) == 4, eff
+    assert eff.loc[t(0), "effect"] == 3.0 and eff.loc[t(0), "acted"], "-2.0 replaced by +1.0"
+    assert eff.loc[t(30), "effect"] == 0.0 and not eff.loc[t(30), "acted"]
+    assert eff.loc[t(60), "gated"] == 0.0 and eff.loc[t(60), "effect"] == 1.5
+    assert eff.loc[t(90), "effect"] == 0.0, "an error is not a veto"
+    r = vg.verdict(eff, n_boot=200)
+    assert r["verdict"] == "INCONCLUSIVE" and r["episodes"] == 4, "below 30 episodes"
+    many = pd.concat([eff] * 10, ignore_index=True)
+    assert vg.verdict(many, n_boot=500)["verdict"] == "PASS"
+    many["effect"] = -many["effect"]
+    assert vg.verdict(many, n_boot=500)["verdict"] == "FAIL"
+    few_acted = pd.concat([eff[~eff["acted"]]] * 20, ignore_index=True)
+    assert vg.verdict(few_acted, n_boot=50)["verdict"] == "INCONCLUSIVE", "the gate must act 10 times"
+
 def test_scoring_scripts_refuse_before_day_30():
     import inspect
     import scripts.hd_eval as hd, scripts.score_run3 as sr
@@ -5594,6 +5679,331 @@ def test_flip_and_breaker_pnl_carry_execution_costs():
     assert _calc_pnl(pos, 100_000.0) < 0, "a flat flip must cost the round trip"
 
 
+def test_futures_stops_are_checked_before_the_flip_closes_the_opposite_position():
+    """The flip block closed the opposite position before the end-of-cycle stop check ran,
+    so a position already through its stop was booked as FLIP, not LOSS (2026-11-08 #14).
+    Counted in the source: the stop check must precede the flip's own close."""
+    import inspect, run_bot
+    src = inspect.getsource(run_bot.run_cycle)
+    flip = src.index('"FLIP"')
+    opp = src.index("opp_positions = [p for p in get_open_positions")
+    stop = src.rfind("check_and_close_positions(", 0, opp)
+    assert stop != -1 and stop > src.index("opp_dir ="), "no stop check between opp_dir and opp_positions"
+    assert stop < opp < flip, "stop check must come before the flip closes anything"
+
+
+def test_htpf_candidate_levels_and_verdict_follow_the_prereg():
+    """H-TPF (2026-11-10 prereg): TP1 at 1.0 x the stop distance, TP2 at twice that, never
+    further out than the live target, either direction; verdicts as pre-registered."""
+    from scripts.tp1_futures_ic import candidate, verdict, geometry_ok
+    buy = {"type": "BUY", "entry_price": 100.0, "stop_loss": 97.0, "take_profit": 109.0, "tp2": 118.0}
+    c = candidate(buy)
+    assert (c["take_profit"], c["tp2"]) == (103.0, 106.0), c
+    sell = {"type": "SELL", "entry_price": 100.0, "stop_loss": 103.0, "take_profit": 91.0, "tp2": 82.0}
+    c = candidate(sell)
+    assert (c["take_profit"], c["tp2"]) == (97.0, 94.0), c
+    near = {"type": "BUY", "entry_price": 100.0, "stop_loss": 97.0, "take_profit": 102.0, "tp2": 104.0}
+    c = candidate(near)
+    assert c["take_profit"] == 102.0 and c["tp2"] == 104.0, "a nearer target must never move out"
+    assert geometry_ok(), "geometry must be applied exactly once"
+
+    def arm(fav, total, diff):
+        return {"cells_favouring": fav, "cells_total": total, "pooled": {"mean_diff": diff}}
+    def cres(w1, w2, buy_d, sell_d):
+        return {"windows": {"p": {"mean_diff": w1}, "c": {"mean_diff": w2}},
+                "by_dir": {"BUY": {"n": 9, "mean_diff": buy_d}, "SELL": {"n": 9, "mean_diff": sell_d}}}
+    good_a, good_b = arm(9, 10, 0.10), arm(18, 20, 0.10)
+    assert verdict(good_a, good_b, cres(0.1, 0.1, 0.1, 0.1)) == "PASS"
+    assert verdict(good_a, good_b, cres(0.1, -0.01, 0.1, 0.1)) == "INCONCLUSIVE", "C vetoes"
+    assert verdict(good_a, good_b, cres(0.1, 0.1, 0.1, -0.01)) == "INCONCLUSIVE", "direction reversal"
+    assert verdict(arm(9, 10, 0.0), good_b, cres(0.1, 0.1, 0.1, 0.1)) == "FAIL"
+    assert verdict(arm(7, 10, 0.10), good_b, cres(0.1, 0.1, 0.1, 0.1)) == "INCONCLUSIVE"
+    assert verdict(arm(9, 10, 0.04), good_b, cres(0.1, 0.1, 0.1, 0.1)) == "INCONCLUSIVE"
+
+
+def test_htrl_candidate_trail_is_wired_and_giveback_is_measured():
+    """H-TRL (2026-11-10 prereg): the candidate is the simulator's own exit_params at 2.5
+    (live 3.5), and give-back is the best favourable excursion minus the final P&L."""
+    from scripts.trail_futures_ic import CAND_PARAMS, make_row
+    from scripts.exit_ic import _signal_at
+    from backtest import _exit_signal
+    from config import FUTURES_CONFIG
+    assert CAND_PARAMS == {"trailing_atr_factor": 2.5}
+    assert FUTURES_CONFIG["trailing_atr_factor"] == 3.5, "prereg compares against live 3.5"
+    # Entry at 1000 (ATR 10), a run to 1040, then a slide: the tighter trail exits higher.
+    closes = [1000.0] * 3 + [1010, 1020, 1030, 1040, 1035, 1025, 1015, 1005, 995, 985, 975, 965] + [960.0] * 80
+    df = _exit_fixture(closes, atr=10.0)
+    sig = _exit_signal(_signal_at(df, 2), "futures")
+    pb, pc, rb, rc, tb, tc, gb, gc = make_row(df, 2, sig)
+    assert rb and rc, "both arms must resolve on this path"
+    assert pc > pb, f"tighter trail should give back less on a reversal ({pc} vs {pb})"
+    assert gc < gb, f"give-back must shrink with the tighter trail ({gc} vs {gb})"
+    assert gb > 0 and gc >= 0
+
+
+def test_be_lock_arms_on_the_close_applies_next_bar_and_mirrors_for_sell():
+    """H-PLK (2026-11-11 prereg): when a bar's CLOSE is favourable by be_lock_r x the stop
+    distance, the trail goes to entry from the NEXT bar; absent = off and nothing changes."""
+    import copy
+    from backtest import _simulate_forward
+    BUY = {"type": "BUY", "entry_price": 1000.0, "stop_loss": 970.0,
+           "take_profit": 1075.0, "tp2": 1150.0, "atr": 10.0}
+    closes = [1000.0, 1010, 1020, 1031, 1032, 1033, 1034, 1030, 1020, 1010, 1000, 990, 980] + [980.0] * 80
+    lows = [c - 1 for c in closes]
+    lows[3] = 999.0                     # the arming bar wicks under entry: a same-bar lock would exit here
+    highs = [c + 1 for c in closes]
+
+    def run(sig, df, params):
+        s = copy.deepcopy(sig)
+        return _simulate_forward(df, 0, s, 72, "1h", "futures", exit_params=params), s
+
+    dfb = _exit_fixture(closes, highs=highs, lows=lows, atr=10.0)
+    base, sb = run(BUY, dfb, None)
+    lock, sl = run(BUY, dfb, {"be_lock_r": 1.0})
+    assert "_lock_armed" not in sb and sl.get("_lock_armed") is True
+    assert base["exit_price"] == 996.0 and base["candles_held"] == 11, base
+    assert lock["exit_price"] == 1000.0 and lock["candles_held"] == 10, lock     # not bar 3
+    assert run(BUY, dfb, {"be_lock_r": 5.0})[0] == base, "an unreached trigger changes nothing"
+    assert run(BUY, dfb, {"be_lock_r": None})[0] == base and run(BUY, dfb, {})[0] == base
+
+    SELL = {"type": "SELL", "entry_price": 1000.0, "stop_loss": 1030.0,
+            "take_profit": 925.0, "tp2": 850.0, "atr": 10.0}
+    dfs = _exit_fixture([2000 - c for c in closes], highs=[2000 - l for l in lows],
+                        lows=[2000 - h for h in highs], atr=10.0)
+    sbase, _ = run(SELL, dfs, None)
+    slock, ss = run(SELL, dfs, {"be_lock_r": 1.0})
+    assert sbase["exit_price"] == 1004.0 and slock["exit_price"] == 1000.0, (sbase, slock)
+    assert ss.get("_lock_armed") is True
+
+
+def test_hplk_instrument_candidate_and_row_follow_the_prereg():
+    """H-PLK instrument: the candidate is exactly be_lock_r 1.0, and a row reports whether
+    the lock armed and whether the trade then exited at the locked floor."""
+    from scripts.lock_futures_ic import CAND_PARAMS, make_row, summarise_rows
+    assert CAND_PARAMS == {"be_lock_r": 1.0}
+    closes = [1000.0, 1010, 1020, 1031, 1032, 1033, 1034, 1030, 1020, 1010, 1000, 990, 980] + [980.0] * 80
+    lows = [c - 1 for c in closes]
+    lows[3] = 999.0
+    df = _exit_fixture(closes, highs=[c + 1 for c in closes], lows=lows, atr=10.0)
+    sig = {"type": "BUY", "entry_price": 1000.0, "stop_loss": 970.0,
+           "take_profit": 1075.0, "tp2": 1150.0, "atr": 10.0}
+    row = make_row(df, 0, sig)
+    assert row[8] is True and row[9] is True, row          # armed, exited at the floor
+    assert row[1] > row[0], "the lock exits at 1000 instead of 996 on this path"
+    s = summarise_rows([row, (0.0, 0.0, True, True, False, False, 0.0, 0.0, False, False)])
+    assert s["lock_armed"] == 0.5 and s["exit_at_floor"] == 0.5
+
+
+def test_armc_recording_is_cached_per_window_and_invalidated_by_code_changes():
+    """Exit tests re-ran the same 50-minute backtests every time. The recording is cached
+    per (window, code hash): a second call is served from disk, and a different code hash
+    re-records instead of reusing."""
+    import tempfile
+    from pathlib import Path
+    import scripts.trail_futures_ic as t
+    calls = []
+    saved = (t._fetch_window, t.CACHE_DIR, t.code_hash)
+    try:
+        t.CACHE_DIR = Path(tempfile.mkdtemp())
+        t._fetch_window = lambda a, b: (calls.append((a, b)) or ("frame", [(1, {"type": "BUY"}, None)]))
+        t.code_hash = lambda: "aaaa"
+        first = t.record_window("2022-01-01", "2025-10-01")
+        second = t.record_window("2022-01-01", "2025-10-01")
+        assert first == second and len(calls) == 1, calls
+        t.code_hash = lambda: "bbbb"
+        t.record_window("2022-01-01", "2025-10-01")
+        assert len(calls) == 2, "a changed code hash must re-record"
+        t.record_window("2025-10-01", "2099-01-01")
+        t.record_window("2025-10-01", "2099-01-01")
+        assert len(calls) == 4, "a window ending in the future is never cached"
+        (next(t.CACHE_DIR.glob("2022-01-01_2025-10-01_bbbb.pkl"))).write_bytes(b"garbage")
+        t.record_window("2022-01-01", "2025-10-01")
+        assert len(calls) == 5, "a damaged cache file is re-recorded"
+    finally:
+        t._fetch_window, t.CACHE_DIR, t.code_hash = saved
+    assert len(t.code_hash()) == 16
+
+
+def test_flip_at_closes_at_the_bar_close_after_its_own_stops_and_is_off_when_absent():
+    """H-FLP (2026-11-16 prereg): `flip_at` closes a still-open position at that bar's
+    CLOSE as FLIP, after the bar's own stop check; absent/None/after the natural exit
+    changes nothing; a SELL mirrors."""
+    import copy
+    from backtest import _simulate_forward
+    BUY = {"type": "BUY", "entry_price": 1000.0, "stop_loss": 970.0,
+           "take_profit": 1075.0, "tp2": 1150.0, "atr": 10.0}
+    closes = [1000.0, 1002, 1001, 999, 998, 997, 996, 995, 994] + [960.0] * 80
+    lows = [c - 1 for c in closes]
+    df = _exit_fixture(closes, lows=lows, atr=10.0)
+
+    def run(sig, d, params):
+        return _simulate_forward(d, 0, copy.deepcopy(sig), 72, "1h", "futures", exit_params=params)
+
+    base = run(BUY, df, None)
+    assert run(BUY, df, {}) == base and run(BUY, df, {"flip_at": None}) == base
+    flip = run(BUY, df, {"flip_at": 4})
+    assert flip["outcome"] == "FLIP" and flip["candles_held"] == 4 and flip["exit_price"] == 998.0, flip
+    assert flip["pnl_pct"] < 0.0 and flip["pnl_pct"] > base["pnl_pct"], "a flip at -0.2% beats the stop"
+    after = run(BUY, df, {"flip_at": base["candles_held"] + 5})
+    assert after == base, "a flip_at past the natural exit changes nothing"
+    # the bar that carries the stop: the stop wins, the flip never fires
+    lows2 = list(lows)
+    lows2[4] = 960.0
+    df2 = _exit_fixture(closes, lows=lows2, atr=10.0)
+    stopped = run(BUY, df2, {"flip_at": 4})
+    assert stopped["outcome"] != "FLIP" and stopped == run(BUY, df2, None), stopped
+    SELL = {"type": "SELL", "entry_price": 1000.0, "stop_loss": 1030.0,
+            "take_profit": 925.0, "tp2": 850.0, "atr": 10.0}
+    dfs = _exit_fixture([2000 - c for c in closes], highs=[2000 - l for l in lows],
+                        lows=[2000 - (c + 1) for c in closes], atr=10.0)
+    sf = run(SELL, dfs, {"flip_at": 4})
+    assert sf["outcome"] == "FLIP" and sf["exit_price"] == 1002.0, sf
+
+
+def test_flip_sequence_baseline_flips_and_candidate_skips_the_opposite_signal():
+    """H-FLP: the baseline closes the BUY on the opposite signal and opens the SELL; the
+    candidate ignores the SELL while the BUY is open. A flip the live gate
+    `flip_unprofitable` rejects leaves the bot flat. Same stream, only the rule differs."""
+    import pandas as pd
+    import scripts.flip_ic as f
+    closes = [1000.0, 1000, 995, 990, 985, 980, 975, 970, 965, 960, 955, 950, 945, 940, 935, 930,
+              925, 920, 915, 910] + [900.0] * 100
+    df = _exit_fixture(closes, atr=10.0)
+    df.index = pd.date_range("2026-01-01", periods=len(closes), freq="h")
+    buy = {"type": "BUY", "entry_price": 1000.0, "stop_loss": 985.0, "take_profit": 1030.0,
+           "tp2": 1060.0, "atr": 10.0, "strength": 6.0}
+    sell = {"type": "SELL", "entry_price": 980.0, "stop_loss": 995.0, "take_profit": 950.0,
+            "tp2": 920.0, "atr": 10.0, "strength": 6.0}
+    saved = f._failing_gates
+    f._failing_gates = lambda *a, **k: []
+    try:
+        w = lambda i: None
+        base = f.run_sequence(df, [(0, buy), (5, sell)], True, window_fn=w)
+        cand = f.run_sequence(df, [(0, buy), (5, sell)], False, window_fn=w)
+        assert len(base["flips"]) == 1 and base["flips"][0]["opened"] is True, base["flips"]
+        assert base["trades"][0]["outcome"] == "FLIP" and base["trades"][0]["exit_i"] == 5
+        assert base["opened_i"] == [0, 5] and cand["opened_i"] == [0], (base["opened_i"], cand["opened_i"])
+        assert cand["flips"] == [] and len(cand["trades"]) == 1 and cand["trades"][0]["exit_i"] > 5
+        # flip gate: the BUY is down 2% at the flip and the SELL's target is only 0.5% away
+        tight = dict(sell, take_profit=975.0)
+        blocked = f.run_sequence(df, [(0, buy), (5, tight)], True, window_fn=w)
+        assert blocked["flips"][0]["opened"] is False and blocked["opened_i"] == [0], blocked
+    finally:
+        f._failing_gates = saved
+    assert f.flip_unprofitable("BUY", 1000.0, {"entry_price": 980.0, "take_profit": 975.0})
+    assert not f.flip_unprofitable("BUY", 1000.0, {"entry_price": 980.0, "take_profit": 950.0})
+    assert f.flip_unprofitable("SELL", 1000.0, {"entry_price": 1030.0, "take_profit": 1020.0})
+
+
+def test_flip_instrument_months_ci_and_verdict_follow_the_prereg():
+    """H-FLP: the monthly sums, the month-block CI and the verdict rules of the prereg."""
+    import numpy as np
+    import pandas as pd
+    import scripts.flip_ic as f
+    df = _exit_fixture([1000.0] * 120)
+    df.index = pd.date_range("2026-01-30", periods=120, freq="h")
+    m = f.monthly_sums(df, [{"exit_i": 5, "pnl": 1.5}, {"exit_i": 6, "pnl": -0.5},
+                            {"exit_i": 100, "pnl": 2.0}], "2026-01-01", "2026-03-01")
+    assert [str(x) for x in m.index] == ["2026-01", "2026-02"]
+    assert abs(m.iloc[0] - 1.0) < 1e-12 and abs(m.iloc[1] - 2.0) < 1e-12, m
+    mean, ci = f.pooled_ci(np.full((10, 4), 0.25))
+    assert abs(mean - 0.25) < 1e-12 and ci == [0.25, 0.25]
+    assert f.CAND_FLIP_OFF is True and f.MIN_ASSETS_AHEAD == 3 and f.MIN_FLIPS_D == 30
+    v = f.verdict
+    assert v(0.1, 0.02, 4, 100, [1.0, 2.0]) == "PASS"
+    assert v(0.0, 0.02, 4, 100, [1.0, 2.0]) == "FAIL" and v(-0.1, -0.2, 0, 100, [1, 1]) == "FAIL"
+    assert v(0.1, -0.01, 4, 100, [1.0, 2.0]) == "INCONCLUSIVE", "CI must clear zero"
+    assert v(0.1, 0.02, 2, 100, [1.0, 2.0]) == "INCONCLUSIVE", "needs 3 of 4 assets"
+    assert v(0.1, 0.02, 4, 100, [1.0, -0.5]) == "INCONCLUSIVE", "Arm C vetoes, never carries"
+    assert v(0.1, 0.02, 4, 29, [1.0, 2.0]) == "INCONCLUSIVE", "fewer than 30 flips: underpowered"
+
+
+def test_flip_shadow_asks_before_the_flip_logs_one_row_and_never_raises():
+    """H-FLP-C: one FLIP/HOLD opinion per opposite position, built from the exit-shadow
+    facts plus the opposite signal; a provider failure is a stored error, not an exception;
+    nothing is asked without a position, a price or a provider."""
+    import types
+    import agents.flip_shadow as fs
+    pos = {"id": 15, "mode": "futures", "type": "SELL", "entry_price": 75000.0,
+           "stop_loss": 76500.0, "take_profit": 72000.0, "tp2": 69000.0, "atr": 400.0,
+           "opened_at": "2026-11-08T23:01:02+00:00", "partial_closed": 0}
+    sig = {"type": "BUY", "entry_price": 74900.0, "stop_loss": 73900.0, "take_profit": 76900.0,
+           "strength": 6.4, "_threshold": 5.2, "confidence": "NORMAL", "mode": "futures",
+           "buy_score": 6.4, "sell_score": 1.0, "atr": 400.0}
+    ctx = fs.build_flip_context(pos, sig)
+    o = ctx["opposite_signal"]
+    assert o["side"] == "BUY" and o["strength"] == 6.4 and o["confidence"] == "NORMAL"
+    assert o["stop_vs_price_pct"] < 0 < o["target_vs_price_pct"], o
+    assert ctx["position"]["side"] and "exit_rules" in ctx
+    assert fs.parse_flip_opinion('{"verdict":"HOLD","confidence":60,"reason":"x"}')["verdict"] == "HOLD"
+    for bad in ('{"verdict":"CLOSE","confidence":60}', '{"verdict":"FLIP","confidence":160}', "nope"):
+        try:
+            fs.parse_flip_opinion(bad)
+            raise AssertionError(f"accepted {bad!r}")
+        except ValueError:
+            pass
+    rows = []
+    reply = types.SimpleNamespace(text='{"verdict":"FLIP","confidence":70,"reason":"ok"}',
+                                  model="m", input_tokens=10, output_tokens=5)
+    n = fs.run_flip_shadow([pos], sig, providers=("anthropic",), ask_fn=lambda *a, **k: reply,
+                           log_fn=rows.append)
+    assert n == 1 and len(rows) == 1 and rows[0]["verdict"] == "FLIP" and rows[0]["error"] is None
+    assert rows[0]["position_id"] == 15 and rows[0]["new_side"] == "BUY" and rows[0]["price"] == 74900.0
+
+    def boom(*a, **k):
+        raise RuntimeError("api down")
+    rows.clear()
+    fs.run_flip_shadow([pos], sig, providers=("anthropic",), ask_fn=boom, log_fn=rows.append)
+    assert len(rows) == 1 and rows[0]["verdict"] is None and "api down" in rows[0]["error"]
+    assert fs.run_flip_shadow([], sig, providers=("anthropic",), ask_fn=boom, log_fn=rows.append) == 0
+    assert fs.run_flip_shadow([pos], sig, providers=(), ask_fn=boom, log_fn=rows.append) == 0
+    assert fs.run_flip_shadow([pos], dict(sig, entry_price=None), providers=("anthropic",),
+                              ask_fn=boom, log_fn=rows.append) == 0
+
+
+def test_flip_opinions_table_and_run_bot_hook_precede_the_close():
+    """The opinion is stored through history, and run_bot asks BEFORE it closes the opposite
+    position (the answer can never depend on the close)."""
+    history, saved, path = _temp_history_db()
+    try:
+        con = history._conn()
+        cols = {r[1] for r in con.execute("PRAGMA table_info(shadow_flip_opinions)")}
+        assert set(history._FLIP_COLS) <= cols, set(history._FLIP_COLS) - cols
+        history.log_flip_opinion({"timestamp": "2026-11-16T10:01:00", "position_id": 1,
+                                  "provider": "anthropic", "verdict": "HOLD"})
+        assert con.execute("SELECT verdict FROM shadow_flip_opinions").fetchone()[0] == "HOLD"
+    finally:
+        _restore_history_db(history, saved, path)
+    src = open("run_bot.py").read()
+    assert src.index("run_flip_shadow(opp_positions") < src.index("for opp in opp_positions:")
+
+
+def test_flip_shadow_eval_value_verdict_and_replay_follow_the_prereg():
+    """H-FLP-C scoring: value = pnl(chosen branch) - pnl(other); verdict needs 20 events,
+    a positive mean and a CI above zero."""
+    import numpy as np
+    import pandas as pd
+    import scripts.flip_shadow_eval as e
+    closes = [1000.0, 1000, 995, 990, 985, 980, 975, 970, 965, 960] + [900.0] * 90
+    df = _exit_fixture(closes, atr=10.0)
+    df.index = pd.date_range("2026-01-01 00:00", periods=len(closes), freq="h")
+    held = {"type": "BUY", "entry_price": 1000.0, "stop_loss": 940.0, "take_profit": 1100.0,
+            "tp2": 1200.0, "atr": 10.0, "opened_at": "2026-01-01T01:01:00+00:00"}
+    assert e.bar_index(df, "2026-01-01T01:01:00+00:00") == 0, "scored bar = the one that just closed"
+    assert e.bar_index(df, "2026-01-01 06:01:00") == 5
+    hold = e.replay(df, 0, held)
+    flipped = e.replay(df, 0, held, flip_at=4)
+    assert flipped > hold and flipped < 0, (flipped, hold)
+    ev = lambda v, new=None: e.event_value(df, held, new, v, "2026-01-01 05:01:00")
+    assert abs(ev("FLIP") - (flipped - hold)) < 1e-9 and abs(ev("HOLD") + (flipped - hold)) < 1e-9
+    assert e.event_value(df, held, None, "HOLD", "2026-01-01 01:01:00") is None, "flip bar must follow entry"
+    assert e.verdict_of([1.0] * 19)[0] == "INCONCLUSIVE"
+    assert e.verdict_of([1.0] * 25)[0] == "PASS"
+    assert e.verdict_of([-1.0] * 25)[0] == "FAIL"
+    assert e.verdict_of(list(np.r_[np.ones(12), -np.ones(12)]))[0] == "FAIL"
+    assert e.verdict_of(list(np.r_[np.ones(13) * 0.5, -np.ones(12) * 0.4]))[0] == "INCONCLUSIVE"
+
+
 def _scanner_get(n_bars=210, now_ms=None, lag=()):
     """A fake Binance fapi: every coin trends up at its own rate; `lag` coins stop one bar
     early. The last kline is still forming at `now_ms`."""
@@ -6383,6 +6793,10 @@ if __name__ == "__main__":
     run("H-D return after stat known, BTC window", test_hd_return_starts_after_the_stat_is_known_and_btc_window_holds)
     run("H-D finds planted signal, not null",     test_hd_pooled_ic_finds_a_planted_signal_and_not_a_null_one)
     run("H-DR: unseen hours, 8 alts, BTC alone",  test_hdr_scores_only_hours_hd_never_saw_with_eight_alts_and_btc_alone)
+    run("H-VG: episode effect, fail-open, power", test_veto_gate_episode_effect_follows_the_gate_and_guards_power)
+    run("run 4: session bump at bar close hour",  test_session_bump_reads_the_hour_the_bar_closes_not_opens)
+    run("run 4: HTF penalty on final leader",     test_htf_conflict_penalty_lands_on_the_side_that_finally_leads)
+    run("run 4: macro HOLD clears levels",        test_macro_forced_hold_clears_levels_and_confidence)
     run("scorers refuse before day 30",           test_scoring_scripts_refuse_before_day_30)
     run("futures hypotheses from futures restart", test_score_run3_scores_futures_hypotheses_from_the_futures_restart)
 
@@ -6407,6 +6821,18 @@ if __name__ == "__main__":
     run("FLIP/BREAKER closes reach close card",  test_every_phase3_close_reaches_the_close_card)
     run("FLIP/BREAKER P&L carry costs",          test_flip_and_breaker_pnl_carry_execution_costs)
     run("basis+taker pruned, spot untouched",    test_basis_and_taker_are_pruned_from_futures_and_spot_is_untouched)
+    run("stops checked before the flip closes",  test_futures_stops_are_checked_before_the_flip_closes_the_opposite_position)
+    run("H-TPF levels + verdict per prereg",    test_htpf_candidate_levels_and_verdict_follow_the_prereg)
+    run("H-TRL trail wired, give-back measured", test_htrl_candidate_trail_is_wired_and_giveback_is_measured)
+    run("H-PLK lock: close-armed, next bar, SELL", test_be_lock_arms_on_the_close_applies_next_bar_and_mirrors_for_sell)
+    run("H-PLK instrument candidate + row",       test_hplk_instrument_candidate_and_row_follow_the_prereg)
+    run("Arm C recording cached, hash-keyed",    test_armc_recording_is_cached_per_window_and_invalidated_by_code_changes)
+    run("H-FLP flip_at knob, off when absent",     test_flip_at_closes_at_the_bar_close_after_its_own_stops_and_is_off_when_absent)
+    run("H-FLP sequence: flip vs skip vs gate",   test_flip_sequence_baseline_flips_and_candidate_skips_the_opposite_signal)
+    run("H-FLP months, CI, verdict per prereg",   test_flip_instrument_months_ci_and_verdict_follow_the_prereg)
+    run("H-FLP-C flip shadow: ask, log, no raise",  test_flip_shadow_asks_before_the_flip_logs_one_row_and_never_raises)
+    run("H-FLP-C table + hook precede the close",   test_flip_opinions_table_and_run_bot_hook_precede_the_close)
+    run("H-FLP-C eval: value, verdict, replay",     test_flip_shadow_eval_value_verdict_and_replay_follow_the_prereg)
     run("H-SC scanner: closed bars, numbers only",  test_scanner_snapshot_uses_closed_bars_and_passes_numbers_only)
     run("H-SC scanner: store, dedupe, error row",   test_scanner_run_once_stores_dedupes_and_logs_a_failure_as_data)
     run("H-SC eval: excess, days, verdict, leak",   test_scanner_eval_excess_day_unit_verdict_and_leakage)

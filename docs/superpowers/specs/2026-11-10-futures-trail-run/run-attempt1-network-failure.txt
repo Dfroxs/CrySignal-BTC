@@ -1,0 +1,154 @@
+geometry applied once: ok
+Arm A (2024-2025, synthetic)
+WARNING:signals.market_data:binance fetch_ohlcv failed (binance GET https://api.binance.com/api/v3/exchangeInfo) — falling back to data-api.binance.vision for 1800s
+  A BTC/USDT   2024  n= 355 n_eff= 260 diff=-0.1956pp  base=-0.009 cand=-0.204  giveback 2.81->2.40
+  A BTC/USDT   2025  n= 354 n_eff= 246 diff=-0.0374pp  base=-0.273 cand=-0.310  giveback 2.38->2.03
+  A ETH/USDT   2024  n= 355 n_eff= 261 diff=-0.0455pp  base=-0.241 cand=-0.287  giveback 3.47->2.94
+  A ETH/USDT   2025  n= 354 n_eff= 254 diff=-0.4617pp  base=-0.155 cand=-0.617  giveback 3.91->3.48
+  A BNB/USDT   2024  n= 355 n_eff= 248 diff=-0.1647pp  base=-0.175 cand=-0.340  giveback 3.31->2.86
+  A BNB/USDT   2025  n= 354 n_eff= 234 diff=-0.1129pp  base=-0.047 cand=-0.160  giveback 2.92->2.49
+  A XRP/USDT   2024  n= 355 n_eff= 241 diff=-0.5537pp  base=+0.302 cand=-0.252  giveback 4.52->3.79
+  A XRP/USDT   2025  n= 354 n_eff= 246 diff=+0.0870pp  base=-0.050 cand=+0.037  giveback 4.46->3.83
+  A LINK/USDT  2024  n= 355 n_eff= 240 diff=+0.1199pp  base=-0.385 cand=-0.265  giveback 5.28->4.45
+  A LINK/USDT  2025  n= 354 n_eff= 248 diff=-0.1170pp  base=-0.121 cand=-0.238  giveback 5.35->4.59
+Arm B (2020-2023, synthetic)
+  B BTC/USDT   2020  n= 354 n_eff= 269 diff=-0.5721pp  base=+0.846 cand=+0.274  giveback 3.31->3.03
+  B BTC/USDT   2021  n= 354 n_eff= 260 diff=-0.3403pp  base=-0.302 cand=-0.642  giveback 4.76->4.20
+  B BTC/USDT   2022  n= 354 n_eff= 249 diff=-0.0540pp  base=-0.583 cand=-0.637  giveback 3.60->3.09
+  B BTC/USDT   2023  n= 354 n_eff= 245 diff=-0.2513pp  base=+0.131 cand=-0.120  giveback 2.38->2.01
+  B ETH/USDT   2020  n= 354 n_eff= 272 diff=-1.0577pp  base=+1.106 cand=+0.048  giveback 4.60->4.05
+  B ETH/USDT   2021  n= 354 n_eff= 257 diff=-0.2311pp  base=-0.072 cand=-0.303  giveback 5.90->5.11
+  B ETH/USDT   2022  n= 354 n_eff= 250 diff=-0.1231pp  base=-0.376 cand=-0.499  giveback 4.65->4.04
+  B ETH/USDT   2023  n= 354 n_eff= 245 diff=-0.1744pp  base=-0.225 cand=-0.400  giveback 2.64->2.23
+  B BNB/USDT   2020  n= 354 n_eff= 277 diff=-0.2975pp  base=+0.511 cand=+0.214  giveback 4.75->4.10
+  B BNB/USDT   2021  n= 354 n_eff= 265 diff=-0.3836pp  base=+0.428 cand=+0.045  giveback 7.01->5.81
+  B BNB/USDT   2022  n= 354 n_eff= 248 diff=+0.0435pp  base=-0.580 cand=-0.537  giveback 4.12->3.48
+  B BNB/USDT   2023  n= 354 n_eff= 237 diff=+0.0523pp  base=-0.421 cand=-0.368  giveback 2.65->2.27
+  B XRP/USDT   2020  n= 354 n_eff= 273 diff=-0.4676pp  base=+0.033 cand=-0.434  giveback 5.20->4.53
+  B XRP/USDT   2021  n= 354 n_eff= 268 diff=-0.4261pp  base=+0.638 cand=+0.212  giveback 8.10->6.78
+  B XRP/USDT   2022  n= 354 n_eff= 265 diff=+0.0676pp  base=-0.457 cand=-0.390  giveback 5.08->4.26
+  B XRP/USDT   2023  n= 354 n_eff= 257 diff=-0.0619pp  base=-0.275 cand=-0.337  giveback 3.81->3.30
+  B LINK/USDT  2020  n= 354 n_eff= 245 diff=-0.3629pp  base=+0.476 cand=+0.113  giveback 7.10->6.15
+  B LINK/USDT  2021  n= 354 n_eff= 252 diff=-0.3333pp  base=-0.051 cand=-0.384  giveback 7.96->6.94
+  B LINK/USDT  2022  n= 354 n_eff= 245 diff=-0.3424pp  base=-0.517 cand=-0.859  giveback 5.98->5.29
+  B LINK/USDT  2023  n= 354 n_eff= 240 diff=-0.0971pp  base=-0.390 cand=-0.487  giveback 4.28->3.69
+  C primary      recorded= 625 paired= 625 diff=-0.2276pp  base=-0.105 cand=-0.333  zero-diff=11%  fidelity max|d|=0.00e+00
+WARNING:signals.market_data:binance fetch_ohlcv failed (binance GET https://api.binance.com/api/v3/exchangeInfo) — falling back to data-api.binance.vision for 1800s
+Traceback (most recent call last):
+  File "/Users/dfroxs/Playground/Python/SpotSignal/venv/lib/python3.14/site-packages/urllib3/connection.py", line 204, in _new_conn
+    sock = connection.create_connection(
+        (self._dns_host, self.port),
+    ...<2 lines>...
+        socket_options=self.socket_options,
+    )
+  File "/Users/dfroxs/Playground/Python/SpotSignal/venv/lib/python3.14/site-packages/urllib3/util/connection.py", line 85, in create_connection
+    raise err
+  File "/Users/dfroxs/Playground/Python/SpotSignal/venv/lib/python3.14/site-packages/urllib3/util/connection.py", line 73, in create_connection
+    sock.connect(sa)
+    ~~~~~~~~~~~~^^^^
+TimeoutError: timed out
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/dfroxs/Playground/Python/SpotSignal/venv/lib/python3.14/site-packages/urllib3/connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+        conn,
+    ...<10 lines>...
+        **response_kw,
+    )
+  File "/Users/dfroxs/Playground/Python/SpotSignal/venv/lib/python3.14/site-packages/urllib3/connectionpool.py", line 488, in _make_request
+    raise new_e
+  File "/Users/dfroxs/Playground/Python/SpotSignal/venv/lib/python3.14/site-packages/urllib3/connectionpool.py", line 464, in _make_request
+    self._validate_conn(conn)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/Users/dfroxs/Playground/Python/SpotSignal/venv/lib/python3.14/site-packages/urllib3/connectionpool.py", line 1093, in _validate_conn
+    conn.connect()
+    ~~~~~~~~~~~~^^
+  File "/Users/dfroxs/Playground/Python/SpotSignal/venv/lib/python3.14/site-packages/urllib3/connection.py", line 759, in connect
+    self.sock = sock = self._new_conn()
+                       ~~~~~~~~~~~~~~^^
+  File "/Users/dfroxs/Playground/Python/SpotSignal/venv/lib/python3.14/site-packages/urllib3/connection.py", line 213, in _new_conn
+    raise ConnectTimeoutError(
+    ...<2 lines>...
+    ) from e
+urllib3.exceptions.ConnectTimeoutError: (<HTTPSConnection(host='data-api.binance.vision', port=443) at 0x1122260d0>, 'Connection to data-api.binance.vision timed out. (connect timeout=10.0)')
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/dfroxs/Playground/Python/SpotSignal/venv/lib/python3.14/site-packages/requests/adapters.py", line 645, in send
+    resp = conn.urlopen(
+        method=request.method,
+    ...<9 lines>...
+        chunked=chunked,
+    )
+  File "/Users/dfroxs/Playground/Python/SpotSignal/venv/lib/python3.14/site-packages/urllib3/connectionpool.py", line 841, in urlopen
+    retries = retries.increment(
+        method, url, error=new_e, _pool=self, _stacktrace=sys.exc_info()[2]
+    )
+  File "/Users/dfroxs/Playground/Python/SpotSignal/venv/lib/python3.14/site-packages/urllib3/util/retry.py", line 535, in increment
+    raise MaxRetryError(_pool, url, reason) from reason  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+urllib3.exceptions.MaxRetryError: HTTPSConnectionPool(host='data-api.binance.vision', port=443): Max retries exceeded with url: /api/v3/klines?interval=1h&limit=1000&symbol=BTCUSDT&startTime=1757480400000 (Caused by ConnectTimeoutError(<HTTPSConnection(host='data-api.binance.vision', port=443) at 0x1122260d0>, 'Connection to data-api.binance.vision timed out. (connect timeout=10.0)'))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/dfroxs/Playground/Python/SpotSignal/venv/lib/python3.14/site-packages/ccxt/base/exchange.py", line 662, in fetch
+    response = self.session.request(
+        method,
+    ...<6 lines>...
+        files=files
+    )
+  File "/Users/dfroxs/Playground/Python/SpotSignal/venv/lib/python3.14/site-packages/requests/sessions.py", line 592, in request
+    resp = self.send(prep, **send_kwargs)
+  File "/Users/dfroxs/Playground/Python/SpotSignal/venv/lib/python3.14/site-packages/requests/sessions.py", line 706, in send
+    r = adapter.send(request, **kwargs)
+  File "/Users/dfroxs/Playground/Python/SpotSignal/venv/lib/python3.14/site-packages/requests/adapters.py", line 666, in send
+    raise ConnectTimeout(e, request=request)
+requests.exceptions.ConnectTimeout: HTTPSConnectionPool(host='data-api.binance.vision', port=443): Max retries exceeded with url: /api/v3/klines?interval=1h&limit=1000&symbol=BTCUSDT&startTime=1757480400000 (Caused by ConnectTimeoutError(<HTTPSConnection(host='data-api.binance.vision', port=443) at 0x1122260d0>, 'Connection to data-api.binance.vision timed out. (connect timeout=10.0)'))
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/dfroxs/Playground/Python/SpotSignal/scripts/trail_futures_ic.py", line 223, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/Users/dfroxs/Playground/Python/SpotSignal/scripts/trail_futures_ic.py", line 180, in main
+    s, by_dir = arm_c_window(w)
+                ~~~~~~~~~~~~^^^
+  File "/Users/dfroxs/Playground/Python/SpotSignal/scripts/trail_futures_ic.py", line 129, in arm_c_window
+    df, calls = record_window(*WINDOWS[name])
+                ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "/Users/dfroxs/Playground/Python/SpotSignal/scripts/tp1_futures_ic.py", line 168, in record_window
+    backtest.run_backtest(mode=MODE, timeframe=TF, start=start, end=end,
+    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                          counterfactual=True)
+                          ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/dfroxs/Playground/Python/SpotSignal/backtest.py", line 98, in run_backtest
+    df = fetch_ohlcv_df(symbol, timeframe, since=since_ms, until=until_ms,
+                        vwap_period=_vwap_period(timeframe))
+  File "/Users/dfroxs/Playground/Python/SpotSignal/signals/ohlcv.py", line 162, in fetch_ohlcv_df
+    bars = _fetch_ohlcv_range(symbol, timeframe, since, until)
+  File "/Users/dfroxs/Playground/Python/SpotSignal/signals/ohlcv.py", line 132, in _fetch_ohlcv_range
+    chunk = exchange.fetch_ohlcv(symbol, timeframe=timeframe,
+                                 since=cursor, limit=_MAX_BARS_PER_CALL)
+  File "/Users/dfroxs/Playground/Python/SpotSignal/signals/market_data.py", line 123, in call
+    return getattr(self._mirror, name)(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/Users/dfroxs/Playground/Python/SpotSignal/venv/lib/python3.14/site-packages/ccxt/binance.py", line 4707, in fetch_ohlcv
+    response = self.publicGetKlines(self.extend(request, params))
+  File "/Users/dfroxs/Playground/Python/SpotSignal/venv/lib/python3.14/site-packages/ccxt/base/types.py", line 35, in unbound_method
+    return _self.request(self.path, self.api, self.method, params, config=self.config)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/dfroxs/Playground/Python/SpotSignal/venv/lib/python3.14/site-packages/ccxt/binance.py", line 11651, in request
+    response = self.fetch2(path, api, method, params, headers, body, config)
+  File "/Users/dfroxs/Playground/Python/SpotSignal/venv/lib/python3.14/site-packages/ccxt/base/exchange.py", line 5421, in fetch2
+    raise e
+  File "/Users/dfroxs/Playground/Python/SpotSignal/venv/lib/python3.14/site-packages/ccxt/base/exchange.py", line 5411, in fetch2
+    return self.fetch(request['url'], request['method'], request['headers'], request['body'])
+           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/dfroxs/Playground/Python/SpotSignal/venv/lib/python3.14/site-packages/ccxt/base/exchange.py", line 695, in fetch
+    raise RequestTimeout(details) from e
+ccxt.base.errors.RequestTimeout: binance GET https://data-api.binance.vision/api/v3/klines?interval=1h&limit=1000&symbol=BTCUSDT&startTime=1757480400000

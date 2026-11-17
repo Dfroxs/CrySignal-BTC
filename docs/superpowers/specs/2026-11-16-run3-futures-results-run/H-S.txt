@@ -1,0 +1,8 @@
+data/snap_futures.db  opinions=114  errors by provider={'anthropic': 0}
+
+PRIMARY — simulated trade under the bot's exits
+anthropic  AGREE n=20 mean=2.835  DISAGREE n=93 mean=-0.37061290322580637  diff=+3.206 [+2.015, +4.425]  → PASS
+
+descriptive — signed 24h return (never a criterion)
+anthropic  AGREE n=20 mean=0.10124868286225999  DISAGREE n=94 mean=-0.20971120110868896
+binance fetch_ohlcv failed (binance GET https://api.binance.com/api/v3/exchangeInfo) — falling back to data-api.binance.vision for 1800s

@@ -1,0 +1,377 @@
+{
+ "as_registered_iid_diff": 3.2056129032258065,
+ "groupings": [
+  {
+   "grouping": "mode+direction runs, gap<12h",
+   "episodes": 42,
+   "episodes_with_agree": 9,
+   "diff": 3.2056129032258065,
+   "ci90_cluster": [
+    0.0247969083006653,
+    4.803849218605315
+   ],
+   "boot_draws_used": 5000,
+   "ci_excludes_zero": true,
+   "leave_one_out_min": 0.5217555555555556,
+   "leave_one_out_max": 3.530763420724095,
+   "leave_one_out_worst_episode_start": "2026-11-10 10:01:02",
+   "agree_episodes": [
+    {
+     "start": "2026-10-19 08:01:02",
+     "mode": "spot",
+     "type": "BUY",
+     "n": 2,
+     "agree": 1,
+     "mean_pnl": 0.141
+    },
+    {
+     "start": "2026-10-20 15:01:05",
+     "mode": "futures",
+     "type": "BUY",
+     "n": 1,
+     "agree": 1,
+     "mean_pnl": -0.407
+    },
+    {
+     "start": "2026-10-20 16:01:04",
+     "mode": "spot",
+     "type": "BUY",
+     "n": 1,
+     "agree": 1,
+     "mean_pnl": 0.042
+    },
+    {
+     "start": "2026-10-20 20:01:06",
+     "mode": "futures",
+     "type": "BUY",
+     "n": 4,
+     "agree": 2,
+     "mean_pnl": 0.0685
+    },
+    {
+     "start": "2026-10-21 00:01:07",
+     "mode": "spot",
+     "type": "BUY",
+     "n": 1,
+     "agree": 1,
+     "mean_pnl": -0.454
+    },
+    {
+     "start": "2026-10-21 08:01:10",
+     "mode": "futures",
+     "type": "BUY",
+     "n": 6,
+     "agree": 2,
+     "mean_pnl": -0.7216666666666667
+    },
+    {
+     "start": "2026-10-22 00:01:03",
+     "mode": "spot",
+     "type": "BUY",
+     "n": 1,
+     "agree": 1,
+     "mean_pnl": -2.71
+    },
+    {
+     "start": "2026-11-10 10:01:02",
+     "mode": "futures",
+     "type": "SELL",
+     "n": 13,
+     "agree": 10,
+     "mean_pnl": 5.571615384615384
+    },
+    {
+     "start": "2026-11-12 13:01:03",
+     "mode": "futures",
+     "type": "SELL",
+     "n": 7,
+     "agree": 1,
+     "mean_pnl": 4.8064285714285715
+    }
+   ]
+  },
+  {
+   "grouping": "mode+direction runs, gap<24h",
+   "episodes": 38,
+   "episodes_with_agree": 8,
+   "diff": 3.2056129032258065,
+   "ci90_cluster": [
+    -0.003712876712328621,
+    4.429481267353337
+   ],
+   "boot_draws_used": 4999,
+   "ci_excludes_zero": false,
+   "leave_one_out_min": 0.48916049382716076,
+   "leave_one_out_max": 3.530763420724095,
+   "leave_one_out_worst_episode_start": "2026-11-10 10:01:02",
+   "agree_episodes": [
+    {
+     "start": "2026-10-19 08:01:02",
+     "mode": "spot",
+     "type": "BUY",
+     "n": 2,
+     "agree": 1,
+     "mean_pnl": 0.141
+    },
+    {
+     "start": "2026-10-20 15:01:05",
+     "mode": "futures",
+     "type": "BUY",
+     "n": 1,
+     "agree": 1,
+     "mean_pnl": -0.407
+    },
+    {
+     "start": "2026-10-20 16:01:04",
+     "mode": "spot",
+     "type": "BUY",
+     "n": 1,
+     "agree": 1,
+     "mean_pnl": 0.042
+    },
+    {
+     "start": "2026-10-20 20:01:06",
+     "mode": "futures",
+     "type": "BUY",
+     "n": 4,
+     "agree": 2,
+     "mean_pnl": 0.0685
+    },
+    {
+     "start": "2026-10-21 00:01:07",
+     "mode": "spot",
+     "type": "BUY",
+     "n": 1,
+     "agree": 1,
+     "mean_pnl": -0.454
+    },
+    {
+     "start": "2026-10-21 08:01:10",
+     "mode": "futures",
+     "type": "BUY",
+     "n": 6,
+     "agree": 2,
+     "mean_pnl": -0.7216666666666667
+    },
+    {
+     "start": "2026-10-22 00:01:03",
+     "mode": "spot",
+     "type": "BUY",
+     "n": 1,
+     "agree": 1,
+     "mean_pnl": -2.71
+    },
+    {
+     "start": "2026-11-10 10:01:02",
+     "mode": "futures",
+     "type": "SELL",
+     "n": 23,
+     "agree": 11,
+     "mean_pnl": 4.503260869565217
+    }
+   ]
+  },
+  {
+   "grouping": "calendar day (UTC) x mode",
+   "episodes": 35,
+   "episodes_with_agree": 9,
+   "diff": 3.2056129032258065,
+   "ci90_cluster": [
+    0.3586675702811245,
+    4.853300551866316
+   ],
+   "boot_draws_used": 5000,
+   "ci_excludes_zero": true,
+   "leave_one_out_min": 1.221927536231884,
+   "leave_one_out_max": 3.742786274509804,
+   "leave_one_out_worst_episode_start": "2026-11-10 10:01:02",
+   "agree_episodes": [
+    {
+     "start": "2026-10-19 00:01:02",
+     "mode": "spot",
+     "type": "BUY",
+     "n": 3,
+     "agree": 1,
+     "mean_pnl": 0.32233333333333336
+    },
+    {
+     "start": "2026-10-20 15:01:05",
+     "mode": "futures",
+     "type": "BUY",
+     "n": 6,
+     "agree": 3,
+     "mean_pnl": 0.010166666666666676
+    },
+    {
+     "start": "2026-10-20 16:01:04",
+     "mode": "spot",
+     "type": "BUY",
+     "n": 2,
+     "agree": 1,
+     "mean_pnl": 0.0495
+    },
+    {
+     "start": "2026-10-21 00:01:07",
+     "mode": "spot",
+     "type": "BUY",
+     "n": 3,
+     "agree": 1,
+     "mean_pnl": -1.2610000000000001
+    },
+    {
+     "start": "2026-10-21 05:01:03",
+     "mode": "futures",
+     "type": "BUY",
+     "n": 14,
+     "agree": 2,
+     "mean_pnl": -1.2749285714285714
+    },
+    {
+     "start": "2026-10-22 00:01:03",
+     "mode": "spot",
+     "type": "BUY",
+     "n": 1,
+     "agree": 1,
+     "mean_pnl": -2.71
+    },
+    {
+     "start": "2026-11-10 10:01:02",
+     "mode": "futures",
+     "type": "SELL",
+     "n": 9,
+     "agree": 8,
+     "mean_pnl": 6.275222222222222
+    },
+    {
+     "start": "2026-11-11 07:01:03",
+     "mode": "futures",
+     "type": "SELL",
+     "n": 4,
+     "agree": 2,
+     "mean_pnl": 3.9885
+    },
+    {
+     "start": "2026-11-13 03:01:02",
+     "mode": "futures",
+     "type": "SELL",
+     "n": 3,
+     "agree": 1,
+     "mean_pnl": 5.161666666666666
+    }
+   ]
+  }
+ ],
+ "futures_only": {
+  "grouping": "futures only, runs gap<12h",
+  "episodes": 14,
+  "episodes_with_agree": 3,
+  "diff": 3.3702916666666667,
+  "ci90_cluster": [
+   0.2652678571428573,
+   5.165570731707317
+  ],
+  "boot_draws_used": 4781,
+  "ci_excludes_zero": true,
+  "leave_one_out_min": 0.42335555555555554,
+  "leave_one_out_max": 4.481030303030304,
+  "leave_one_out_worst_episode_start": "2026-11-10 10:01:02",
+  "agree_episodes": [
+   {
+    "start": "2026-10-20 15:01:05",
+    "mode": "futures",
+    "type": "BUY",
+    "n": 20,
+    "agree": 5,
+    "mean_pnl": -0.8894
+   },
+   {
+    "start": "2026-11-10 10:01:02",
+    "mode": "futures",
+    "type": "SELL",
+    "n": 13,
+    "agree": 10,
+    "mean_pnl": 5.571615384615384
+   },
+   {
+    "start": "2026-11-12 13:01:03",
+    "mode": "futures",
+    "type": "SELL",
+    "n": 7,
+    "agree": 1,
+    "mean_pnl": 4.8064285714285715
+   }
+  ]
+ },
+ "by_group": [
+  {
+   "mode": "futures",
+   "signal_type": "BUY",
+   "verdict": "AGREE",
+   "size": 5,
+   "mean": -0.194
+  },
+  {
+   "mode": "futures",
+   "signal_type": "BUY",
+   "verdict": "DISAGREE",
+   "size": 29,
+   "mean": -1.001
+  },
+  {
+   "mode": "futures",
+   "signal_type": "SELL",
+   "verdict": "AGREE",
+   "size": 11,
+   "mean": 5.534
+  },
+  {
+   "mode": "futures",
+   "signal_type": "SELL",
+   "verdict": "DISAGREE",
+   "size": 19,
+   "mean": 2.471
+  },
+  {
+   "mode": "spot",
+   "signal_type": "BUY",
+   "verdict": "AGREE",
+   "size": 4,
+   "mean": -0.8
+  },
+  {
+   "mode": "spot",
+   "signal_type": "BUY",
+   "verdict": "DISAGREE",
+   "size": 45,
+   "mean": -1.164
+  }
+ ],
+ "post_hoc": {
+  "gap<12h": {
+   "stratified_diff": 1.9590467069973792,
+   "stratified_ci90": [
+    0.21242012932522158,
+    3.03638270462562
+   ],
+   "within_episode_diff": 0.10896886446886453,
+   "within_episode_ci90": [
+    -0.4593997599039616,
+    0.45651282051282044
+   ],
+   "within_episode_perm_p_one_sided": 0.3646353646353646
+  },
+  "calendar day": {
+   "stratified_diff": 1.9590467069973792,
+   "stratified_ci90": [
+    0.2649031577003628,
+    2.9766337298740844
+   ],
+   "within_episode_diff": -0.04834633249791148,
+   "within_episode_ci90": [
+    -0.8877245321655233,
+    0.6554883219954649
+   ],
+   "within_episode_perm_p_one_sided": 0.6163836163836164
+  }
+ }
+}

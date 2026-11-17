@@ -1,0 +1,265 @@
+{
+ "rows": {
+  "ETHUSDT": 1375,
+  "SOLUSDT": 1375,
+  "BNBUSDT": 1375,
+  "XRPUSDT": 1375,
+  "DOGEUSDT": 1375,
+  "BTCUSDT": 683
+ },
+ "gaps": {
+  "ETHUSDT": 0,
+  "SOLUSDT": 0,
+  "BNBUSDT": 0,
+  "XRPUSDT": 0,
+  "DOGEUSDT": 0,
+  "BTCUSDT": 0
+ },
+ "fields": {
+  "ls_global": {
+   "role": "H-D1",
+   "verdict": "INCONCLUSIVE",
+   "per_symbol": {
+    "ETHUSDT": {
+     "ic": 0.13170388362605648,
+     "n": 1374,
+     "counted": true
+    },
+    "SOLUSDT": {
+     "ic": -0.03819270845337907,
+     "n": 1374,
+     "counted": true
+    },
+    "BNBUSDT": {
+     "ic": 0.22196913777322883,
+     "n": 1374,
+     "counted": true
+    },
+    "XRPUSDT": {
+     "ic": 0.013226547806081672,
+     "n": 1374,
+     "counted": true
+    },
+    "DOGEUSDT": {
+     "ic": -0.09408080506761685,
+     "n": 1374,
+     "counted": true
+    }
+   },
+   "counted": [
+    "ETHUSDT",
+    "SOLUSDT",
+    "BNBUSDT",
+    "XRPUSDT",
+    "DOGEUSDT"
+   ],
+   "pooled": 0.046925211136874215,
+   "ci": [
+    -0.060284802632050355,
+    0.1651102632755042
+   ],
+   "pooled_4h": 0.02181473326459734,
+   "pooled_12h": 0.016666210606067912,
+   "btc_run3": {
+    "ic": 0.28164388078198016,
+    "n": 683
+   }
+  },
+  "ls_top_position": {
+   "role": "screen",
+   "verdict": "no lead",
+   "per_symbol": {
+    "ETHUSDT": {
+     "ic": -0.017363766479343606,
+     "n": 1374,
+     "counted": true
+    },
+    "SOLUSDT": {
+     "ic": 0.022225793340942324,
+     "n": 1374,
+     "counted": true
+    },
+    "BNBUSDT": {
+     "ic": 0.003344802655987649,
+     "n": 1374,
+     "counted": true
+    },
+    "XRPUSDT": {
+     "ic": -0.11913288908810887,
+     "n": 1374,
+     "counted": true
+    },
+    "DOGEUSDT": {
+     "ic": -0.03191037075125479,
+     "n": 1374,
+     "counted": true
+    }
+   },
+   "counted": [
+    "ETHUSDT",
+    "SOLUSDT",
+    "BNBUSDT",
+    "XRPUSDT",
+    "DOGEUSDT"
+   ],
+   "pooled": -0.028567286064355456,
+   "ci": [
+    -0.1167172590882398,
+    0.06603366909274389
+   ],
+   "pooled_4h": 0.004263842679557942,
+   "pooled_12h": -0.0020689197179753287,
+   "btc_run3": {
+    "ic": 0.0749022016311127,
+    "n": 683
+   }
+  },
+  "oi_change_24h": {
+   "role": "screen",
+   "verdict": "no lead",
+   "per_symbol": {
+    "ETHUSDT": {
+     "ic": -0.005582554503459261,
+     "n": 1350,
+     "counted": true
+    },
+    "SOLUSDT": {
+     "ic": 0.0013227576226074438,
+     "n": 1350,
+     "counted": true
+    },
+    "BNBUSDT": {
+     "ic": 0.09713592161093092,
+     "n": 1350,
+     "counted": true
+    },
+    "XRPUSDT": {
+     "ic": 0.012885545266125184,
+     "n": 1350,
+     "counted": true
+    },
+    "DOGEUSDT": {
+     "ic": 0.011463212592257207,
+     "n": 1350,
+     "counted": true
+    }
+   },
+   "counted": [
+    "ETHUSDT",
+    "SOLUSDT",
+    "BNBUSDT",
+    "XRPUSDT",
+    "DOGEUSDT"
+   ],
+   "pooled": 0.023444976517692298,
+   "ci": [
+    -0.06438838870917445,
+    0.10682258682317672
+   ],
+   "pooled_4h": 0.007128884169852599,
+   "pooled_12h": 0.007498576153265412,
+   "btc_run3": {
+    "ic": 0.24632301181630392,
+    "n": 683
+   }
+  },
+  "ls_top_account": {
+   "role": "descriptive",
+   "verdict": "\u2014",
+   "per_symbol": {
+    "ETHUSDT": {
+     "ic": 0.11512533570712301,
+     "n": 1374,
+     "counted": true
+    },
+    "SOLUSDT": {
+     "ic": -0.03509360744067653,
+     "n": 1374,
+     "counted": true
+    },
+    "BNBUSDT": {
+     "ic": 0.1934375559790509,
+     "n": 1374,
+     "counted": true
+    },
+    "XRPUSDT": {
+     "ic": 0.04683679355827312,
+     "n": 1374,
+     "counted": true
+    },
+    "DOGEUSDT": {
+     "ic": -0.1031575330674763,
+     "n": 1374,
+     "counted": true
+    }
+   },
+   "counted": [
+    "ETHUSDT",
+    "SOLUSDT",
+    "BNBUSDT",
+    "XRPUSDT",
+    "DOGEUSDT"
+   ],
+   "pooled": 0.043429708947258845,
+   "ci": [
+    -0.06213552248835061,
+    0.16362559136463165
+   ],
+   "pooled_4h": 0.023818944580156463,
+   "pooled_12h": 0.01926845120118106,
+   "btc_run3": {
+    "ic": 0.27271576481433996,
+    "n": 683
+   }
+  },
+  "taker": {
+   "role": "descriptive",
+   "verdict": "\u2014",
+   "per_symbol": {
+    "ETHUSDT": {
+     "ic": 0.0036982242699394974,
+     "n": 1375,
+     "counted": true
+    },
+    "SOLUSDT": {
+     "ic": 0.029123504938305535,
+     "n": 1375,
+     "counted": true
+    },
+    "BNBUSDT": {
+     "ic": 0.004376118937387877,
+     "n": 1375,
+     "counted": true
+    },
+    "XRPUSDT": {
+     "ic": -0.06399886896773539,
+     "n": 1375,
+     "counted": true
+    },
+    "DOGEUSDT": {
+     "ic": -0.013224894272983796,
+     "n": 1375,
+     "counted": true
+    }
+   },
+   "counted": [
+    "ETHUSDT",
+    "SOLUSDT",
+    "BNBUSDT",
+    "XRPUSDT",
+    "DOGEUSDT"
+   ],
+   "pooled": -0.008005183019017256,
+   "ci": [
+    -0.03887661805487337,
+    0.019343586314148387
+   ],
+   "pooled_4h": 0.023232777440312265,
+   "pooled_12h": -0.016250873839009618,
+   "btc_run3": {
+    "ic": -0.06156297784338102,
+    "n": 683
+   }
+  }
+ }
+}

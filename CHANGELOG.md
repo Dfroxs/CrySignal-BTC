@@ -4,6 +4,52 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-18 — feat(run 4, part A): engine fixes, futures fee 0.05%, flip shadow; H-VG restarts
+
+The owner moved run 4's decided items forward rather than wait for 2027-02-15. Every item
+changes signals or booking, so this needs one bot restart. Each engine fix has a test that
+failed first.
+
+- **HTF conflict penalty applied last** (`signals/engine.py`, new checkpoint
+  `htf_conflict_penalty`, `CONDITION_MAX` row 0/0). It used to hit whichever side led after
+  6 of ~22 conditions. Measured on the test case: an uptrend with bearish market structure
+  scored BUY −1.0 while a SELL fired at 7.0 unpenalised. It now lands on the side that leads
+  once everything has scored.
+- **Session bump at the bar's close hour.** `df.index` is the open time, so a 4h spot bar
+  opened 04:00 (decided 08:01) took the Asia +0.5; it now takes 0. Futures 1h bars shift by
+  one hour.
+- **Macro-forced HOLD** clears `stop_loss`, `take_profit`, `tp2` and `confidence`.
+- **`futures_fee_pct` 0.04 → 0.05** (Binance USD-M VIP0 taker).
+- **Stop before flip** (`0cfcd0c`) and the **flip shadow** (`agents/flip_shadow.py`,
+  `shadow_flip_opinions`, for H-FLP-C) ship with this. They were on develop only.
+- **H-VG restarts** at the run-4 restart (prereg amendment). Its one-day-old window held 5
+  opinions, none scored.
+- The PR branch merges main into develop's line. Develop's CHANGELOG and tests were verified
+  as supersets. The research scripts and results docs that were develop-only reach main too.
+
+Tests 329/329.
+
+---
+
+## 2026-11-18 — docs(PAPER_RUN): engine review findings added to the run-4 plan
+
+The owner asked whether the engine's logic is sound. A review of `signals/engine.py` found
+these mechanics correct:
+- SL/TP geometry: TP 3.75 ATR against SL ≤ 2.5 ATR, so R:R is at least 1.5;
+- closed bars only;
+- threshold layering;
+- ablation rollback.
+
+It found three fixable defects, all signal-changing, now run-4 items 4–6:
+- the HTF conflict penalty is applied mid-scoring, to the side leading then;
+- the session bump reads the bar's open hour (spot up to 4 h off);
+- a macro-forced HOLD keeps its levels and confidence.
+
+The known backwards basis reading stays a prereg candidate. No code changed. The engine's
+problem is the lack of edge (STEP 1), not these bugs.
+
+---
+
 ## 2026-11-18 — feat(dashboard): light / dark theme toggle
 
 The owner asked to choose between light and dark. A button at the top right switches theme,
@@ -72,6 +118,36 @@ better prompt while keeping Opus and the hourly cadence, without losing performa
   addendum in `2026-11-17-claude-scanner-prereg.md`.
 
 Tests 326/326.
+
+---
+
+## 2026-11-18 — prereg: H-VG Claude veto gate (by episode); run-4 plan
+
+The owner asked for improvement ideas and chose two.
+
+- **H-VG** (`docs/superpowers/specs/2026-11-18-claude-veto-gate-prereg.md`,
+  `scripts/veto_gate_eval.py`).
+  - H-S passed by opinion, but its 20 AGREE opinions were four to six episodes. H-VG tests
+    the gate itself: open only when Claude's opinion is not DISAGREE, with errors failing
+    open.
+  - The unit is the episode (same mode and direction, gap < 12h). The effect per episode is
+    the gated trade minus the ungated trade, under the bot's own exits.
+  - Window: opinions from 2026-11-17 00:00 to 2027-02-15. PASS needs a mean > 0 and a 90% CI
+    above 0. It is INCONCLUSIVE below 30 episodes, below 10 episodes where the gate acted, or
+    above 20% errors.
+  - A PASS licenses only an owner decision; the run-3 rule that an LLM never gates a live
+    trade stands until then. The instrument refuses to score before 2027-02-15.
+  - It was written with 5 opinions in the window, counted only.
+- **Run-4 plan** in `PAPER_RUN.md`. All trading-path changes ship in one restart, on or after
+  2027-02-15:
+  - decided: futures fee 0.04 → 0.05 (VIP0 taker), stop-before-flip booking, flip shadow;
+  - candidates, each needing its own result or prereg: veto gate, L/S momentum, the
+    `rel_ic_dir` bias rule, neutralising the bullish basis reading.
+
+  Includes the scoring calendar. Verified while writing: the stop-before-flip fix can move
+  signals, because the adaptive threshold's win rate counts WIN/LOSS and excludes FLIP.
+
+Nothing is deployed; nothing changes on the VPS. Tests 326/326.
 
 ---
 
@@ -264,6 +340,222 @@ PASS needs 90 days and 300 picks. Three tests (318/318). Smoke on the VPS from `
 repo and DB untouched): all nine coins and every field fetched; one real call, 7.8 s,
 2,994 in / 558 out tokens, $0.023 (about $17/month hourly, half the prereg's estimate).
 
+---
+
+## 2026-11-17 — results: H-FLP INCONCLUSIVE (flip too rare to test); flip shadow built, not deployed
+
+`docs/superpowers/specs/2026-11-16-futures-flip-results.md`. Scored once from `165d34b`.
+Fidelity 8/10, identity 0 differences. Arm D had **2 flips** in 4.5 years of ETH/BNB/XRP/LINK
+(30 required) and Arm C had 0 on BTC: only 2.7% of signals have an opposite one within 72
+bars, and none of 372 BTC trades saw one during its hold. Arm D pooled mean monthly diff
+-0.023pp, CI [-0.068, +0.015], ahead in 0/4 assets. The instrument printed FAIL because
+`verdict()` tests the sign before the flip count; the prereg's Inert clause makes it
+INCONCLUSIVE, which is what is reported (instrument not edited after the run). The live flip
+stays; nothing licensed. Also committed, **not deployed** (touches `run_bot.py`, restart needs
+the owner's go): `agents/flip_shadow.py` (FLIP/HOLD opinion before the close, background
+thread, logged only), table `shadow_flip_opinions` + `history.log_flip_opinion`, the
+`run_bot.py` hook, `scripts/flip_shadow_eval.py` (H-FLP-C scorer, 20 events minimum). Tests
+315/315.
+
+---
+
+## 2026-11-16 — feat: flip_at simulator knob and the H-FLP instrument (not yet run)
+
+`backtest._simulate_forward` gains `exit_params["flip_at"]` (default absent = off): a position
+still open after bar `flip_at`'s own stop/target/trail checks is closed at that bar's close,
+outcome `FLIP`, priced by `_net_pnl`. Identity check against the pre-knob simulator, 18,900
+simulations (BUY and SELL, three `exit_params`), 0 differences
+(`2026-11-16-futures-flip-run/identity.txt`). `scripts/flip_ic.py` scores every bar once and
+replays the same signal stream under the live flip and under flip-off, compared by calendar
+month; includes the fidelity check against the live book. Three tests added (312/312). Default-off
+research plumbing: no live code, config or trading change; `backtest.py` shows in the PAPER_RUN
+diff check.
+
+---
+
+## 2026-11-16 — docs: pre-registration H-FLP (futures close-and-flip), with a Claude arm
+
+`docs/superpowers/specs/2026-11-16-futures-flip-prereg.md`, written before any figure or
+instrument. One candidate, **flip off** (an opposite signal is skipped while a position
+is open, as same-direction ones already are), parameter-free. Baseline = the live flip,
+which the replay never modelled: needs a default-off `exit_params["flip_at"]` in
+`_simulate_forward` plus a flip-aware sequencer. Arms: BTC primary/confirmation (guard) and
+ETH, BNB, XRP, LINK 2022-2026 (fresh); monthly-sum criterion with a month-block CI;
+fidelity vs the 10 run-3 live positions as a discard. States that only #15 and #16 are
+genuine flip decisions (#14 was a stop breach mislabelled). Claude arm: log-only forward
+`FLIP`/`HOLD` shadow (not backtestable, training-data contamination), scoring pre-registered
+at >=20 events (about 6 months). No code, config or trading change yet.
+
+---
+
+## 2026-11-16 — results: H-V1 rel_ic_dir PASS, H-S PASS (thin), H-X INCONCLUSIVE, H-V2 descriptive
+
+`docs/superpowers/specs/2026-11-16-run3-futures-results.md`, scored after the futures
+gate (2026-11-16 00:00 UTC) from a fresh VPS snapshot. H-V1: `rel_ic_dir` +0.126
+[+0.046, +0.211] PASS, `rel_engine_dir` -0.090 FAIL; the passing variant's own IC is +0.023
+(CI spans 0), so "less wrong than base", not predictive. H-V2: 7 trades per book,
+descriptive, fidelity 5/10 unmatched annotated (3 flip artefacts under the 11-10 amendment,
+2 macro-close by my reading, stated in the doc). H-S: +3.206pp [+2.015, +4.425] PASS by the
+registered rule, but the 20 AGREE opinions are about 4-6 episodes and the 24h descriptive
+statistic does not show it. H-X: 12 positions, +0.761pp [-0.577, +1.916] INCONCLUSIVE.
+Descriptive follow-up `scripts/shadow_cluster.py`: with episodes as the unit the H-S CI lower
+bound is -0.004 to +0.36 (not +2.02), dropping one episode cuts +3.2 to +0.5, and within one
+episode AGREE vs DISAGREE is +0.11pp (p 0.36); the pooled gap is partly shorts-in-a-drop vs
+longs. Verdict unchanged. No config or live code change; `rel_ic_dir` and a Claude veto gate become run-4 backlog
+candidates needing their own pre-registrations.
+
+---
+
+## 2026-11-10 — docs: pre-registration H-TRL (futures trail)
+
+`docs/superpowers/specs/2026-11-10-futures-trail-prereg.md`, written before any figure.
+One candidate, `trailing_atr_factor` 2.5 (live 3.5), through the simulator's existing
+`exit_params`. Same arms, criteria and discard rules as H-TPF. The prereg states that the
+prior is against it (the 10-09 test and its monotone grid favoured a wider trail) and
+that the live give-back observation is n=7. A profit-lock trail is deferred. No
+instrument yet, no result, no config or trading change.
+
+---
+
+## 2026-11-10 — docs: run-3 prereg amendment, H-V2 fidelity may annotate flip artefacts
+
+`2026-10-09-run3-prereg.md`. Two of seven futures positions (#15, #16) are unmatched in
+the H-V2 replay because it has no close-and-flip and applies a cooldown live did not.
+New annotation category with two explicit tests and a one-third cap. Written after a
+descriptive look at the books, which the amendment discloses. No criterion, code or
+config change.
+
+---
+
+## 2026-11-15 — results: H-RGL and H-D, both INCONCLUSIVE
+
+The two run-3 hypotheses already due. H-RGL: 6 regime-blocked spot BUYs at -1.066pp vs
+random bearish-regime -1.060pp, 90% CI on the blocked arm [-1.79, -0.15]; the gate neither
+visibly helps nor hurts. H-D: `ls_global` pooled IC +0.047 [-0.060, +0.165] over 5 alts
+(INCONCLUSIVE), other stats no lead; BTC alone +0.282 is a lead, not a criterion. Futures
+hypotheses (H-V1, H-V2 futures, H-S, H-X) wait for 2026-11-16. Nothing changes in config
+or code. `docs/superpowers/specs/2026-11-15-run3-due-results.md`.
+
+---
+
+## 2026-11-12 — chore(scripts): Arm C recordings are cached on disk
+
+`scripts/trail_futures_ic.py::record_window` (used by `trail_futures_ic.py` and
+`lock_futures_ic.py`) now caches each window's recorded signals in `data/cache/armc/`,
+keyed by the window and a hash of `backtest.py`, `config.py`, `signals/`, `trading/` and
+`tp1_futures_ic.py`, so a changed engine, simulator or config re-records instead of
+reusing. Windows ending in the future are never cached, and a damaged cache file is
+re-recorded. Every exit test used to replay the same two multi-year backtests (about 50
+minutes) for the same 625 + 178 signals; later runs reuse them. Speed only, no computed
+value changes. `scripts/tp1_futures_ic.py` (H-TPF's scored instrument) is untouched. The
+cache is empty until the next run fills it. One new test (309/309).
+
+---
+
+## 2026-11-12 — results: H-PLK FAIL (futures breakeven lock)
+
+Scored from `08327fb`, smoke at `50a9ed0`; a first run was stopped by hand before any
+verdict (archived). Arm A 6/10 cells, pooled +0.003pp; Arm B 7/20, -0.015pp; Arm C
+-0.020 / -0.011pp, SELL -0.040pp. Effect near zero, not harmful: the lock arms on ~38% of
+entries but only ~10% exit at the floor, and give-back is unchanged (3.84 to 3.81pp).
+Nothing changes in config or live code; the `be_lock_r` knob stays, default off. With
+H-TPF and H-TRL this closes the exit-side candidates.
+`docs/superpowers/specs/2026-11-11-futures-profit-lock-results.md`.
+
+---
+
+## 2026-11-11 — feat: be_lock_r simulator knob and the H-PLK instrument (not yet run)
+
+`backtest._simulate_forward` gains `exit_params["be_lock_r"]` (default absent = off): a
+bar's close favourable by that multiple of the initial stop distance raises the trail to
+entry from the NEXT bar, one-way, either direction. With the knob absent the output is
+identical to before (0 differences over 18,900 simulated entries; check kept in
+`2026-11-11-futures-profit-lock-run/`). `scripts/lock_futures_ic.py` is the H-PLK
+instrument, built on H-TPF's and H-TRL's helpers. The prereg gains a same-day amendment
+narrowing where the identity is shown. Three new tests (308/308). `backtest.py` shows in
+the PAPER_RUN trading-path diff check; it is default-off research plumbing and
+`trading/paper.py` is untouched. No config or live-code change.
+
+---
+
+## 2026-11-11 — docs: pre-registration H-PLK (futures breakeven lock)
+
+`docs/superpowers/specs/2026-11-11-futures-profit-lock-prereg.md`, written before any
+figure. One candidate: after a close favourable by 1.0R (R = the position's stop
+distance) the trail is raised to entry, effective the next bar; nothing else changes.
+Same arms, criteria and discard rules as H-TPF and H-TRL, plus an identity check that the
+new default-off simulator knob (`exit_params["be_lock_r"]`) leaves the current output
+byte-identical. The prereg states the prior is against it. No knob, no instrument, no
+result, no config or live-code change yet.
+
+---
+
+## 2026-11-11 — results: H-TRL FAIL (futures trail width)
+
+Instrument `scripts/trail_futures_ic.py` (`69025ee`), scored after its smoke commit and a
+retry fix (`fcff53d`) following two network-failed attempts (archived). Arm A 2/10 cells,
+pooled -0.148pp; Arm B 3/20, -0.271pp; Arm C -0.228 / -0.098pp, BUY -0.169, SELL -0.235.
+A 2.5 trail gives back less (3.84 -> 3.29pp) and earns less. Nothing changes in config or
+trading. `docs/superpowers/specs/2026-11-10-futures-trail-results.md`.
+
+---
+
+## 2026-11-11 — chore: nakhoda-alloc removed from the VPS; morning_check and docs follow
+
+The owner had `nakhoda-alloc` (service, user unit and `~/playground/Nakhoda`) removed from
+the VPS. `scripts/morning_check.sh` drops the allocbot service and journal checks (they
+would have read "needs checking" every morning, and its "daily decision" check was
+already a likely false alarm). `PAPER_RUN.md` records the removal and marks its two-bot
+text as history; the CLAUDE.md banner says the second bot is gone. No signal, gate,
+config or trading change. The morning check ran clean against the VPS afterwards.
+
+---
+
+## 2026-11-10 — results: H-TPF FAIL (futures TP1 distance)
+
+Instrument `scripts/tp1_futures_ic.py` (`7b62ece`), scored run after its smoke commit.
+Arm A 2/10 cells, pooled -0.072pp; Arm B 9/20, -0.113pp; Arm C +0.012 / +0.048pp, SELL
+-0.013pp. A nearer TP1 is hit 16% -> 45% of the time and loses money. Nothing changes in
+config or trading. `docs/superpowers/specs/2026-11-10-futures-tp1-results.md`.
+
+---
+
+## 2026-11-10 — docs: pre-registration H-TPF (futures TP1 distance)
+
+`docs/superpowers/specs/2026-11-10-futures-tp1-prereg.md`, written before any figure.
+Prompted by 0 of 7 closed run-3 futures positions reaching TP1. One candidate (TP1 at
+1.0 × stop distance, applied at open), arms A/B synthetic and C engine-entry guard,
+criteria and discard rules fixed. The trail is explicitly not tested. No instrument yet,
+so no result and no change to config or trading.
+
+---
+
+## 2026-11-10 — fix(run_bot): futures stops are checked before a flip closes the opposite position
+
+Phase 3's flip block closed the opposite position before the end-of-cycle
+`check_and_close_positions` ran, so a position already through its stop was booked as
+FLIP instead of LOSS. Seen on #14 (2026-11-08 22:01): SL 75,281, price 74,136, labelled
+FLIP −2.56%. The stop check now runs first, when an opposite position is open, and its
+closes go to `phase3_closed` (so they still reach the Telegram close card).
+
+- **Fill price and P&L are unchanged**: both paths close at the current price. This fixes
+  the outcome label, and with it every FLIP-vs-LOSS statistic.
+- **Behaviour change to note:** a position stopped this way is gone before the flip logic
+  runs, so the new signal opens through the first-entry gates, not the flip gates
+  (`flip_unprofitable` and the other `flip_*` blocks). On #14 the SELL at 22:01 would have
+  been considered as a first entry instead of being blocked.
+- A recorded fix, not a test result; no profit claim. Trading path (`run_bot.py`) touched,
+  so this belongs to the next deploy of `main` and the owner decides whether it restarts
+  the futures window.
+- Test: `test_futures_stops_are_checked_before_the_flip_closes_the_opposite_position`
+  (304/304 pass).
+
+---
+
+## 2026-10-17 — docs: PAPER_RUN futures veto restart
+
+Deployed `d1d490b` to the VPS at 14:39:46 UTC. Manifest `futures_restart_at` moved to it;
+futures-scored hypotheses' day 30 is now 2026-11-16. First cycle at 15:01 clean.
 
 ---
 

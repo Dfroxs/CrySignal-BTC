@@ -1,0 +1,45 @@
+geometry applied once: ok
+Arm A (2024-2025, synthetic)
+WARNING:signals.market_data:binance fetch_ohlcv failed (binance GET https://api.binance.com/api/v3/exchangeInfo) — falling back to data-api.binance.vision for 1800s
+  A BTC/USDT   2024  n= 355 n_eff= 166 diff=-0.1020pp  base=-0.009 cand=-0.111  TP1 hit 18%->47%
+  A BTC/USDT   2025  n= 354 n_eff= 161 diff=+0.0271pp  base=-0.273 cand=-0.246  TP1 hit 16%->45%
+  A ETH/USDT   2024  n= 355 n_eff= 163 diff=+0.0695pp  base=-0.241 cand=-0.172  TP1 hit 14%->46%
+  A ETH/USDT   2025  n= 354 n_eff= 163 diff=-0.0160pp  base=-0.155 cand=-0.171  TP1 hit 16%->46%
+  A BNB/USDT   2024  n= 355 n_eff= 163 diff=-0.0223pp  base=-0.175 cand=-0.197  TP1 hit 13%->46%
+  A BNB/USDT   2025  n= 354 n_eff= 159 diff=-0.0950pp  base=-0.047 cand=-0.142  TP1 hit 18%->45%
+  A XRP/USDT   2024  n= 355 n_eff= 155 diff=-0.3064pp  base=+0.302 cand=-0.004  TP1 hit 15%->44%
+  A XRP/USDT   2025  n= 354 n_eff= 151 diff=-0.1822pp  base=-0.050 cand=-0.232  TP1 hit 17%->43%
+  A LINK/USDT  2024  n= 355 n_eff= 159 diff=-0.0251pp  base=-0.385 cand=-0.410  TP1 hit 16%->45%
+  A LINK/USDT  2025  n= 354 n_eff= 166 diff=-0.0714pp  base=-0.121 cand=-0.192  TP1 hit 15%->47%
+Arm B (2020-2023, synthetic)
+  B BTC/USDT   2020  n= 354 n_eff= 193 diff=-0.3622pp  base=+0.846 cand=+0.484  TP1 hit 19%->55%
+  B BTC/USDT   2021  n= 354 n_eff= 162 diff=+0.0074pp  base=-0.302 cand=-0.295  TP1 hit 12%->46%
+  B BTC/USDT   2022  n= 354 n_eff= 148 diff=+0.1823pp  base=-0.583 cand=-0.401  TP1 hit 13%->42%
+  B BTC/USDT   2023  n= 354 n_eff= 182 diff=-0.1275pp  base=+0.131 cand=+0.003  TP1 hit 20%->51%
+  B ETH/USDT   2020  n= 354 n_eff= 189 diff=-0.5032pp  base=+1.106 cand=+0.603  TP1 hit 20%->53%
+  B ETH/USDT   2021  n= 354 n_eff= 153 diff=-0.1402pp  base=-0.072 cand=-0.212  TP1 hit 13%->43%
+  B ETH/USDT   2022  n= 354 n_eff= 156 diff=+0.0266pp  base=-0.376 cand=-0.349  TP1 hit 15%->44%
+  B ETH/USDT   2023  n= 354 n_eff= 162 diff=+0.0176pp  base=-0.225 cand=-0.208  TP1 hit 18%->46%
+  B BNB/USDT   2020  n= 354 n_eff= 181 diff=-0.1762pp  base=+0.511 cand=+0.335  TP1 hit 19%->51%
+  B BNB/USDT   2021  n= 354 n_eff= 158 diff=-0.5938pp  base=+0.428 cand=-0.165  TP1 hit 16%->45%
+  B BNB/USDT   2022  n= 354 n_eff= 148 diff=+0.1541pp  base=-0.580 cand=-0.426  TP1 hit 13%->42%
+  B BNB/USDT   2023  n= 354 n_eff= 135 diff=-0.0036pp  base=-0.421 cand=-0.424  TP1 hit 14%->38%
+  B XRP/USDT   2020  n= 354 n_eff= 169 diff=-0.1885pp  base=+0.033 cand=-0.155  TP1 hit 16%->48%
+  B XRP/USDT   2021  n= 354 n_eff= 166 diff=-0.3928pp  base=+0.638 cand=+0.245  TP1 hit 19%->47%
+  B XRP/USDT   2022  n= 354 n_eff= 146 diff=-0.0594pp  base=-0.457 cand=-0.517  TP1 hit 14%->41%
+  B XRP/USDT   2023  n= 354 n_eff= 161 diff=+0.0626pp  base=-0.275 cand=-0.212  TP1 hit 16%->45%
+  B LINK/USDT  2020  n= 354 n_eff= 173 diff=-0.2435pp  base=+0.476 cand=+0.233  TP1 hit 19%->49%
+  B LINK/USDT  2021  n= 354 n_eff= 167 diff=+0.0602pp  base=-0.051 cand=+0.009  TP1 hit 14%->47%
+  B LINK/USDT  2022  n= 354 n_eff= 153 diff=+0.0204pp  base=-0.517 cand=-0.496  TP1 hit 13%->43%
+  B LINK/USDT  2023  n= 354 n_eff= 146 diff=+0.0107pp  base=-0.390 cand=-0.379  TP1 hit 16%->41%
+  C primary      recorded= 625 paired= 625 diff=+0.0116pp  base=-0.105 cand=-0.094  TP1 hit 16%->34%  inert=0%  fidelity max|d|=0.00e+00
+WARNING:signals.market_data:binance fetch_ohlcv failed (binance GET https://api.binance.com/api/v3/exchangeInfo) — falling back to data-api.binance.vision for 1800s
+  C confirmation recorded= 178 paired= 178 diff=+0.0477pp  base=-0.113 cand=-0.066  TP1 hit 16%->41%  inert=0%  fidelity max|d|=0.00e+00
+
+A: cells favouring 2/10 (need 8), pooled -0.0724pp (need >= +0.05), TP1 hit 16%->45%, BTC -0.0375pp
+
+B: cells favouring 9/20 (need 16), pooled -0.1125pp (need >= +0.05), TP1 hit 16%->46%, BTC -0.0750pp
+C by direction (pooled): BUY n=441 +0.0467pp  SELL n=362 -0.0134pp
+
+VERDICT: FAIL
+written -> docs/superpowers/specs/2026-11-10-futures-tp1-run/result.json

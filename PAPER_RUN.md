@@ -111,6 +111,83 @@ First cycle after it (18:01 UTC): spot HOLD at 4.30; futures HOLD at **4.66** (4
 0.25, the controller lowering a mode with no open in 72h); basis and taker contributions
 `[0, 0]` on both; Telegram card sent; no error in `paper_run.log`. No shadow row yet
 (nothing fired, nothing open), so Claude-only is unverified until the first signal.
+
+**Restart 2026-10-17 14:39:46 UTC at `d1d490b` (PRs #36, #37). Futures hypotheses
+restart again; spot and H-L do NOT.** Futures now runs without `no_chase`, `anti_fomo`
+and `entry_wick` (`VETOES_DISABLED["futures"]`, the spot set), an owner design decision
+for data yield, not a test result. Since 10-14 17:34 futures had fired 0 signals: of 10
+over-threshold cycles, 4 BUYs died on no_chase alone. `counter_trend` and `short_term`
+stay. Futures has no Phase 3 `breakout_chase`, so it now has no chase limit.
+Trading-path diff `c717b21..d1d490b` is `config.py` only; ceilings and thresholds
+unchanged (25.00 / 4.91, spot 22.50 / 4.30). No position open at restart. The manifest's
+`futures_restart_at` is now `2026-10-17T14:39:46+00:00` (pre-edit copy:
+`paper_run_manifest.pre-futures-restart-2.json`), so H-V1, H-V2 futures, H-S and H-X
+score from it, **day 30 = 2026-11-16** (prereg amendment 2026-10-17). H-L, H-V2 spot,
+H-B, H-D and H-RGL keep 2026-11-08 / 11-11. Restarted with `pkill -f '[r]un_bot.py'`
+(systemd respawn, pid 133552); `spotsignal-qa` restarted 14:40:08. The diff check now
+runs from `d1d490b`. First cycle after it (15:01 UTC): spot HOLD 3.0/3.80, futures HOLD
+3.0/4.91, funding non-zero, Telegram sent, no error in `paper_run.log`. The change is
+unverified until the first futures BUY above VWAP+0.5×ATR fires.
+
+**2026-11-11: `nakhoda-alloc` removed from the VPS.** Service stopped, disabled and its user
+unit deleted; `~/playground/Nakhoda` deleted. The code is intact on the Mac
+(`~/Playground/Python/Nakhoda`). Its OKX **demo** wallet was not touched (equity about
+25,838 USDT virtual, flat), and the demo keys that were in the VPS `.env` are gone with it:
+revoke them in OKX if they are no longer wanted. `spotsignal` and `spotsignal-qa` were not
+touched and were `active` after. `scripts/morning_check.sh` no longer checks allocbot.
+Where this file still says "two bots" or describes allocbot, it is history. Free memory
+went from ~70 to ~195 MB.
+
+**2026-11-16 19:04 UTC: pulled `e7b6755` (PR #39), no bot restart, no window restarts.**
+Two new standalone processes; the trading-path diff `d1d490b..e7b6755` is empty (new
+files only: `agents/scanner.py`, `agents/dashboard.py`, `scripts/scanner_eval.py`, the
+H-SC prereg, `deploy/spotsignal-dash.service`, tests). (1) **Dashboard**: user unit
+`spotsignal-dash`, `127.0.0.1:8080`, read-only DB; open with
+`ssh -N -L 8080:localhost:8080 dmonk@45.151.155.178`, then `http://localhost:8080`.
+(2) **Claude scanner (H-SC)**: cron `5 * * * *` → `data/scanner.db`, log `data/scanner.log`,
+cost in `data/llm_usage.jsonl` (about $0.022 a call, ~$17/month). First cycle 19:04 UTC (bar
+19:00, 9 coins, no error). H-SC's scored window starts at that first error-free opinion;
+verdict needs 90 days and 300 picks. `spotsignal` and `spotsignal-qa` stayed `active`. The
+flip shadow (`develop`, touches `run_bot.py`) is **not** deployed.
+**Same evening: pulled `5ed6fc3` (PR #40), restarted `spotsignal-dash` only.** Scanner demo
+books (futures LONG/SHORT and an independent spot LONG-only book, 1,000 USD each, table
+`scan_positions` in `data/scanner.db`, created by the next scanner run) and the plain-language
+dashboard (cards for BTC bot, BTC + Claude filter, scanner futures, scanner spot; tabs).
+Trading-path diff empty; `spotsignal` not restarted. PR #41 (hybrid arm H-SC2) is open.
+**2026-11-17 04:33 UTC: pulled `7acd78d` (PR #41), restarted `spotsignal-dash` only.** Hybrid
+scanner arm H-SC2 live: same cron, a second Claude call per hour with the engine's score per
+coin, `data/scanner_hybrid.db` with its own futures and spot books; first cycle bar 04:00, no
+error, $0.025. Dashboard now the dark trading-app design. `spotsignal` not restarted. H-SC2
+pairs from the hybrid arm's first cycle (2026-11-17 04:00 bar).
+**2026-11-17 16:45 UTC: pulled `7d0cf02` (PR #42), restarted `spotsignal-dash` only.**
+- **Backups:** `backup_db.sh` now also copies `scanner-`, `scanner_hybrid-` and
+  `scanner_random-YYYYMMDD.db`. It was run once by hand, so today's copies exist.
+- **Alarm and daily report:** the nakhoda-alloc check is gone, and its stale key was removed
+  from `data/alarm_state.json` by hand, so no "pulih" message was sent. New checks cover the
+  scanner arms, backup age and archive age. The daily report has a Scanner section.
+- **Archive:** gains ADA/LINK/AVAX. Run once by hand: 696 backfilled rows per stat.
+- **Random arm** `data/scanner_random.db`: first cycle on bar 16:00, run by hand. It dealt
+  pure's 1 LONG + 2 SHORT to ADA, BTC and BNB.
+- **H-DR** is pre-registered; it is scored on or after 2027-02-06.
+
+`spotsignal` was not restarted.
+**2026-11-17 18:17 UTC: pulled `3a90822` (PRs #43 + #44), restarted `spotsignal-dash` only.**
+- **Scanner prompt v2** (table input, picks-only reply, about 55% cheaper; same Opus, same
+  hourly cadence).
+  - The first v2 cycle is the 19:00 bar (cron 19:05).
+  - H-SC and H-SC2 count only v2 cycles (prereg addendum). The 18:00 bar and earlier are v1
+    and are never scored.
+- **Dashboard revamp:**
+  - scoreboard versus random;
+  - test progress meters;
+  - positions grouped by account;
+  - picks matrix.
+
+  The 8081 preview worktree was removed.
+
+`spotsignal` was not restarted.
+**2026-11-17 18:27 UTC: pulled `31becb8` (PR #45, dashboard light/dark toggle), restarted
+`spotsignal-dash` only.**
 ---
 
 ## New session? Do this first
@@ -157,32 +234,33 @@ vs random, H-S shadow agents). Interim looks are health only. Instruments:
 mode 600). Still **no exchange keys**: spotsignal places no orders. If a key leaks,
 revoke it in its console and replace it in `.env`.
 
-**allocbot's demo gate: two weeks elapsed 2026-10-08 04:17 UTC, clean.** Read
-`../Nakhoda/docs/OOS-FINDING-2026-09-08.md` before treating that as permission to trade
-real money. The pass proves the plumbing, not the edge.
+**allocbot's demo gate (history; removed from the VPS 2026-11-11): two weeks elapsed
+2026-10-08 04:17 UTC, clean.** Read `../Nakhoda/docs/OOS-FINDING-2026-09-08.md` before
+treating that as permission to trade real money. The pass proves the plumbing, not the
+edge.
 
 ---
 
-## Two bots are running, on one VPS
+## One bot runs on the VPS (nakhoda-alloc was removed 2026-11-11)
 
-| | **spotsignal** | **nakhoda-alloc** |
-|---|---|---|
-| Repo | `~/playground/CrySignal-BTC` | `~/playground/Nakhoda` |
-| Service | `spotsignal.service` (system) | `nakhoda-alloc.service` (**user scope**) |
-| Runs as | `dmonk` | `dmonk` |
-| Started | **run 3: 2026-10-09 (see manifest)** · run 2: 2026-10-04 07:37 | 2026-09-24 04:17 UTC |
-| Touches an exchange? | **No.** No exchange keys, zero order calls (LLM keys only, for the agents). Paper positions live in SQLite. | **Yes** — real orders on OKX **Demo** (virtual money) |
-| Strategy | 22 conditions, 5 veto gates, adaptive threshold, BTC only | Donchian 20/10 across 10 coins, daily, no stops |
+| | **spotsignal** |
+|---|---|
+| Repo | `~/playground/CrySignal-BTC` |
+| Service | `spotsignal.service` (system), plus `spotsignal-qa` (user scope) |
+| Runs as | `dmonk` |
+| Started | **run 3: 2026-10-09 (see manifest)** · run 2: 2026-10-04 07:37 |
+| Touches an exchange? | **No.** No exchange keys, zero order calls (LLM keys only, for the agents). Paper positions live in SQLite. |
+| Strategy | 22 conditions, 5 veto gates, adaptive threshold, BTC only |
 
 Host `45.151.155.178` — Kamatera, Singapore, Ubuntu 24.04, **960 MB RAM, 1 core**.
-`ssh dmonk@45.151.155.178`. Roughly 380 MB free with both bots up.
+`ssh dmonk@45.151.155.178`. Roughly 195 MB free (page cache included in `available`: ~525 MB) after Nakhoda's removal.
 
 **There is no passwordless sudo**, and `sudo` needs a real TTY — neither Claude Code's
 Bash tool nor its `!` prefix provides one, so anything needing root has to be pasted into
 a terminal application. Two consequences that cost a previous session time:
-- `nakhoda-alloc` is a **user-scope** unit (`systemctl --user ...`, `journalctl --user -u ...`)
-  with `loginctl enable-linger` set — that needs no root and still survives reboot.
-  The runbook in Nakhoda's CLAUDE.md said `sudo systemctl`; that was wrong and is fixed.
+- `spotsignal-qa` is a **user-scope** unit (`systemctl --user ...`, `journalctl --user -u ...`)
+  with `loginctl enable-linger` set — that needs no root and still survives reboot. The
+  same was true of `nakhoda-alloc` while it ran.
 - `spotsignal` is system-scope, but its process runs as `dmonk` and the unit is
   `Restart=always` / `RestartSec=30`. So `pkill -TERM -f run_bot.py` **is** a restart —
   systemd brings it back on the code then on disk. That is how run 2 was started.
@@ -234,7 +312,7 @@ among them. No threshold, weight, gate or risk parameter moved.**
 ## Check it in five minutes
 
 ```bash
-bash scripts/morning_check.sh          # both bots, run 2's health, backups — one command
+bash scripts/morning_check.sh          # the bot's health and backups — one command
 ```
 
 It exits non-zero if anything needs attention, so it can be cron'd. The contributions
@@ -248,7 +326,7 @@ By hand:
 ssh dmonk@45.151.155.178
 cd ~/playground/CrySignal-BTC
 systemctl status spotsignal                 # active (running)?
-systemctl --user status nakhoda-alloc       # the other bot — note --user
+systemctl --user status spotsignal-qa       # the Q&A bot — note --user
 ./venv/bin/python analyze.py                # the full report
 ```
 
@@ -269,6 +347,82 @@ capture a torn write that restores corrupt. The script runs `integrity_check` an
 loudly. Keeps 30 days. Pull one to the Mac occasionally.
 
 ---
+
+## Run 4 plan: one restart, everything bundled (written 2026-11-18)
+
+**Amended the same day (owner): split in two.** Waiting to 2027-02-15 would have cost three
+months of data from a more correct bot, to protect an H-VG window that was one day old. So
+**part A**, the six decided items below, ships now in one restart. H-VG restarts with it (prereg
+amendment). **Part B**, the candidates further down, still waits for its own results. The
+scoring calendar below is updated for H-VG at the restart.
+
+Every change to signals, gates, exits, costs or booking needs a bot restart, and each such
+restart cuts the windows of the hypotheses that read the bot's stream. So they ship
+**together, once**, not one by one. **Planned restart: on or after 2027-02-15**, when the
+last result that feeds run 4's design (H-VG) is in.
+
+**Scoring calendar.** These must not be read early. Each instrument refuses to score before
+its date.
+
+| date (UTC) | test | instrument | feeds run 4? |
+|---|---|---|---|
+| ~2027-01-16 (60 paired days) | H-SC2 hybrid vs pure scanner | `scanner_eval.py --hybrid-db` | no (scanner only) |
+| 2027-02-06 | H-DR global L/S momentum, 8 alts + BTC | `hdr_eval.py` | yes: an entry condition, if both PASS |
+| ~2027-02-14 (90 days + 300 picks) | H-SC Claude scanner vs universe | `scanner_eval.py` | no (scanner only) |
+| 2027-02-15 | H-VG Claude veto gate, by episode | `veto_gate_eval.py` | yes: the gate, if PASS and the owner decides |
+
+**Already decided. These ship in run 4 whatever the results say:**
+
+1. **Futures fee 0.04% → 0.05%** (`config.py` `futures_fee_pct`). The Binance USD-M VIP0
+   taker fee is 0.05% (0.045% with the BNB discount). The live book understates each futures
+   round trip by about 0.02pp. The scanner books already use 0.05%. It changes every
+   booked futures P&L, so it is a trading-path change.
+2. **Stops checked before a flip** (`0cfcd0c`, develop). A position already through its stop
+   is booked LOSS, not FLIP. The fill price is unchanged, but it **can move signals**:
+   `market_data._get_recent_win_rate` counts only WIN/LOSS outcomes (FLIP is excluded), and
+   that rate drives the adaptive threshold.
+3. **Flip shadow** (`7dae3db`, develop: `run_bot.py` hook plus `shadow_flip_opinions`). This is
+   logging only, for H-FLP-C (20 events). It is the only item that could go earlier: it
+   changes no signal, so a plain restart for it alone would not cut H-VG's window. Earlier
+   deployment is the owner's call.
+
+4. **HTF conflict penalty hits the leader at the wrong moment** (engine review 2026-11-18,
+   `signals/engine.py:301`). The −1.0 for a 4H-vs-1D conflict goes to whichever side leads
+   after conditions 1–6, about 6 of 22. When the other side wins at the end, the final signal
+   is never penalised. Fix: apply it after all conditions, to the side that would fire.
+5. **Session bump reads the bar's OPEN hour** (`signals/engine.py:575`). `df.index` is the
+   bar's open time (ccxt), so futures is shifted 1 h and spot up to 4 h. For example, the spot
+   decision at 08:01 is treated as the Asia session (+0.5). Fix: use the close hour (open +
+   timeframe), the moment the decision is made. Backtest and live agree today, so this is a
+   labelling fix, not a mismatch.
+6. **A macro-forced HOLD keeps its levels** (`integrate_news_with_signal`,
+   `signals/engine.py:1021`). `stop_loss`, `take_profit` and `confidence` stay set on a HOLD,
+   so `cycle_log` can record a HOLD with confidence NORMAL. This is cosmetic: no trade opens.
+   Fix: clear them as every other gate does.
+
+Each of 4–6 gets a failing test first, then the fix, and each changes signals. Trivial items
+from the same review, not worth their own entries: OBV slope spans 4 bars over a 5-bar volume
+denominator, and ADX is computed twice per cycle.
+
+`backtest.py` research knobs on develop (`be_lock_r`, `flip_at`) are off by default and do not
+change live behaviour.
+
+**Candidates. Each needs its own result or prereg before it ships:**
+
+- **Claude veto gate:** only if H-VG PASSes and the owner overrides the standing rule that an
+  LLM never gates a live trade (run-3 plan). It fails open on errors.
+- **L/S momentum entry condition:** only if H-DR1 and H-DR2 both PASS, and then after its own
+  condition-vs-random test.
+- **`rel_ic_dir` bias rule** (H-V1, run 3): needs a prereg.
+- **Neutralise the bullish basis reading** (H-F: the engine reads basis backwards): needs a
+  prereg.
+
+**On restart day:** archive the run-3 manifest and DB the way run 2's were. Then:
+- score H-VG on its window, up to the restart;
+- regenerate the manifest with `scripts/start_paper_run.py`;
+- record the trading-path diff here.
+
+The scanner arms are separate processes and keep running through it.
 
 ## Open items
 
@@ -294,7 +448,8 @@ loudly. Keeps 30 days. Pull one to the Mac occasionally.
    `NRestarts` reset. That was a deliberate reboot with clean automatic recovery, not a
    fault, and no error was logged either side of it. Judge the two-week requirement on
    errors and missed daily decisions, not on one process's uptime.
-4. **`nakhoda-alloc`'s demo clock — two weeks clean as of 2026-10-08.** Nakhoda's
+4. ~~`nakhoda-alloc`'s demo clock~~ — **moot: removed from the VPS 2026-11-11.** History:
+   two weeks clean as of 2026-10-08. Nakhoda's
    CLAUDE.md requires **two weeks clean** before real money is considered. Started
    2026-09-24 04:17 UTC; zero errors and no missed daily decision through 2026-10-08. The
    10-08 rebalance cut it from 10 sleeves to 5 (Donchian exits in a falling market, equity

@@ -1,0 +1,46 @@
+geometry applied once: ok
+Arm A (2024-2025, synthetic)
+WARNING:signals.market_data:binance fetch_ohlcv failed (binance GET https://api.binance.com/api/v3/exchangeInfo) — falling back to data-api.binance.vision for 1800s
+  A BTC/USDT   2024  n= 355 n_eff=  44 diff=-0.0081pp  base=-0.009 cand=-0.017  armed 39% floor-exit 9%
+  A BTC/USDT   2025  n= 354 n_eff=  58 diff=+0.0014pp  base=-0.273 cand=-0.272  armed 37% floor-exit 11%
+  A ETH/USDT   2024  n= 355 n_eff=  61 diff=+0.0101pp  base=-0.241 cand=-0.231  armed 38% floor-exit 12%
+  A ETH/USDT   2025  n= 354 n_eff=  58 diff=-0.0044pp  base=-0.155 cand=-0.160  armed 38% floor-exit 12%
+  A BNB/USDT   2024  n= 355 n_eff=  54 diff=+0.0047pp  base=-0.175 cand=-0.170  armed 41% floor-exit 10%
+  A BNB/USDT   2025  n= 354 n_eff=  51 diff=+0.0510pp  base=-0.047 cand=+0.004  armed 40% floor-exit 10%
+  A XRP/USDT   2024  n= 355 n_eff=  55 diff=+0.0518pp  base=+0.302 cand=+0.354  armed 37% floor-exit 14%
+  A XRP/USDT   2025  n= 354 n_eff=  40 diff=-0.0144pp  base=-0.050 cand=-0.064  armed 37% floor-exit 8%
+  A LINK/USDT  2024  n= 355 n_eff=  61 diff=+0.0007pp  base=-0.385 cand=-0.384  armed 39% floor-exit 13%
+  A LINK/USDT  2025  n= 354 n_eff=  61 diff=-0.0590pp  base=-0.121 cand=-0.180  armed 41% floor-exit 12%
+Arm B (2020-2023, synthetic)
+  B BTC/USDT   2020  n= 354 n_eff=  45 diff=-0.0119pp  base=+0.846 cand=+0.834  armed 45% floor-exit 8%
+  B BTC/USDT   2021  n= 354 n_eff=  43 diff=-0.0255pp  base=-0.302 cand=-0.327  armed 37% floor-exit 8%
+  B BTC/USDT   2022  n= 354 n_eff=  46 diff=+0.0583pp  base=-0.583 cand=-0.525  armed 32% floor-exit 10%
+  B BTC/USDT   2023  n= 354 n_eff=  47 diff=-0.0125pp  base=+0.131 cand=+0.118  armed 39% floor-exit 11%
+  B ETH/USDT   2020  n= 354 n_eff=  50 diff=-0.0191pp  base=+1.106 cand=+1.087  armed 46% floor-exit 10%
+  B ETH/USDT   2021  n= 354 n_eff=  56 diff=+0.0550pp  base=-0.072 cand=-0.017  armed 39% floor-exit 9%
+WARNING:root:fetch ETH/USDT 2022 attempt 1: binance {"code":-1001,"msg":"Internal error; unable to process your request. Please try again."}
+  B ETH/USDT   2022  n= 354 n_eff=  48 diff=-0.0040pp  base=-0.376 cand=-0.380  armed 34% floor-exit 9%
+  B ETH/USDT   2023  n= 354 n_eff=  44 diff=+0.0057pp  base=-0.225 cand=-0.219  armed 32% floor-exit 10%
+  B BNB/USDT   2020  n= 354 n_eff=  59 diff=-0.0349pp  base=+0.511 cand=+0.477  armed 45% floor-exit 12%
+  B BNB/USDT   2021  n= 354 n_eff=  51 diff=-0.0953pp  base=+0.428 cand=+0.333  armed 40% floor-exit 9%
+  B BNB/USDT   2022  n= 354 n_eff=  59 diff=-0.0037pp  base=-0.580 cand=-0.584  armed 36% floor-exit 11%
+  B BNB/USDT   2023  n= 354 n_eff=  33 diff=+0.0117pp  base=-0.421 cand=-0.409  armed 29% floor-exit 7%
+  B XRP/USDT   2020  n= 354 n_eff=  51 diff=-0.1200pp  base=+0.033 cand=-0.087  armed 39% floor-exit 14%
+  B XRP/USDT   2021  n= 354 n_eff=  38 diff=+0.0066pp  base=+0.638 cand=+0.644  armed 36% floor-exit 9%
+  B XRP/USDT   2022  n= 354 n_eff=  45 diff=-0.0318pp  base=-0.457 cand=-0.489  armed 33% floor-exit 10%
+  B XRP/USDT   2023  n= 354 n_eff=  39 diff=-0.0151pp  base=-0.275 cand=-0.290  armed 34% floor-exit 12%
+  B LINK/USDT  2020  n= 354 n_eff=  50 diff=+0.0539pp  base=+0.476 cand=+0.530  armed 42% floor-exit 9%
+  B LINK/USDT  2021  n= 354 n_eff=  73 diff=-0.1005pp  base=-0.051 cand=-0.152  armed 41% floor-exit 14%
+  B LINK/USDT  2022  n= 354 n_eff=  73 diff=-0.0744pp  base=-0.517 cand=-0.591  armed 38% floor-exit 15%
+  B LINK/USDT  2023  n= 354 n_eff=  48 diff=+0.0522pp  base=-0.390 cand=-0.338  armed 34% floor-exit 10%
+  C primary      recorded= 625 paired= 625 diff=-0.0198pp  base=-0.105 cand=-0.125  armed=26%  fidelity max|d|=0.00e+00
+WARNING:signals.market_data:binance fetch_ohlcv failed (binance GET https://api.binance.com/api/v3/exchangeInfo) — falling back to data-api.binance.vision for 1800s
+  C confirmation recorded= 178 paired= 178 diff=-0.0113pp  base=-0.113 cand=-0.125  armed=29%  fidelity max|d|=0.00e+00
+
+A: cells favouring 6/10 (need 8), pooled +0.0034pp (need >= +0.05), BTC -0.0033pp, ex-BTC +0.0051pp, armed 39%, exit at floor 11%, TIME_EXIT 14%->14%, give-back 3.84->3.81pp
+
+B: cells favouring 7/20 (need 16), pooled -0.0153pp (need >= +0.05), BTC +0.0021pp, ex-BTC -0.0196pp, armed 37%, exit at floor 10%, TIME_EXIT 17%->16%, give-back 4.89->4.87pp
+C by direction (pooled): BUY n=441 +0.0001pp  SELL n=362 -0.0398pp
+
+VERDICT: FAIL
+written -> docs/superpowers/specs/2026-11-11-futures-profit-lock-run/result.json

@@ -1,0 +1,14 @@
+geometry applied once: ok
+fidelity: 8/10 live positions matched; unmatched annotated ['2026-11-10T14:01:05.247746+00:00', '2026-11-13T16:01:02.961911+00:00']; unannotatable []; replay opened 8, flips 2 -> ok
+  C primary      signals= 3299 flips=   0 total diff=+0.00pp
+  C confirmation signals=  984 flips=   0 total diff=+0.00pp
+  D ETH/USDT   signals= 4256 flips=   0 total diff=+0.00pp
+  D BNB/USDT   signals= 4391 flips=   1 total diff=-1.62pp
+  D XRP/USDT   signals= 3992 flips=   1 total diff=-3.72pp
+  D LINK/USDT  signals= 4379 flips=   0 total diff=+0.00pp
+
+D: pooled mean monthly diff -0.0230pp CI90 [-0.0677, +0.0146], ahead in 0/4 assets, flips 2
+C: primary +0.00pp  confirmation +0.00pp
+
+VERDICT: FAIL
+written -> docs/superpowers/specs/2026-11-16-futures-flip-run/result.json

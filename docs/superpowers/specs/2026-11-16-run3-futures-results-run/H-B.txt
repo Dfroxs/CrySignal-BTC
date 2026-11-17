@@ -1,0 +1,4 @@
+H-B  BTC 4h 2026-08-30 00:00:00 → 2026-11-07 20:00:00  sha256 b3c62e0e9d0d…
+  spotsignal n=135 mean=-0.340pp CI=[-0.628, -0.043] (unresolved 0)
+  random     n=2608 mean=-0.437pp (20 seeds)
+  → H-B INCONCLUSIVE

@@ -160,6 +160,34 @@ def _init_tables():
         );
         CREATE INDEX IF NOT EXISTS idx_exit_shadow_pos ON shadow_exit_opinions(position_id);
 
+        -- Flip shadow: FLIP/HOLD opinions when an opposite signal meets an open futures
+        -- position (agents/flip_shadow.py, H-FLP-C). Never acted on.
+        CREATE TABLE IF NOT EXISTS shadow_flip_opinions (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp          TEXT    NOT NULL,
+            position_id        INTEGER REFERENCES paper_positions(id),
+            side               TEXT,
+            entry_price        REAL,
+            price              REAL,
+            pnl_if_closed_pct  REAL,
+            hours_held         REAL,
+            new_side           TEXT,
+            new_strength       REAL,
+            new_confidence     TEXT,
+            new_stop_loss      REAL,
+            new_take_profit    REAL,
+            provider           TEXT    NOT NULL,
+            model              TEXT,
+            verdict            TEXT,
+            opinion_confidence INTEGER,
+            reason             TEXT,
+            error              TEXT,
+            latency_ms         INTEGER,
+            input_tokens       INTEGER,
+            output_tokens      INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_flip_shadow_pos ON shadow_flip_opinions(position_id);
+
         -- Shadow LLM opinions on fired signals (agents/shadow.py). Never traded.
         CREATE TABLE IF NOT EXISTS shadow_opinions (
             id                 INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -620,6 +648,21 @@ def log_exit_opinion(rec, conn=None):
     c.execute(f"INSERT INTO shadow_exit_opinions ({', '.join(_EXIT_COLS)}) "
               f"VALUES ({', '.join('?' * len(_EXIT_COLS))})",
               tuple(rec.get(k) for k in _EXIT_COLS))
+    c.commit()
+
+
+_FLIP_COLS = ("timestamp", "position_id", "side", "entry_price", "price", "pnl_if_closed_pct",
+              "hours_held", "new_side", "new_strength", "new_confidence", "new_stop_loss",
+              "new_take_profit", "provider", "model", "verdict", "opinion_confidence",
+              "reason", "error", "latency_ms", "input_tokens", "output_tokens")
+
+
+def log_flip_opinion(rec, conn=None):
+    """Store one agents/flip_shadow.py record. Flip opinions never close or open a position."""
+    c = conn if conn is not None else _conn()
+    c.execute(f"INSERT INTO shadow_flip_opinions ({', '.join(_FLIP_COLS)}) "
+              f"VALUES ({', '.join('?' * len(_FLIP_COLS))})",
+              tuple(rec.get(k) for k in _FLIP_COLS))
     c.commit()
 
 

@@ -1,0 +1,50 @@
+{
+ "db": "/private/tmp/claude-501/-Users-dfroxs-Playground-Python-SpotSignal/91a1238f-d4a1-4d64-96e7-ae0ff5875ba8/scratchpad/snap3.db",
+ "start": "2026-10-09T12:34:20Z",
+ "end": "2026-11-08 00:00:00",
+ "csv": "docs/superpowers/specs/2026-11-15-regime-live-run/BTC_USDT_4h.csv",
+ "sha256": "58763fc87bf534276094ff3cab4c625552b3e8b81798a2160d1f2b778229f584",
+ "counts": {
+  "blocks": 22,
+  "distinct_bars": 21,
+  "mismatch": [],
+  "mismatch_share": 0.0,
+  "gate_combos": {
+   "breakout_chase+psy_sl_first+regime_counter": 1,
+   "regime_counter": 1,
+   "regime_counter+trend_confluence": 17,
+   "psy_sl_first+regime_counter": 2
+  },
+  "bear_pool": 101,
+  "bear_pool_unblocked": 80
+ },
+ "regime_live": {
+  "n": 6,
+  "mean": -1.0656666666666668,
+  "ci90": [
+   -1.7893333333333334,
+   -0.1536666666666667
+  ]
+ },
+ "regime_live_unresolved": 0,
+ "random_bear_mean": -1.0599416666666666,
+ "random_n": 120,
+ "random_pool": 80,
+ "regime_only_live": {
+  "n": 1,
+  "mean": -0.468,
+  "ci90": [
+   -0.468,
+   -0.468
+  ]
+ },
+ "kept_live": {
+  "n": 4,
+  "mean": -1.60625,
+  "ci90": [
+   -1.7485,
+   -1.4588749999999922
+  ]
+ },
+ "H-RGL1": "INCONCLUSIVE"
+}

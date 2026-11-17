@@ -1,0 +1,10 @@
+data/snap_futures.db  spot  235 cycles  2026-10-09 13:01 → 2026-11-16 12:01  books: base, rel_engine_dir, rel_ic_dir
+
+base            signals=  72  trades=  4  mean=-1.279pp  total=-5.12pp  win=0.0%  open=0
+rel_engine_dir  signals=  76  trades=  4  mean=-1.279pp  total=-5.12pp  win=0.0%  open=0
+rel_ic_dir      signals=  76  trades=  4  mean=-1.279pp  total=-5.12pp  win=0.0%  open=0
+fidelity: 4/4 live positions matched within ±1 bar
+random_long                  trades= 80  mean=-1.261pp  (20 seeds × 4)
+
+written → docs/superpowers/specs/2026-11-16-run3-futures-results-run/books_spot.json
+binance fetch_ohlcv failed (binance GET https://api.binance.com/api/v3/exchangeInfo) — falling back to data-api.binance.vision for 1800s
