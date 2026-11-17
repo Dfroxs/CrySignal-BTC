@@ -5578,6 +5578,61 @@ def test_scanner_run_once_stores_dedupes_and_logs_a_failure_as_data():
     assert "scanner" not in src, "the scanner must stay outside the trading path"
 
 
+def test_scanner_paper_book_opens_one_per_coin_and_exits_stop_first_target_or_time():
+    import os
+    import tempfile
+    from agents import scanner as s
+    con = s.connect(os.path.join(tempfile.mkdtemp(), "b.db"))
+    H = s.BAR_MS
+    t0 = 1_800_000_000_000 // H * H
+    f = lambda bars: {"close": 100.0, "atr_pct": 1.0, "_bars": bars}
+    snap = {"bar_close_ms": t0, "coins": {"BTC": f([]), "ETH": f([]), "SOL": f([]), "XRP": f([])}}
+    picks = {"BTC": {"side": "LONG", "confidence": 60}, "ETH": {"side": "SHORT", "confidence": 50},
+             "SOL": {"side": "LONG", "confidence": 40}, "XRP": {"side": "NONE", "confidence": 10}}
+    assert s.open_book(con, 1, picks, snap, t0) == 3, "NONE opens nothing"
+    assert s.book_levels("LONG", 100.0, 1.0) == (98.5, 103.0)
+    assert s.book_levels("SHORT", 100.0, 1.0) == (101.5, 97.0)
+    assert s.open_book(con, 2, {"BTC": {"side": "SHORT", "confidence": 90}}, snap, t0 + H) == 0, \
+        "one position per coin, an opposite pick is ignored"
+    flat = lambda n, start=t0: [(start + k * H, 100.5, 99.5, 100.0) for k in range(n)]
+    snap2 = {"coins": {
+        "BTC": f(flat(2) + [(t0 + 2 * H, 103.5, 98.0, 101.0)]),    # both touched: stop first
+        "ETH": f(flat(1) + [(t0 + H, 100.2, 96.5, 97.0)]),         # short target
+        "SOL": f(flat(30))}}                                        # nothing: time exit at 24h
+    snap2["coins"]["SOL"]["_bars"] = [(t0 - H, 200.0, 1.0, 100.0)] + snap2["coins"]["SOL"]["_bars"]
+    assert s.manage_book(con, snap2) == 3
+    rows = {r[0]: r[1:] for r in con.execute(
+        "SELECT coin, outcome, exit, pnl_pct, pnl_usd, closed_bar FROM scan_positions")}
+    assert rows["BTC"][:2] == ("STOP", 98.5) and abs(rows["BTC"][2] - (-1.5 - s.BOOK_COST_PP)) < 1e-9
+    assert rows["ETH"][:2] == ("TARGET", 97.0) and abs(rows["ETH"][3] - (3.0 - 0.2)) < 1e-9
+    assert rows["SOL"][0] == "TIME", "the bar before entry must not stop it out"
+    assert rows["SOL"][4] == s._iso(t0 + 24 * H), "time exit at the close 24h after entry"
+    assert s.manage_book(con, snap2) == 0, "closed positions are never touched again"
+    usd = dict(con.execute("SELECT coin, pnl_usd FROM scan_positions"))
+    assert abs(usd["BTC"] - (-1.7)) < 1e-9 and abs(usd["ETH"] - 2.8) < 1e-9, "10% of 1,000 = 100 USD each"
+    equity, used = s.book_account(con)
+    assert used == 0 and abs(equity - (1000 + sum(usd.values()))) < 1e-9
+    assert s.open_book(con, 3, {"BTC": {"side": "SHORT", "confidence": 90}}, snap, t0 + 30 * H) == 1
+    size = con.execute("SELECT size_usd FROM scan_positions ORDER BY id DESC LIMIT 1").fetchone()[0]
+    assert size == round(equity * 0.10, 2), "size compounds with realised equity"
+    sp = {"BTC": {"side": "LONG", "confidence": 70}, "ETH": {"side": "SHORT", "confidence": 70}}
+    assert s.open_book(con, 5, sp, snap, t0 + 30 * H, "spot") == 1, "spot takes LONG only"
+    assert con.execute("SELECT COUNT(*) FROM scan_positions WHERE book='spot' AND coin='BTC' "
+                       "AND closed_bar IS NULL").fetchone()[0] == 1, "BTC held SHORT in futures, LONG in spot"
+    sid = con.execute("SELECT id FROM scan_positions WHERE book='spot'").fetchone()[0]
+    s._close_pos(con, sid, "spot", "LONG", 100.0, 100.0, t0 + 31 * H, 103.0, "TARGET")
+    assert abs(con.execute("SELECT pnl_pct FROM scan_positions WHERE id=?", (sid,)).fetchone()[0]
+               - (3.0 - 0.30)) < 1e-9, "spot cost 0.30pp"
+    assert s.book_account(con, "spot") == (1000 + 2.7, 0), "each book has its own 1,000 USD"
+    saved = s.BOOK_FRACTION
+    try:
+        s.BOOK_FRACTION = 0.5             # BTC holds ~10%, so one more 50% fits and the next does not
+        two = {"ETH": {"side": "LONG", "confidence": 1}, "SOL": {"side": "LONG", "confidence": 1}}
+        assert s.open_book(con, 4, two, snap, t0 + 30 * H) == 1, "no position without the cash for it"
+    finally:
+        s.BOOK_FRACTION = saved
+
+
 def test_scanner_eval_excess_day_unit_verdict_and_leakage():
     import json
     import numpy as np
@@ -5640,11 +5695,28 @@ def test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel():
         book = f["db"]["totals"]["spot"]
         assert (book["n"], book["sum"], book["win"], book["max_dd"]) == (1, 3.5, 100, 0.0) and abs(book["hold_h"] - 24.98) < 0.01
         assert f["db"]["curve"]["spot"][0][1] == 0.0, "the curve starts from zero"
+        ac = f["db"]["account"]
+        assert abs(ac["realised"] - 1003.5) < 1e-9, "10% of 1,000 USD earning +3.5%"
+        assert abs(ac["used"] - 100.35) < 1e-9, "the open position sized on equity at its open"
+        assert abs(ac["upnl"] - op["move_pct"] / 100 * 100.35) < 1e-9 and ac["curve"][0][1] == 1000
+        cf = dsh.claude_filter([{"id": 1, "opened_at": "2026-11-17 01:01:00", "closed_at": "2026-11-17 05:00:00",
+                                 "pnl_pct": -2.0, "signal_id": 7},
+                                {"id": 2, "opened_at": "2026-11-18 01:01:00", "closed_at": "2026-11-18 05:00:00",
+                                 "pnl_pct": 4.0, "signal_id": 8},
+                                {"id": 3, "opened_at": "2026-11-19 01:01:00", "closed_at": "2026-11-19 05:00:00",
+                                 "pnl_pct": 1.0, "signal_id": None}], [], {7: "DISAGREE", 8: "AGREE"}, now)
+        assert (cf["kept"], cf["vetoed"], cf["vetoed_pnl"], cf["kept_pnl"]) == (2, 1, -2.0, 5.0), \
+            "only DISAGREE is dropped; no opinion is kept"
+        assert abs(cf["realised"] - (1000 + 4.0 + 1.004)) < 1e-9 and cf["fresh_kept"] == 2
+        sb = dsh.scan_book([{"coin": "SOL", "side": "LONG", "opened_bar": "2026-11-17T01:00:00+00:00",
+                             "closed_bar": "2026-11-17T05:00:00+00:00", "pnl_pct": 2.7, "pnl_usd": 2.7,
+                             "outcome": "TARGET", "size_usd": 100.0}])
+        assert sb["stats"]["n"] == 1 and abs(sb["equity"] - 1002.7) < 1e-9 and sb["curve"][0][1] == 1000
         assert f["scanner"] is None and f["host"]["services"]["Q&A"] == "active"
         page = dsh.render(f)
         assert "Semua berjalan normal" not in page, "a blind futures cycle is an issue"
         assert "data futures Binance kosong" in page and "+3,50 pp" in page and "#1 futures SELL" not in page
-        assert "Seberapa dekat ke sinyal" in page and "fetch(" not in page, "the page calls nothing"
+        assert "Kapan bot membuka posisi berikutnya?" in page and 'id="tab-scanner"' in page and 'id="tab-btc"' in page and "fetch(" not in page, "the page calls nothing"
         assert dsh._nice_ticks(1.08, 7.17) == [2.0, 4.0, 6.0]
         assert dsh.issues({"host": {"services": {"bot": "active"}}, "db": {"last_cycle_age_min": 5,
                                                                            "last": {}}, "errors": []}) == []
@@ -6085,6 +6157,7 @@ if __name__ == "__main__":
     run("H-SC scanner: closed bars, numbers only",  test_scanner_snapshot_uses_closed_bars_and_passes_numbers_only)
     run("H-SC scanner: store, dedupe, error row",   test_scanner_run_once_stores_dedupes_and_logs_a_failure_as_data)
     run("H-SC eval: excess, days, verdict, leak",   test_scanner_eval_excess_day_unit_verdict_and_leakage)
+    run("scanner paper book: open, stop, target, time", test_scanner_paper_book_opens_one_per_coin_and_exits_stop_first_target_or_time)
     run("dashboard: read-only, local, no blank",    test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel)
     run("basis own checkpoint, no stale reason", test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason)
 

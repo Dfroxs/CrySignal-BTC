@@ -4,6 +4,50 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-16 — feat: scanner paper book (design decision for data, not a test)
+
+Owner: "kenapa tidak dicoba sekalian, ini hanya uang demo". Every LONG/SHORT scanner pick
+now opens a demo position in `scan_positions` (`data/scanner.db`): one per coin (a pick for a
+held coin is ignored, opposite or not), entry at the bar close, stop 1.5 x ATR(1h), target
+3 x ATR, closed at the close 24h after entry, a bar touching both counted as the stop,
+0.20pp round trip, on a 1,000 USD demo account (each position 10% of realised equity, opened
+only if free cash covers it). `run_once` walks open positions through the newly
+closed bars before asking, and opens after storing the picks; a book failure is logged and
+never costs a scan. The model never sees the book, so H-SC is unchanged (prereg addendum).
+Fourth book (owner): "Claude pilih koin, spot", an independent book in `scan_positions`
+(`book = 'spot'`): every LONG pick opens a spot position (SHORT skipped, spot cannot short),
+with its own 1,000 USD, its own one-position-per-coin slots and exits, 0.30pp round trip
+(futures 0.20pp). Same picks, one model call, no extra cost. A first draft derived it from
+the futures book's LONG positions and so missed a LONG pick on a coin held SHORT in futures;
+replaced before merge at the owner's request.
+Dashboard also rewritten in plain language (owner: "masih bingung"): one status line, money
+cards, an activity feed in sentences, LONG ↑ / SHORT ↓, "kena stop/target", technical detail
+folded away, a glossary.
+Third book (owner): "BTC + filter Claude", the same BTC positions with Claude's entry opinion
+as a veto (`dashboard.claude_filter`): DISAGREE dropped, AGREE / no opinion / errored kept, as
+a fail-open gate would. Display only. Live at the time: 1,010.87 USD (+1.09%) vs 1,001.81
+unfiltered; 5 kept (+10.84 pp), 11 dropped (-8.99 pp). All 16 were already read when H-S was
+scored (in-sample), so the panel counts positions opened from 2026-11-16 20:00 UTC separately
+as fresh evidence; it also says a vetoed slot could have gone to another signal.
+The BTC bot is also shown as a 1,000 USD account (owner's choice: the scanner's rule), display
+only: its run-3 positions, spot and futures in one account, each sized at 10% of realised
+equity when it opened (`dashboard.usd_account`). Live at the time: 1,001.81 USD (+0.18%), 16
+closed positions. The bot, its sizing and its percent P&L are unchanged.
+Dashboard in tabs (owner: "urutannya kacau, gunakan tab"): status, health and a two-book
+summary stay on top; below, tabs "Scanner 9 koin" (demo account, open positions, nine coins,
+account history, H-SC progress), "Bot BTC" (distance to signal, positions, market, macro,
+gates, Claude's BTC opinions) and "Sistem & biaya". The chosen tab survives the 5-minute
+reload (URL hash, then localStorage), arrow keys move between tabs. Earlier draft, same day:
+it opened with "Dua buku" (BTC bot in pp beside the
+scanner account's equity, realised, floating, free cash), then "Sembilan koin" (price,
+1h/24h/7d return, vs universe, funding, OI, L/S, Claude's latest pick and reason, the demo
+position per coin, all from the context Claude saw), then the demo account (stats, open
+positions with size and floating USD, equity curve, recent closes); the BTC sections follow,
+headed "Bot BTC". Separate from `paper_positions`: the BTC bot and its hypotheses are
+untouched. One test (320/320).
+
+---
+
 ## 2026-11-17 — feat: dashboard redesign, more information (owner: "jelek sekali, lengkapi")
 
 `agents/dashboard.py` rewritten around one question per section. Opens with a plain-words
