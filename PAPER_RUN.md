@@ -186,6 +186,8 @@ pairs from the hybrid arm's first cycle (2026-11-17 04:00 bar).
   The 8081 preview worktree was removed.
 
 `spotsignal` was not restarted.
+**2026-11-17 18:27 UTC: pulled `31becb8` (PR #45, dashboard light/dark toggle), restarted
+`spotsignal-dash` only.**
 ---
 
 ## New session? Do this first
