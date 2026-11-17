@@ -415,6 +415,7 @@ def collect(root, db, scanner_db, now=None, run=None):
     part("db", lambda: db_facts(db, now, run_start))
     part("macro", lambda: macro_facts(root, now))
     part("scanner", lambda: scanner_facts(scanner_db))
+    part("hybrid", lambda: scanner_facts(Path(scanner_db).with_name("scanner_hybrid.db")))
     part("cost", lambda: cost_facts(db, root, now))
     return out
 
@@ -898,7 +899,44 @@ def _health_rows(f, now):
     return rows
 
 
-def _scanner_tab(s):
+def _arms(s, hy):
+    """H-SC2: the pure arm beside the hybrid arm (same picks hour by hour, + engine score)."""
+    rows = []
+    for name, arm in (("Claude murni", s), ("Claude + skor engine", hy)):
+        for key, label in (("book", "futures"), ("spot_book", "spot")):
+            b = (arm or {}).get(key)
+            if not b:
+                rows.append([e(name), label, "–", "–", "–", "–"])
+                continue
+            st = b["stats"]
+            rows.append([f"<b>{e(name)}</b>", label, _money(b["equity"]),
+                         _pnl((b["equity"] / b["start"] - 1) * 100, 2, "%"), str(st["n"]),
+                         f'{st["win"]}%' if st["win"] is not None else "–"])
+    P = ['<section><h2>Claude murni vs Claude + skor engine</h2><p class="lede">Dua Claude melihat '
+         'angka yang sama pada jam yang sama; yang kedua juga diberi skor BUY/SELL dari engine '
+         'bot BTC untuk tiap koin. Apakah skor engine membantu? Hasil resmi (uji H-SC2) setelah '
+         '60 hari yang sama-sama punya pilihan.</p>'
+         + _table(["lengan", "akun", "nilai", "%", "selesai", "menang"], rows, num=(2, 3, 4, 5))]
+    picks = [c for c in ((hy or {}).get("coins") or []) if c["pick"] and c["pick"][0] != "NONE"]
+    if hy:
+        bar = (hy.get("last") or [None, None])[1]
+        P.append(f'<h3 style="margin-top:18px">Pilihan Claude + engine jam ini <span class="mute" '
+                 f'style="font-weight:400">bar {_t(bar)} UTC</span></h3>')
+        if picks:
+            eng = lambda c: (c["f"] or {}).get("engine_signal") or "–"
+            P.append('<ul class="picks">' + "".join(
+                f'<li><b>{e(c["coin"])}</b> {_side(c["pick"][0])} <span class="mute">yakin {c["pick"][1]}% · '
+                f'engine: {e(eng(c))}</span><span class="why">{e(c["pick"][2] or "")}</span></li>'
+                for c in picks) + "</ul>")
+        else:
+            P.append('<p class="empty">Jam ini tidak memilih koin mana pun.</p>')
+    else:
+        P.append('<p class="empty">Lengan + engine belum berjalan di host ini.</p>')
+    P.append("</section>")
+    return "".join(P)
+
+
+def _scanner_tab(s, hy=None):
     if not s:
         return '<p class="empty">Scanner belum berjalan di host ini.</p>'
     bk, P = s.get("book") or {}, []
@@ -955,6 +993,7 @@ def _scanner_tab(s):
                          y_fmt="${:,.0f}", label="nilai akun spot") + "</div><div><h3>Posisi spot terakhir yang selesai</h3>"
                  + (_table(["koin", "selesai", "cara selesai", "hasil", "%"], rows, num=(3, 4)) if rows
                     else '<p class="empty">Belum ada posisi LONG yang selesai.</p>') + "</div></div></section>")
+    P.append(_arms(s, hy))
     coins = s.get("coins") or []
     det = []
     if coins:
@@ -1164,7 +1203,7 @@ def render(f):
              '<button role="tab" id="t-scanner" aria-controls="tab-scanner" data-tab="scanner">Claude pilih koin</button>'
              '<button role="tab" id="t-btc" aria-controls="tab-btc" data-tab="btc">Bot BTC</button>'
              '<button role="tab" id="t-sistem" aria-controls="tab-sistem" data-tab="sistem">Sistem</button></nav>')
-    P.append('<div class="tabpanel" role="tabpanel" id="tab-scanner" aria-labelledby="t-scanner">' + _scanner_tab(s) + "</div>")
+    P.append('<div class="tabpanel" role="tabpanel" id="tab-scanner" aria-labelledby="t-scanner">' + _scanner_tab(s, f.get("hybrid")) + "</div>")
     P.append('<div class="tabpanel" role="tabpanel" id="tab-btc" aria-labelledby="t-btc">' + _btc_tab(f, now) + "</div>")
     P.append('<div class="tabpanel" role="tabpanel" id="tab-sistem" aria-labelledby="t-sistem">' + _system_tab(f, now) + "</div>")
     P.append('<details class="glossary"><summary>Arti istilah</summary><dl>'

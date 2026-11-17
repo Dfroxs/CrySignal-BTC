@@ -5958,6 +5958,48 @@ def test_scanner_paper_book_opens_one_per_coin_and_exits_stop_first_target_or_ti
         s.BOOK_FRACTION = saved
 
 
+def test_scanner_hybrid_arm_adds_engine_fields_only_to_its_own_prompt_and_db():
+    import json
+    import os
+    import sqlite3
+    import tempfile
+    from types import SimpleNamespace as NS
+    from agents import scanner as s
+    get, now = _scanner_get(n_bars=600)
+    snap = s.snapshot(now, get)
+    real = s.engine_score("BTC", snap["coins"]["BTC"]["_k1h"], get)
+    assert set(real) == {"engine_buy_score", "engine_sell_score", "engine_threshold", "engine_signal"}
+    assert isinstance(real["engine_buy_score"], float) and real["engine_signal"] in ("BUY", "SELL", "HOLD")
+    calls = []
+
+    def score(c, k, g):
+        calls.append(c)
+        if c == "ETH":
+            raise RuntimeError("no htf")
+        return {"engine_buy_score": 3.0, "engine_sell_score": 1.0, "engine_threshold": 4.91,
+                "engine_signal": "HOLD"}
+    s.add_engine_scores(snap, get, score)
+    assert snap["coins"]["ETH"]["_engine"]["engine_buy_score"] is None, "a failed score is nulls"
+    pure, hyb = s.build_context(snap), s.build_context(snap, engine=True)
+    assert "engine_buy_score" not in json.dumps(pure), "the pure arm's input is unchanged"
+    assert hyb["coins"]["BTC"]["engine_threshold"] == 4.91 and "_k1h" not in json.dumps(hyb)
+    seen = {}
+
+    def ask(prompt, system=None, **k):
+        seen.setdefault("systems", []).append(system)
+        return NS(text=json.dumps({"SOL": {"side": "LONG", "confidence": 50, "reason": "x"}}),
+                  provider="anthropic", model="claude-opus-5-5", input_tokens=10, output_tokens=5)
+    d = tempfile.mkdtemp()
+    a, b, u = (os.path.join(d, n) for n in ("pure.db", "hyb.db", "u.jsonl"))
+    assert s.run_once(ask, get, a, now, u, snap=snap) and s.run_once(ask, get, b, now, u, snap=snap, arm="hybrid")
+    assert seen["systems"] == [s.SYSTEM, s.SYSTEM_HYBRID] and "poor" in s.SYSTEM_HYBRID
+    ctx_a = sqlite3.connect(a).execute("SELECT context FROM scan_cycles").fetchone()[0]
+    ctx_b = sqlite3.connect(b).execute("SELECT context FROM scan_cycles").fetchone()[0]
+    assert "engine_" not in ctx_a and "engine_buy_score" in ctx_b, "each arm keeps its own record"
+    purposes = [json.loads(x)["purpose"] for x in open(u)]
+    assert purposes == ["scanner", "scanner_hybrid"]
+
+
 def test_scanner_eval_excess_day_unit_verdict_and_leakage():
     import json
     import numpy as np
@@ -5990,6 +6032,13 @@ def test_scanner_eval_excess_day_unit_verdict_and_leakage():
     assert e.verdict_of(-np.ones(100), 500, 0.0)[0] == "FAIL"
     noisy = np.r_[np.ones(50) * 0.1, -np.ones(50) * 0.09]
     assert e.verdict_of(noisy, 500, 0.0)[0] == "INCONCLUSIVE"
+    days = pd.date_range("2026-12-01", periods=70, freq="D")
+    pure, hyb = pd.Series(0.0, index=days), pd.Series(1.0, index=days[:65])
+    v, mean, ci, n = e.paired_verdict(pure, hyb, 0.0, 0.0)
+    assert (v, mean, n) == ("PASS", 1.0, 65), "only days both arms picked are paired"
+    assert e.paired_verdict(pure, hyb[:59], 0.0, 0.0)[0] == "INCONCLUSIVE", "60 paired days needed"
+    assert e.paired_verdict(pure, hyb - 2, 0.0, 0.0)[0] == "FAIL"
+    assert e.paired_verdict(pure, hyb, 0.0, 0.25)[0] == "INCONCLUSIVE", "health discard"
 
 
 def test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel():
@@ -6495,6 +6544,7 @@ if __name__ == "__main__":
     run("H-SC scanner: store, dedupe, error row",   test_scanner_run_once_stores_dedupes_and_logs_a_failure_as_data)
     run("H-SC eval: excess, days, verdict, leak",   test_scanner_eval_excess_day_unit_verdict_and_leakage)
     run("scanner paper book: open, stop, target, time", test_scanner_paper_book_opens_one_per_coin_and_exits_stop_first_target_or_time)
+    run("H-SC2 hybrid arm: engine fields, own db",  test_scanner_hybrid_arm_adds_engine_fields_only_to_its_own_prompt_and_db)
     run("dashboard: read-only, local, no blank",    test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel)
     run("basis own checkpoint, no stale reason", test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason)
 
