@@ -20,6 +20,9 @@ Bot restarted by killing the MainPID; systemd respawned it, pid 383220, active 1
   H-SC2 and H-DR are unaffected (separate processes and data).
 - **Part B** of the run-4 plan (veto gate, L/S, `rel_ic_dir`, basis) waits for its own
   results.
+- **2026-11-18:** pulled `9c6ed5d` (PR #48, H-VR / H-BS prereg and its instrument) and
+  restarted `spotsignal-dash` only. Those tests are scored on or after 2027-01-16 18:44:50
+  UTC.
 
 **Run 3 started 2026-10-09 05:41:31 UTC at `c0e8764`** (manifest on the host; run 2's
 is archived as `paper_run_manifest.run2.json`, its final DB as
