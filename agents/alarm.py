@@ -190,7 +190,7 @@ def conditions(f):
         elif a.get("age_min") is None:
             out[f"scanner:{arm}"] = f"scanner {arm}: belum ada siklus"
         elif a["age_min"] > MAX_CYCLE_AGE_MIN:
-            out[f"scanner:{arm}"] = (f"scanner {arm}: siklus terakhir {a['age_min']:.0f} menit lalu "
+            out[f"scanner:{arm}"] = (f"scanner {arm} macet: siklus terakhir {a['age_min']:.0f} menit lalu "
                                      f"(batas {MAX_CYCLE_AGE_MIN})")
         if a.get("failing"):
             out[f"scanner_err:{arm}"] = (f"scanner {arm}: {SCANNER_ERROR_RUN} siklus terakhir error "
@@ -254,21 +254,22 @@ def _label(key):
 
 
 def render(new, again, recovered, now):
-    """One short Telegram message, or None when there is nothing to say."""
+    """One short Telegram message, or None when there is nothing to say. Plain words and a
+    pointer to where to look (owner-approved format, 2026-11-18)."""
     if not (new or again or recovered):
         return None
     e = lambda s: html.escape(str(s), quote=False)
     lines = []
     if new or again:
-        lines.append(f"🚨 <b>ALARM bot</b> · {now:%Y-%m-%d %H:%M} UTC")
+        lines.append(f"🚨 <b>Ada masalah</b> · {now:%H:%M} UTC")
         lines += [f"• {e(m)}" for m in new.values()]
-        lines += [f"• (masih, {h:g} jam) {e(m)}" for m, h in again.values()]
-    if recovered:
-        if not lines:
-            lines.append(f"✅ <b>pulih</b> · {now:%Y-%m-%d %H:%M} UTC")
-            lines += [f"• {e(m)}" for m in recovered.values()]
-        else:
-            lines.append("✅ <b>pulih</b>: " + "; ".join(e(m) for m in recovered.values()))
+        lines += [f"• {e(m)} (sudah {h:g} jam)" for m, h in again.values()]
+        if recovered:
+            lines.append("✅ Sudah normal lagi: " + "; ".join(e(m) for m in recovered.values()))
+        lines.append("Cek dashboard, tab Sistem.")
+    else:
+        lines.append(f"✅ <b>Sudah normal lagi</b> · {now:%H:%M} UTC")
+        lines += [f"• {e(m)}" for m in recovered.values()]
     return "\n".join(lines)
 
 

@@ -1,45 +1,61 @@
 """Telegram notification formatters and senders, in Indonesian.
 
-Messages are read on a phone, every hour. Until 2026-10-09 every hourly card carried
-technicals for both modes, HTF, headlines, performance and hypothetical sizing: 3,200 to
-3,500 characters whether or not anything happened. That was cut to one line per mode,
-which the owner found too terse to follow ("bearish 6.00 · BUY-only"). Since 2026-10-15
-each mode gets a short block: what it decided, its score against the bar and the gap,
-one sentence saying why, and one line of context. Trade setup, sizing and top reasons
-still appear only for a signal that clears the confidence bar (``will_open``).
+Messages are read on a phone, every hour. Redesigned 2026-11-18 with the owner (mockup
+approved): Indonesian numbers ($63.912, 7,0), UTC time, futures before spot, one block per
+mode saying what it did and why in plain words (veto and gate reasons translated), levels
+only for a signal that clears the confidence bar (``will_open``), then the open BTC
+positions and the BTC bot's $1,000 demo account as the dashboard counts it.
 """
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 from trading import history as _sh
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
-from signals.sizing import calculate_futures_position, calculate_position_size
-from notifier.common import _dir, _esc, _mode_label, _macro_banner, _send_telegram_message
+from notifier.common import _esc, _idn, _macro_banner, _send_telegram_message, _usd
 
 logger = logging.getLogger(__name__)
-_UP = "▲"
-_DOWN = "▼"
-
-_TOP_REASONS = 3          # reasons shown under an actionable signal
-_REASON_CHARS = 70        # truncated BEFORE escaping, so no entity is cut in half
 _VETO_CHARS = 60          # the ⛔ reason quoted on a vetoed HOLD, same rule
 _BLOCK_CHARS = 90         # a Phase 3 gate's reason, same rule
 
 _CLOSE_LABELS = {
-    "TP1":           "TP1 tercapai · stop pindah ke dekat entry",
-    "TP2":           "TP2 tercapai · profit penuh",
-    "Trail":         "trailing stop",
-    "SL":            "stop loss",
-    "MACRO_CLOSE":   "ditutup paksa sebelum berita makro",
-    "FLIP":          "sinyal berbalik · flip",
+    "TP1":           "kena target 1 (setengah posisi)",
+    "TP2":           "kena target 2",
+    "Trail":         "kena trailing stop",
+    "SL":            "kena stop",
+    "MACRO_CLOSE":   "ditutup sebelum berita ekonomi",
+    "FLIP":          "ditutup, sinyal berbalik",
     "TIME_EXIT":     "batas waktu tahan habis",
-    "VOL_EXIT":      "volatilitas melonjak",
+    "VOL_EXIT":      "pasar terlalu liar",
     "FUNDING_EXIT":  "biaya funding terlalu mahal",
-    "BREAKER_CLOSE": "circuit breaker · equity",
+    "BREAKER_CLOSE": "pengaman akun",
 }
 
-_SIDE_WORD = {"BUY": "beli", "SELL": "jual"}
+# The engine's veto reasons are technical English; the card says what they mean.
+_VETO_PLAIN = (
+    ("Counter-trend block: 1D BULLISH", "tren harian masih naik, SELL melawan tren"),
+    ("Counter-trend block: 1D BEARISH", "tren harian masih turun, BUY melawan tren"),
+    ("No-chase", "harga sudah jauh dari rata-rata (VWAP), mengejar"),
+    ("Anti-FOMO", "candle sebelumnya melonjak, mengejar lonjakan"),
+    ("Entry wick", "candle terakhir berekor panjang, ditolak pasar"),
+    ("Short-term", "momentum jangka pendek berlawanan"),
+    ("R:R", "rasio untung/rugi di bawah 1,5"),
+)
+# Phase 3 entry gates (run_bot `_block`), in plain words.
+_GATE_PLAIN = {
+    "reentry_first": "harga masuk lebih buruk dari posisi terakhir",
+    "confidence_first": "keyakinan terlalu rendah",
+    "fakeout_first": "pola breakout palsu",
+    "psy_sl_first": "stop terlalu dekat angka bulat",
+    "sr_first": "terlalu dekat support/resistance",
+    "regime_counter": "melawan arah tren",
+    "regime_bearish": "pasar sedang turun",
+    "trend_confluence": "konfirmasi tren kurang",
+    "breakout_chase": "mengejar breakout",
+    "aggregate_risk": "risiko total terlalu besar",
+    "already_open": "posisi searah sudah terbuka",
+    "stale_cache": "data harga belum diperbarui",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -47,7 +63,11 @@ _SIDE_WORD = {"BUY": "beli", "SELL": "jual"}
 # ---------------------------------------------------------------------------
 
 def _mode_name(mode):
-    return "SPOT" if mode == "spot" else "FUTURES"
+    return "spot" if mode == "spot" else "futures"
+
+
+def _side(stype):
+    return "LONG" if stype == "BUY" else "SHORT"
 
 
 def _price(sig):
@@ -56,21 +76,14 @@ def _price(sig):
     return sig.get("entry_price") or (sig.get("_last") or {}).get("close", 0)
 
 
-def _setup_lines(entry, sl, tp1, tp2=None):
-    """Entry / SL / TP1 / TP2 / R/R in three lines. SL always renders as a loss and
-    TP as a gain, whichever side the trade is on."""
-    sl_pct = abs(entry - sl) / entry * 100
-    tp1_pct = abs(tp1 - entry) / entry * 100
-    rr = tp1_pct / sl_pct if sl_pct > 0 else 0
-    tps = f"TP1 <code>${tp1:,.0f}</code> (+{tp1_pct:.2f}%)"
+def _levels_lines(stype, entry, sl, tp1, tp2=None):
+    """Entry, stop and targets with their distance, a loss as −, a gain as +."""
+    pct = lambda x: abs(x - entry) / entry * 100
+    lines = [f"Masuk {_usd(entry, 0)} · stop {_usd(sl, 0)} (−{_idn(pct(sl), 1)}%)",
+             f"Target 1 {_usd(tp1, 0)} (+{_idn(pct(tp1), 1)}%)"]
     if tp2:
-        tp2_pct = abs(tp2 - entry) / entry * 100
-        tps += f" · TP2 <code>${tp2:,.0f}</code> (+{tp2_pct:.2f}%)"
-    return [
-        f"Entry <code>${entry:,.0f}</code> · R/R <b>1:{rr:.2f}</b>",
-        f"SL <code>${sl:,.0f}</code> (-{sl_pct:.2f}%)",
-        tps,
-    ]
+        lines.append(f"Target 2 {_usd(tp2, 0)} (+{_idn(pct(tp2), 1)}%)")
+    return lines
 
 
 def _openable(sig):
@@ -79,216 +92,140 @@ def _openable(sig):
     return will_open(sig)
 
 
-def _score_line(sig):
-    """Both sides' scores against the bar, and how far the leader is from it."""
+def _veto_text(sig):
+    veto = next((str(r) for r in (sig.get("reasons") or []) if "⛔" in str(r)), None)
+    if not veto:
+        return None
+    for key, plain in _VETO_PLAIN:
+        if key in veto:
+            return plain
+    return _esc(veto.replace("⛔", "", 1).strip()[:_VETO_CHARS])
+
+
+def _score_text(sig):
+    """'Skor jual 7,0 (batas 4,9)' for the leading side."""
     buy_s = sig.get("buy_score", 0) or 0
     sell_s = sig.get("sell_score", 0) or 0
     thr = sig.get("_threshold", 0) or 0
-    line = f"Skor beli {buy_s:.2f} · jual {sell_s:.2f} · batas {thr:.2f}"
-    lead = max(buy_s, sell_s)
-    if sig.get("type", "HOLD") == "HOLD" and buy_s != sell_s and lead < thr:
-        line += f" (kurang {thr - lead:.2f})"
-    return line
+    word, lead = ("beli", buy_s) if buy_s >= sell_s else ("jual", sell_s)
+    return f"Skor {word} {_idn(lead, 1)} (batas {_idn(thr, 1)})", lead, thr
 
 
-def _why_hold(sig):
-    """One plain sentence: why this mode is holding."""
+def _hold_lines(sig):
     mode = sig.get("mode", "futures")
     buy_s = sig.get("buy_score", 0) or 0
     sell_s = sig.get("sell_score", 0) or 0
-    thr = sig.get("_threshold", 0) or 0
+    text, lead, thr = _score_text(sig)
     if buy_s == sell_s:
-        return "Tidak ada arah yang jelas."
+        return [f"{text}, tidak ada arah yang jelas"]
     if mode == "spot" and sell_s > buy_s:
-        return "Pasar condong turun; spot hanya bisa beli, jadi menunggu."
-    side, lead = ("BUY", buy_s) if buy_s > sell_s else ("SELL", sell_s)
+        return [f"{text}", "Pasar condong turun; spot hanya bisa beli, jadi menunggu"]
     if lead >= thr:
-        # A veto gate (no-chase, anti-FOMO, entry wick, momentum, counter-trend) turns
-        # a scored signal into HOLD and leaves a ⛔ reason. Name it; only without one
-        # is the news/macro overlay the likely cause.
-        veto = next((str(r) for r in (sig.get("reasons") or []) if "⛔" in str(r)), None)
-        if veto:
-            text = veto.replace("⛔", "", 1).strip()[:_VETO_CHARS]
-            return f"Skor {side} cukup, tapi diveto: {_esc(text)}"
-        return f"Skor {side} cukup, tapi ditahan filter berita/makro."
-    if mode == "spot":
-        return "Belum cukup kuat untuk beli."
-    return f"Belum cukup kuat untuk {'long' if side == 'BUY' else 'short'}."
+        veto = _veto_text(sig)
+        return [f"{text}, tapi ditolak:", veto] if veto else [f"{text}, tapi ditahan filter berita/makro"]
+    return [f"{text}, kurang {_idn(thr - lead, 1)}"]
 
 
 def _verdict_block(sig):
     """The lines for one mode. Returns (lines, actionable).
 
     A scored BUY/SELL below the confidence bar CANNOT open: Phase 3 refuses it
-    unconditionally. It used to be announced as `🟢 BUY · SPOT · WEAK`; 25 of paper
-    run 1's 29 futures signals were exactly that, and futures opened nothing in 35 days.
-    The row still reaches cycle_log, which is data. What stops is the alert claiming
-    something will happen.
+    unconditionally, so the card never announces it as a trade. One gated by a Phase 3
+    entry check says so, in plain words.
     """
     stype = sig.get("type", "HOLD")
-    label = _esc(_mode_label(sig))
-    conf = _esc(sig.get("confidence") or "")
-    conf_s = f" · {conf}" if conf else ""
-    score = sig.get("strength", 0) or 0
-    thr = sig.get("_threshold", 0) or 0
-
+    name = _mode_name(sig.get("mode", "futures")).capitalize()
     if stype in ("BUY", "SELL"):
-        sig_line = f"Skor {stype} {score:.2f} · batas {thr:.2f}"
+        text = f"Skor {'beli' if stype == 'BUY' else 'jual'} {_idn(sig.get('strength', 0) or 0, 1)} " \
+               f"(batas {_idn(sig.get('_threshold', 0) or 0, 1)})"
         if not _openable(sig):
-            # The bar here is CONFIDENCE, not the score threshold: the score has
-            # already cleared it. Name the bar that actually refused it.
-            return [f"🔇 <b>{label} — SINYAL {stype}</b>{conf_s}",
-                    sig_line,
-                    f"→ Skor lolos batas, tapi confidence {conf or '?'} terlalu rendah; "
-                    f"posisi tidak dibuka."], False
+            conf = _esc(sig.get("confidence") or "?")
+            return [f"<b>{name}: sinyal {_side(stype)} tidak dibuka</b>",
+                    f"{text}, tapi keyakinan {conf} terlalu rendah"], False
         block = sig.get("_phase3_block")
         if block:
-            # Cleared the confidence bar, then an entry gate refused it. Without this the
-            # card showed entry, SL, TP and size for a position that never opened.
             gate, reason = block
-            return [f"⛔ <b>{label} — DIBLOKIR</b>{conf_s}",
-                    sig_line,
-                    f"→ Ditolak gate <b>{_esc(gate)}</b>, posisi tidak dibuka: "
-                    f"{_esc(str(reason)[:_BLOCK_CHARS])}"], False
+            plain = _GATE_PLAIN.get(gate) or _esc(str(reason)[:_BLOCK_CHARS])
+            return [f"<b>{name}: sinyal {_side(stype)} diblokir</b>", f"{text}, tapi ditolak:", plain], False
         icon = "🟢" if stype == "BUY" else "🔴"
-        return [f"{icon} <b>{label} — SINYAL {stype}</b>{conf_s}",
-                sig_line,
-                "→ Lolos semua filter."], True
-
-    return [f"⏸ <b>{label} — TAHAN</b>", _score_line(sig), f"→ {_why_hold(sig)}"], False
-
-
-def _sizing_line(sig):
-    mode = sig.get("mode", "futures")
-    try:
-        if mode == "spot":
-            pos = calculate_position_size(sig)
-            if not pos.get("usdt_amount"):
-                return None
-            return (f"Ukuran <code>${pos['usdt_amount']:,.0f}</code> ({pos['position_ratio']:.1f}%) · "
-                    f"risiko <code>${pos.get('risk_amount', 0):,.0f}</code>")
-        fut = calculate_futures_position(sig)
-        if not fut:
-            return None
-        return (f"{_esc(fut['direction'])} {fut['leverage']}x · margin <code>${fut['margin']:,.0f}</code> · "
-                f"likuidasi <code>${fut['liquidation_price']:,.0f}</code> · "
-                f"risiko <code>${fut['risk_amount']:,.0f}</code>")
-    except Exception as e:  # noqa: BLE001 — sizing must never cost the alert
-        logger.debug("sizing line skipped: %s", e)
-        return None
-
-
-def _detail_lines(sig):
-    """Setup, sizing and top reasons — only for a signal that can open.
-
-    Futures levels are shown as the position OPENS them: stop and targets widened by
-    `apply_futures_exit_geometry`, the same call run_bot makes after the gates. Sizing,
-    liquidation and risk then follow from the stop actually used."""
-    if sig.get("mode") == "futures":
-        from trading.paper import apply_futures_exit_geometry
-        sig = apply_futures_exit_geometry(sig)
-    lines = []
-    if sig.get("stop_loss") and sig.get("take_profit") and sig.get("entry_price"):
-        lines += _setup_lines(sig["entry_price"], sig["stop_loss"], sig["take_profit"], sig.get("tp2"))
-    sizing = _sizing_line(sig)
-    if sizing:
-        lines.append(sizing)
-    for r in (sig.get("reasons") or [])[:_TOP_REASONS]:
-        lines.append(_esc(str(r).strip()[:_REASON_CHARS]))
-    return lines
-
-
-def _trend_line(sig):
-    """Trend and sentiment for one mode: EMA200 side, RSI, regime, Fear & Greed."""
-    last = sig.get("_last") or {}
-    parts = []
-    price = _price(sig)
-    ema200 = last.get("ema200")
-    if ema200 and price:
-        parts.append(f"di atas EMA200 {_UP}" if price > ema200 else f"di bawah EMA200 {_DOWN}")
-    if last.get("rsi") is not None:
-        parts.append(f"RSI {last['rsi']:.0f}")
-    if sig.get("regime"):
-        parts.append(_esc(sig["regime"]))
-    if sig.get("fear_greed_value") is not None:
-        parts.append(f"F&amp;G {sig['fear_greed_value']}")
-    return ("Tren: " + " · ".join(parts)) if parts else None
-
-
-def _market_line(sig):
-    """Futures market structure: funding, L/S, open interest."""
-    mkt = sig.get("_market") or {}
-    if not mkt:
-        return None
-    funding = mkt.get("funding", {})
-    ls = mkt.get("long_short", {})
-    oi = mkt.get("open_interest", {})
-    parts = [f"Funding {funding.get('rate_pct', 0):+.4f}%", f"L/S {ls.get('ratio', 1):.2f}"]
-    if oi.get("notional", 0) > 1e6:
-        parts.append(f"OI ${oi['notional'] / 1e9:.1f}B {_dir(oi.get('change_pct', 0))}")
-    return " · ".join(parts)
-
-
-def _context_line(sig):
-    if sig.get("mode") == "spot":
-        return _trend_line(sig)
-    return _market_line(sig) or _trend_line(sig)
+        lines = [f"{icon} <b>{name}: {_side(stype)}</b>", text]
+        if sig.get("stop_loss") and sig.get("take_profit") and sig.get("entry_price"):
+            lv = sig
+            if sig.get("mode") == "futures":
+                from trading.paper import apply_futures_exit_geometry
+                lv = apply_futures_exit_geometry(sig)
+            lines += _levels_lines(stype, lv["entry_price"], lv["stop_loss"], lv["take_profit"], lv.get("tp2"))
+        return lines, True
+    return [f"<b>{name}: tahan</b>"] + _hold_lines(sig), False
 
 
 def _open_position_lines(prices=None):
-    """Open positions, one line each, with the move since entry at this cycle's price."""
+    """Open BTC positions, one line each, with the move since entry at this cycle's price."""
     try:
         positions = _sh.get_open_positions()
     except Exception:  # noqa: BLE001
         return []
     if not positions:
-        return ["📂 Posisi terbuka: tidak ada"]
-    lines = ["📂 Posisi terbuka:"]
+        return ["Posisi BTC: tidak ada"]
+    lines = ["Posisi BTC:"]
     for p in positions:
         sl = p.get("trailing_stop") or p["stop_loss"]
-        # pyramid_entry is 1 for a first entry, so only 2+ is a pyramid level.
-        pyr = f" (pyramid {p['pyramid_entry']})" if (p.get("pyramid_entry") or 0) > 1 else ""
-        tp1 = " · TP1 ✓" if p.get("partial_closed") else ""
+        tp1 = ", target 1 ✓" if p.get("partial_closed") else ""
         now = (prices or {}).get(p.get("mode"))
         move = ""
         if now and p.get("entry_price"):
             pct = (now - p["entry_price"]) / p["entry_price"] * 100
-            move = f" · {pct if p['type'] == 'BUY' else -pct:+.2f}% sekarang"
-        lines.append(f"  {_mode_name(p.get('mode'))} {_esc(p['type'])} #{p['id']}{pyr} @ "
-                     f"<code>${p['entry_price']:,.0f}</code> · SL <code>${sl:,.0f}</code>{tp1}{move}")
+            move = f", {_idn(pct if p['type'] == 'BUY' else -pct, 2, True)}%"
+        lines.append(f"• {_side(p['type'])} {_mode_name(p.get('mode'))} #{p['id']} masuk "
+                     f"{_usd(p['entry_price'], 0)}{move}, stop {_usd(sl, 0)}{tp1}")
     return lines
+
+
+def _account_line():
+    """The BTC bot's $1,000 demo account, exactly as the dashboard counts it (run window)."""
+    try:
+        import json
+        from agents.dashboard import db_facts
+        from config import DATA_DIR
+        import os
+        start = None
+        try:
+            m = json.load(open(os.path.join(DATA_DIR, "paper_run_manifest.json")))
+            start = datetime.fromisoformat(m["started_at"])
+        except Exception:  # noqa: BLE001
+            pass
+        acct = db_facts(_sh.SIGNAL_HISTORY_DB, datetime.now(UTC), start).get("account")
+        if not acct:
+            return None
+        chg = (acct["equity"] / acct["start"] - 1) * 100
+        return f"Akun Bot BTC {_usd(acct['equity'])} ({_idn(chg, 2, True)}%)"
+    except Exception as e:  # noqa: BLE001 — the account line must never cost the card
+        logger.debug("account line skipped: %s", e)
+        return None
 
 
 def _render(signals):
     """The one layout both public formatters share."""
-    signals = [s for s in signals if s]
+    # Futures first: it is the mode that trades most, and its price heads the card.
+    signals = sorted((s for s in signals if s), key=lambda s: s.get("mode") == "spot")
     if not signals:
         return ""
     blocks = [(s, *_verdict_block(s)) for s in signals]
     actionable = any(act for _, _, act in blocks)
-
-    primary = signals[-1]                    # futures when present, as before
-    price = _price(primary)
-    time_str = datetime.now().astimezone().strftime("%H:%M %Z").strip()
-    head_icon = "🔔" if actionable else "⏸"
-    head = f"{head_icon} <b>BTC ${price:,.0f}</b>" if price else f"{head_icon} <b>BTC</b>"
+    price = _price(signals[0])                # futures when present
+    time_str = datetime.now(UTC).strftime("%H:%M UTC")
+    head = f"{'🔔' if actionable else '⏸'} <b>BTC {_usd(price, 0)}</b>" if price else "⏸ <b>BTC</b>"
     lines = [f"{head} · {_esc(time_str)}",
-             "Ada sinyal yang lolos jam ini." if actionable else "Tidak ada posisi baru jam ini."]
-
-    for sig, block, act in blocks:
+             "Bot BTC: ada sinyal yang lolos jam ini" if actionable else "Bot BTC: tidak buka posisi jam ini"]
+    for _, block, _ in blocks:
         lines.append("")
         lines += block
-        if act:
-            lines += _detail_lines(sig)
-        ctx = _context_line(sig)
-        if ctx:
-            lines.append(ctx)
-
     prices = {s.get("mode", "futures"): _price(s) for s in signals}
-    pos = _open_position_lines(prices)
-    if pos:
-        lines.append("")
-        lines += pos
+    lines.append("")
+    lines += _open_position_lines(prices)
+    acct = _account_line()
+    if acct:
+        lines.append(acct)
     return "\n".join(lines)
 
 
@@ -302,58 +239,40 @@ def _format_compact_signal_telegram(signal):
 
 
 def _format_consolidated_telegram(spot_signal, futures_signal):
-    """Combined hourly card: price, one block per mode, detail only when actionable."""
+    """Combined hourly card: price, one block per mode, levels only when actionable."""
     return _render([spot_signal, futures_signal])
 
 
 def _format_close_notification(closed):
-    """Position closes (TP/SL/MACRO…): outcome and P&L per trade, then the running
-    total for each mode that closed — performance only changes here, so it lives here
-    rather than in every hourly card."""
+    """BTC position closes: result and reason per trade, then the account after them."""
     if not closed:
         return None
-
-    # A TP1 hit closes half and leaves the position open: "Position closed" over it
-    # told the owner the trade was over.
     partial_only = all(c.get("outcome") == "TP1" for c in closed)
-    lines = (["🔔 <b>Take-profit sebagian (TP1)</b>", "Setengah posisi ditutup, sisanya tetap berjalan."]
-             if partial_only else ["🔔 <b>Posisi ditutup</b>"])
-    modes = []
+    lines = (["🎯 <b>Bot BTC ambil untung sebagian</b>", "Setengah posisi ditutup, sisanya tetap berjalan."]
+             if partial_only else [])
     for c in closed:
-        # Colour by result, not side: "🔴 FUTURES SELL +3.10%" read as a loss.
-        icon = "🟢" if c["pnl"] >= 0 else "🔴"
-        mode = c.get("mode", "futures")
-        if mode not in modes:
-            modes.append(mode)
-        pnl = c["pnl"]
+        icon = "✅" if c["pnl"] >= 0 else "❌"
+        what = f"{_side(c['type'])} {_mode_name(c.get('mode', 'futures'))}"
         label = _esc(_CLOSE_LABELS.get(c["outcome"], c["outcome"]))
-        lines.append(f"{icon} {_mode_name(mode)} {_esc(c['type'])} <b>{pnl:+.2f}%</b> · {label}")
-        lines.append(f"   <code>${c['entry']:,.0f}</code> → <code>${c['exit']:,.0f}</code>")
-
-    totals = []
-    for mode in modes:
-        try:
-            pnl, cnt, _ = _sh.get_closed_pnl(mode)
-        except Exception:  # noqa: BLE001 — a DB failure drops the total, never the close
-            continue
-        if cnt:
-            totals.append(f"{_mode_name(mode)} <b>{pnl:+.2f}%</b> ({cnt} trade)")
-    if totals:
-        lines.append("Total semua trade: " + " · ".join(totals))
+        if not partial_only:
+            lines.append(f"{icon} <b>Bot BTC tutup {what}: {_idn(c['pnl'], 2, True)}%</b>")
+        else:
+            lines.append(f"{what}: {_idn(c['pnl'], 2, True)}% pada setengah posisi")
+        lines.append(f"{_usd(c['entry'], 0)} → {_usd(c['exit'], 0)} · {label}")
+    acct = _account_line()
+    if acct:
+        lines.append(acct)
     return "\n".join(lines)
 
 
 def _format_open_notification(signal, pos_id, mode, pyramid_entry=None):
     """'Position opened' card — sent separately from the hourly one."""
     stype = signal["type"]
-    icon = "🟢" if stype == "BUY" else "🔴"
-    what = f"{_mode_name(mode)} {_esc(stype)}"
-    if pyramid_entry:
-        header = f"🧩 {icon} <b>Pyramid #{pyramid_entry} · {what}</b> · posisi #{pos_id}"
-    else:
-        header = f"🚀 {icon} <b>Posisi dibuka · {what}</b> · #{pos_id}"
-    return "\n".join([header] + _setup_lines(signal["entry_price"], signal["stop_loss"],
-                                             signal["take_profit"], signal.get("tp2")))
+    what = f"{_side(stype)} {_mode_name(mode)} #{pos_id}"
+    header = (f"🧩 <b>Bot BTC tambah posisi (pyramid {pyramid_entry}): {what}</b>" if pyramid_entry
+              else f"🚀 <b>Bot BTC buka {what}</b>")
+    return "\n".join([header] + _levels_lines(stype, signal["entry_price"], signal["stop_loss"],
+                                              signal["take_profit"], signal.get("tp2")))
 
 
 def _send_combined_telegram(spot_signal, futures_signal, symbol):
