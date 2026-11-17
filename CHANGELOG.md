@@ -4,6 +4,29 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-18 — fix(paper): a live TP2 exit pays a full round trip and records its price
+
+Review of `trading/paper.py` and the `run_bot.py` gates (owner's request).
+
+- **Bug fixed.** The TP2 branch charged the remainder one cost side ("entry counted at TP1").
+  That is the 1.5-side blend fixed in `_calc_pnl` and `backtest._net_pnl`, missed in this
+  branch, so every live TP2 win was booked about 0.05pp (futures) / 0.075pp (spot) too good,
+  and the live book disagreed with the replay. It now uses `_calc_pnl`. The TP2 close also
+  recorded no `exit_price`; it does now.
+- **Test:** a test that failed first drives a position through TP1 and TP2 with
+  `check_and_close_positions`, for futures and spot BUY and futures SELL. It booked 1.35
+  against the backtest's 1.30.
+- **Run-4 part B notes** (`PAPER_RUN.md`): exits are checked on the hourly close only (the
+  backtest uses intrabar high/low), and spot positions are checked at the perp price.
+- **Observation:** the re-entry gate holds futures SELLs below $68,900 until 2026-11-22, by
+  design.
+- **Trading path:** booking only, so no signal changes and no test window is cut. It needs
+  a bot restart to take effect.
+
+Tests 332/332.
+
+---
+
 ## 2026-11-18 — feat(ops): scoring day runs each pre-registered test once, when due
 
 `agents/scoring_day.py`, cron daily at 04:20 UTC. The scoring dates are months away and a chat
