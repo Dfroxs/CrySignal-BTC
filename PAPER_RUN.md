@@ -29,6 +29,9 @@ Bot restarted by killing the MainPID; systemd respawned it, pid 383220, active 1
     no signal changes and no test window is cut.
   - **#49:** scoring day. Cron `20 4 * * *` runs `agents.scoring_day`, logging to
     `data/scoring/scoring_day.log`. Dry run: every test "not yet".
+- **2026-11-17 21:48 UTC:** pulled `dfba14f` (PR #51, every Telegram message reformatted
+  and the hourly scanner digest added). Bot restarted, pid 386025. No position was open,
+  and no signal changes.
 
 **Run 3 started 2026-10-09 05:41:31 UTC at `c0e8764`** (manifest on the host; run 2's
 is archived as `paper_run_manifest.run2.json`, its final DB as
