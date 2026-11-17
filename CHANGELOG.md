@@ -4,6 +4,51 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-17 — feat(dashboard): dark trading-app design (owner rejected the passbook)
+
+Owner: "jelek banget"; asked, they chose a dark trading-app look and named the problems as
+old-fashioned, colours, too much text and layout. Now: a top bar (brand, DEMO badge, health
+pill linking to Sistem, time); one card per demo account with the balance, change and a
+sparkline of its balance; below, "Posisi berjalan" across all books and a compact
+"Aktivitas" feed; the detail tabs follow. Trading colour convention: green = LONG / gain, red =
+SHORT / loss, as badges. Plus Jakarta Sans. Negative zero no longer printed. Checked by
+screenshot on desktop and in a 390 px frame (two-column cards, scrolling tables). The passbook
+version of the same day is replaced. Tests 321/321.
+
+---
+
+## 2026-11-17 — feat(dashboard): passbook design (owner asked for the frontend-design skill)
+
+The page now reads like a bank passbook, the owner's own frame for demo money. Header rule
+and "buku kas demo"; one status sentence; the hero "Uang demo, modal $1.000 per akun" draws
+every account (BTC bot, BTC + Claude filter, scanner futures, scanner spot, and the hybrid arm
+when present) as a bar growing right (gain) or left (loss) from one 1,000 USD line on a
+shared scale, with the balance beside it; it replaces four identical cards. "Mutasi terakhir"
+is a passbook ledger across the BTC bot and both scanner books: date, account, description,
+amount, balance after the close, alternating tint rows (`usd_account` and `scan_book` now
+record their entries). Palette: security-tint paper #EEF2EE, blue-black ink, stamp red for
+losses, deep green for gains, BUY blue / SELL orange unchanged; dark mode is ink-blue, not
+black. One typeface, Public Sans, 800 for balances. Middle-dot separators removed. Checked by
+screenshot in light, dark and at phone width. Tests 321/321.
+
+---
+
+## 2026-11-16 — feat: hybrid scanner arm (H-SC2): Claude + the engine's score, concurrent
+
+Pre-registered first (`2026-11-17-claude-scanner-hybrid-prereg.md`). The scanner process now
+fetches the nine coins once per hour and asks Claude twice: the pure arm (unchanged prompt,
+input, DB) and a hybrid arm whose input adds, per coin, the engine's futures-mode score on the
+same closed 1h bar (`engine_buy_score`, `engine_sell_score`, `engine_threshold`,
+`engine_signal`; `generate_signals` on the coin's last 499 perp bars with live S/R and 4h/1d HTF
+from its own klines, no market-structure inputs). The hybrid prompt says the engine's altcoin
+record is poor. Own DB `data/scanner_hybrid.db` with its own futures and spot demo books; cost
+logged as `scanner_hybrid` (about +$17/month). A hybrid failure never costs the pure arm.
+`scanner_eval.py --hybrid-db` scores H-SC2: hybrid minus pure per paired day, 60 paired days.
+Dashboard: "Claude murni vs Claude + skor engine" in the scanner tab. Measured on the VPS from
+`/tmp`: engine for nine coins 4.1 s, peak RSS 144 MB. Cron unchanged. Tests 321/321.
+
+---
+
 ## 2026-11-16 — feat: scanner paper book (design decision for data, not a test)
 
 Owner: "kenapa tidak dicoba sekalian, ini hanya uang demo". Every LONG/SHORT scanner pick

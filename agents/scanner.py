@@ -42,6 +42,7 @@ KLINES = 1000                                 # EMA200's seed weight after 1000 
 HTTP_TIMEOUT_S = 10
 ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = ROOT / "data" / "scanner.db"
+HYBRID_DB_PATH = ROOT / "data" / "scanner_hybrid.db"       # H-SC2 arm, same schema
 USAGE_PATH = ROOT / "data" / "llm_usage.jsonl"
 
 SYSTEM = (
@@ -124,6 +125,7 @@ def fetch_coin(coin, premium, now_ms, get=_get):
         raise ValueError(f"{sym}: only {len(bars)} closed bars")
     f["bar_open_ms"] = bars[-1][0]
     f["_bars"] = [(k[0], k[2], k[3], k[4]) for k in bars[-72:]]   # (open_ms, high, low, close)
+    f["_k1h"] = bars                                           # for the hybrid arm's engine score
     p = premium.get(sym) or {}
     f["funding_pct"] = _num(float(p["lastFundingRate"]) * 100, 5) if "lastFundingRate" in p else None
     mark, idx = _num(p.get("markPrice"), 8), _num(p.get("indexPrice"), 8)
@@ -171,7 +173,61 @@ def snapshot(now_ms=None, get=_get):
 
 # ── Prompt and reply ────────────────────────────────────────────────────────────────
 
-def build_context(snap):
+# ── Hybrid arm (H-SC2): the engine's own score per coin, added to the same input ──────
+
+SYSTEM_HYBRID = SYSTEM + (
+    " Each coin also carries engine_buy_score, engine_sell_score, engine_threshold and "
+    "engine_signal (BUY/SELL/HOLD): the score of a rule-based indicator system on the same "
+    "closed 1h bar; it fires when a score passes its threshold. That system's record on "
+    "altcoins is poor, so treat it as one more input, not as authority."
+)
+
+
+def engine_score(coin, k1h, get=_get):
+    """The SpotSignal engine's futures-mode score on the coin's last closed 1h bar, as the
+    prereg fixes it: last 499 closed perp bars, live S/R, 4h/1d HTF from the coin's own perp
+    klines (as live fetches them), no market-structure inputs (the live fetchers are BTC-only)."""
+    import pandas as pd
+    from backtest import LIVE_BASE_BARS, _live_indicators
+    from config import SIGNAL_THRESHOLD
+    from signals.engine import generate_signals
+    from signals.htf import _htf_aligned, _htf_indicators
+    from signals.indicators import detect_support_resistance
+    df = pd.DataFrame(k1h[-LIVE_BASE_BARS:], columns=["timestamp", "open", "high", "low", "close", "volume"])
+    df.index = pd.to_datetime(df.pop("timestamp"), unit="ms")
+    window = _live_indicators(df, 24)
+    htf = {"4h": "NEUTRAL", "1d": "NEUTRAL", "aligned": False, "4h_indicators": {}, "1d_indicators": {}}
+    for tf in ("4h", "1d"):
+        rows = get("/fapi/v1/klines", {"symbol": coin + "USDT", "interval": tf, "limit": 250})
+        h = pd.DataFrame([[float(x) for x in r[:6]] for r in rows],
+                         columns=["timestamp", "open", "high", "low", "close", "volume"])
+        ind = _htf_indicators(h)
+        htf[tf], htf[f"{tf}_indicators"] = ind["trend"], ind
+    htf["aligned"] = (htf["4h"] != "NEUTRAL" and htf["4h"] == htf["1d"]
+                      and _htf_aligned(htf["4h_indicators"], htf["1d_indicators"], htf["1d"]))
+    sig = generate_signals(window, htf=htf, market_structure=None,
+                           sr=detect_support_resistance(window), mode="futures",
+                           threshold_override=SIGNAL_THRESHOLD)
+    return {"engine_buy_score": _num(sig.get("buy_score"), 2),
+            "engine_sell_score": _num(sig.get("sell_score"), 2),
+            "engine_threshold": _num(sig.get("_threshold"), 2), "engine_signal": sig.get("type")}
+
+
+def add_engine_scores(snap, get=_get, score=engine_score):
+    """Attach `_engine` to every fetched coin; a coin whose score fails gets nulls."""
+    for c, f in snap["coins"].items():
+        if not f:
+            continue
+        try:
+            f["_engine"] = score(c, f["_k1h"], get)
+        except Exception as exc:  # noqa: BLE001 - a failed score is data, not a dead coin
+            logger.warning("%s engine score: %s", c, exc)
+            f["_engine"] = {"engine_buy_score": None, "engine_sell_score": None,
+                            "engine_threshold": None, "engine_signal": None}
+    return snap
+
+
+def build_context(snap, engine=False):
     live = [f for f in snap["coins"].values() if f and f.get("ret_24h_pct") is not None]
     mean24 = float(np.mean([f["ret_24h_pct"] for f in live])) if live else None
     coins = {}
@@ -180,6 +236,8 @@ def build_context(snap):
             coins[c] = None
             continue
         d = {k: v for k, v in f.items() if k not in ("bar_open_ms", "close") and not k.startswith("_")}
+        if engine:
+            d.update(f.get("_engine") or {})
         d["ret_24h_vs_universe_pct"] = (_num(f["ret_24h_pct"] - mean24)
                                         if mean24 is not None and f["ret_24h_pct"] is not None
                                         else None)
@@ -367,11 +425,13 @@ def _iso(ms):
     return datetime.fromtimestamp(ms / 1000, UTC).isoformat()
 
 
-def run_once(ask_fn=None, get=_get, db_path=DB_PATH, now_ms=None, usage_path=USAGE_PATH):
-    """Fetch, ask, store. Returns the cycle id, or None when this bar was already scanned
-    or no coin could be fetched. Never raises on a model failure: that is an error row."""
+def run_once(ask_fn=None, get=_get, db_path=DB_PATH, now_ms=None, usage_path=USAGE_PATH,
+             snap=None, arm="pure"):
+    """Fetch (unless `snap` is given), ask, store. Returns the cycle id, or None when this bar
+    was already scanned or no coin could be fetched. Never raises on a model failure: that is
+    an error row. `arm="hybrid"` (H-SC2) adds the engine fields and their sentence."""
     from agents.llm import cost_usd
-    snap = snapshot(now_ms, get)
+    snap = snap or snapshot(now_ms, get)
     if snap["bar_close_ms"] is None:
         logger.error("no coin could be fetched; nothing asked")
         return None
@@ -385,7 +445,7 @@ def run_once(ask_fn=None, get=_get, db_path=DB_PATH, now_ms=None, usage_path=USA
             manage_book(con, snap)           # exits first, on the bars closed since last cycle
         except Exception as exc:  # noqa: BLE001 - the book must never cost a scan
             logger.warning("paper book not managed: %s", exc)
-        ctx = build_context(snap)
+        ctx = build_context(snap, engine=(arm == "hybrid"))
         prompt = "Scanner input (JSON):\n" + json.dumps(ctx, indent=1)
         rec = {"model": None, "error": None, "input_tokens": None, "output_tokens": None,
                "cost_usd": None}
@@ -393,12 +453,12 @@ def run_once(ask_fn=None, get=_get, db_path=DB_PATH, now_ms=None, usage_path=USA
         try:
             if ask_fn is None:
                 from agents.llm import ask as ask_fn
-            reply = ask_fn(prompt, system=SYSTEM, provider="anthropic",
+            reply = ask_fn(prompt, system=SYSTEM_HYBRID if arm == "hybrid" else SYSTEM, provider="anthropic",
                            model=os.getenv("SCANNER_MODEL") or DEFAULT_MODEL, max_tokens=16000)
             rec.update(model=reply.model, input_tokens=reply.input_tokens,
                        output_tokens=reply.output_tokens,
                        cost_usd=cost_usd(reply.model, reply.input_tokens, reply.output_tokens))
-            _record_usage(usage_path, reply)
+            _record_usage(usage_path, reply, "scanner" if arm == "pure" else "scanner_hybrid")
             picks = parse_picks(reply.text, [c for c, f in snap["coins"].items() if f])
         except Exception as exc:  # noqa: BLE001 - a model failure is data
             rec["error"] = f"{type(exc).__name__}: {exc}"[:300]
@@ -426,11 +486,11 @@ def run_once(ask_fn=None, get=_get, db_path=DB_PATH, now_ms=None, usage_path=USA
         con.close()
 
 
-def _record_usage(path, reply):
+def _record_usage(path, reply, purpose="scanner"):
     """Into the ops report's cost ledger, so the monthly budget line counts the scanner."""
     try:
         from agents.ops_report import record_usage
-        record_usage(path, reply, "scanner")
+        record_usage(path, reply, purpose)
     except Exception as exc:  # noqa: BLE001 - losing a cost line must not lose the cycle
         logger.warning("scanner usage not recorded: %s", exc)
 
@@ -439,6 +499,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--dry-run", action="store_true", help="fetch and print the prompt only")
     ap.add_argument("--db", default=str(DB_PATH))
+    ap.add_argument("--hybrid-db", default=str(HYBRID_DB_PATH))
+    ap.add_argument("--no-hybrid", action="store_true", help="run the pure arm only")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     from dotenv import load_dotenv
@@ -447,8 +509,18 @@ def main(argv=None):
         snap = snapshot()
         print(json.dumps(build_context(snap), indent=1) if snap["bar_close_ms"] else "no data")
         return 0
-    cid = run_once(db_path=args.db)
+    snap = snapshot()
+    if snap["bar_close_ms"] is None:
+        logger.error("no coin could be fetched; nothing asked")
+        return 0
+    cid = run_once(db_path=args.db, snap=snap)              # pure arm first, unchanged
     logger.info("scan cycle %s", cid)
+    if not args.no_hybrid:
+        try:
+            hid = run_once(db_path=args.hybrid_db, snap=add_engine_scores(snap), arm="hybrid")
+            logger.info("hybrid scan cycle %s", hid)
+        except Exception as exc:  # noqa: BLE001 - the hybrid arm never costs the pure one
+            logger.error("hybrid arm failed: %s", exc)
     return 0
 
 

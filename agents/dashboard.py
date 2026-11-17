@@ -119,19 +119,23 @@ def usd_account(closed, open_, start=ACCOUNT_START_USD, frac=ACCOUNT_FRACTION):
                     [(_dt(c["closed_at"]), 1, i, "c") for i, c in enumerate(closed)] +
                     [(_dt(o["opened_at"]), 0, i, "o") for i, o in enumerate(open_)],
                     key=lambda x: (x[0] or datetime.min.replace(tzinfo=UTC), x[1]))
-    realised, size, curve = start, {}, []
+    realised, size, curve, entries = start, {}, [], []
     for t, kind, i, src in events:
+        p = closed[i] if src == "c" else open_[i]
         if kind == 0:
             size[(src, i)] = realised * frac
             if not curve and t:
                 curve.append((t.timestamp(), start))
+            entries.append({"t": t, "open": True, "p": p, "size": size[(src, i)]})
         else:
-            realised += closed[i]["pnl_pct"] / 100 * size.get(("c", i), start * frac)
+            usd = closed[i]["pnl_pct"] / 100 * size.get(("c", i), start * frac)
+            realised += usd
             curve.append((t.timestamp(), round(realised, 2)))
+            entries.append({"t": t, "open": False, "p": p, "usd": usd, "bal": realised})
     upnl = sum((o.get("move_pct") or 0) / 100 * size.get(("o", i), 0) for i, o in enumerate(open_))
     used = sum(size.get(("o", i), 0) for i in range(len(open_)))
     return {"start": start, "realised": realised, "upnl": upnl, "equity": realised + upnl,
-            "used": used, "cash": realised - used, "curve": curve}
+            "used": used, "cash": realised - used, "curve": curve, "entries": entries}
 
 
 # Third book (owner, 2026-11-16): the BTC bot as if Claude's entry opinion were a veto.
@@ -380,15 +384,17 @@ def scan_book(pos):
     rows = [(_dt(p["opened_bar"]), _dt(p["closed_bar"]), p["pnl_pct"], p["outcome"]) for p in closed]
     realised = BOOK_START_USD + sum(p["pnl_usd"] or 0 for p in closed)
     curve = ([(rows[0][0].timestamp(), BOOK_START_USD)] if rows else [])
-    acc = BOOK_START_USD
+    acc, entries = BOOK_START_USD, []
     for p in closed:
         acc += p["pnl_usd"] or 0
         curve.append((_dt(p["closed_bar"]).timestamp(), round(acc, 2)))
+        entries.append({"t": _dt(p["closed_bar"]), "open": False, "p": p, "usd": p["pnl_usd"] or 0, "bal": acc})
+    entries += [{"t": _dt(p["opened_bar"]), "open": True, "p": p, "size": p.get("size_usd")} for p in pos]
     used = sum(p.get("size_usd") or 0 for p in opened)
     upnl = sum(p.get("upnl") or 0 for p in opened)
     return {"open": opened, "closed": closed[::-1][:CLOSED_ROWS], "stats": _book(rows),
             "start": BOOK_START_USD, "realised": realised, "equity": realised + upnl,
-            "upnl": upnl, "used": used, "cash": realised - used, "curve": curve}
+            "upnl": upnl, "used": used, "cash": realised - used, "curve": curve, "entries": entries}
 
 
 def cost_facts(db, root, now):
@@ -415,6 +421,7 @@ def collect(root, db, scanner_db, now=None, run=None):
     part("db", lambda: db_facts(db, now, run_start))
     part("macro", lambda: macro_facts(root, now))
     part("scanner", lambda: scanner_facts(scanner_db))
+    part("hybrid", lambda: scanner_facts(Path(scanner_db).with_name("scanner_hybrid.db")))
     part("cost", lambda: cost_facts(db, root, now))
     return out
 
@@ -448,30 +455,28 @@ def issues(f):
 
 # ── Render helpers ──────────────────────────────────────────────────────────────────
 
-FONTS = ("https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&"
-         "family=Barlow+Condensed:wght@500;600&display=swap")
+FONTS = "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
 
 CSS = """
-:root{--paper:#EEF1F0;--surface:#FFFFFF;--ink:#17201F;--ink2:#46524F;--mute:#68746F;
---rule:#D3DAD8;--rule2:#E4E9E7;--buy:#2F6DB5;--sell:#C8641A;--good:#1F7A50;--bad:#B3261E;
---warn:#8A5A00;--chip:#E2E8E6;color-scheme:light}
-@media (prefers-color-scheme:dark){:root{--paper:#12171A;--surface:#1A2125;--ink:#E3E9E7;
---ink2:#BAC4C1;--mute:#8E9A97;--rule:#2E383C;--rule2:#252D31;--buy:#5B93DB;--sell:#D86F24;
---good:#4CC38A;--bad:#F0857D;--warn:#E0A84A;--chip:#252D31;color-scheme:dark}}
+/* Trading terminal, dark (owner's choice). Green = long / gain, red = short / loss. */
+:root{--paper:#0D1117;--surface:#151B23;--surface2:#1B232D;--ink:#E6EDF3;--ink2:#B7C2CD;--mute:#7D8A97;
+--rule:#262F3A;--rule2:#1F2731;--tint:#18202A;--buy:#2EBD85;--sell:#F6465D;--good:#2EBD85;--bad:#F6465D;
+--warn:#F0B90B;--chip:#1F2731;--accent:#4C8DF6;color-scheme:dark}
+:root{--face:"Plus Jakarta Sans",system-ui,-apple-system,"Segoe UI",sans-serif}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--paper);color:var(--ink);
-font:15px/1.5 Barlow,system-ui,-apple-system,"Segoe UI",sans-serif;font-variant-numeric:tabular-nums}
+font:15px/1.5 var(--face);font-variant-numeric:tabular-nums}
 main{max-width:1240px;margin:0 auto;padding:28px 24px 64px}
 a{color:inherit}
-.cond{font-family:"Barlow Condensed",Barlow,system-ui,sans-serif}
-h1{font:600 15px/1.2 Barlow,system-ui,sans-serif;margin:0;color:var(--ink2)}
-h2{font:600 22px/1.2 "Barlow Condensed",Barlow,system-ui,sans-serif;margin:0 0 4px}
-h3{font:600 15px/1.3 Barlow,system-ui,sans-serif;margin:0 0 8px}
+.cond{font-family:var(--face)}
+h1{font:600 15px/1.2 var(--face);margin:0;color:var(--ink2)}
+h2{font:600 22px/1.2 var(--face);margin:0 0 4px}
+h3{font:600 15px/1.3 var(--face);margin:0 0 8px}
 .lede{color:var(--mute);margin:0 0 16px;max-width:72ch}
 .top{display:flex;justify-content:space-between;align-items:baseline;gap:16px;flex-wrap:wrap}
 .stamp{color:var(--mute);font-size:13px}
-.verdict{font:600 clamp(26px,3.6vw,40px)/1.12 "Barlow Condensed",Barlow,sans-serif;
+.verdict{font:600 clamp(26px,3.6vw,40px)/1.12 var(--face);
 margin:10px 0 6px;max-width:30ch}
 .verdict.bad{color:var(--bad)}
 .sub{color:var(--ink2);margin:0 0 18px;max-width:80ch}
@@ -497,14 +502,14 @@ section{margin-top:44px}
 color:var(--ink2);white-space:nowrap}
 .trow{display:grid;grid-template-columns:48px 1fr 56px;gap:10px;align-items:center;margin-top:12px}
 .trow:first-of-type{margin-top:30px}
-.trow .lbl{font-weight:600}.trow .val{text-align:right;font:600 22px/1 "Barlow Condensed",sans-serif}
+.trow .lbl{font-weight:600}.trow .val{text-align:right;font:600 22px/1 var(--face)}
 .lbl.buy{color:var(--buy)}.lbl.sell{color:var(--sell)}
 .note{color:var(--mute);font-size:13px;margin-top:10px}
-.big{font:600 34px/1 "Barlow Condensed",sans-serif}
+.big{font:600 34px/1 var(--face)}
 .kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(150px,45%),1fr));gap:14px 18px;margin:0}
 .kv div{border-left:2px solid var(--rule);padding-left:10px}
-.kv dt{color:var(--mute);font-size:13px}.kv dd{margin:0;font:600 20px/1.2 "Barlow Condensed",sans-serif}
-.kv dd small{font:400 13px Barlow,sans-serif;color:var(--ink2);margin-left:4px}
+.kv dt{color:var(--mute);font-size:13px}.kv dd{margin:0;font:600 20px/1.2 var(--face)}
+.kv dd small{font:400 13px var(--face);color:var(--ink2);margin-left:4px}
 table{border-collapse:collapse;width:100%}
 th,td{text-align:left;padding:7px 12px 7px 0;border-bottom:1px solid var(--rule2);vertical-align:top;white-space:nowrap}
 td.r{white-space:normal}
@@ -522,11 +527,11 @@ td.r{min-width:240px;color:var(--ink2)}
 .reasons li{break-inside:avoid;padding:3px 0;border-bottom:1px solid var(--rule2)}
 .agenda li{display:grid;grid-template-columns:96px 1fr;gap:10px;padding:7px 0;border-bottom:1px solid var(--rule2)}
 .agenda{list-style:none;margin:0;padding:0}
-.agenda .when{font:600 17px/1.2 "Barlow Condensed",sans-serif}
+.agenda .when{font:600 17px/1.2 var(--face)}
 .agenda .soon .when{color:var(--sell)}
 .chart{position:relative}
 .chart svg{display:block;width:100%;height:auto;overflow:visible}
-.chart .ax{font:12px Barlow,sans-serif;fill:var(--mute)}
+.chart .ax{font:12px var(--face);fill:var(--mute)}
 .chart .grid{stroke:var(--rule2)}.chart .zero{stroke:var(--rule)}
 .tip{position:absolute;pointer-events:none;background:var(--ink);color:var(--paper);font-size:13px;
 padding:6px 9px;border-radius:4px;white-space:nowrap;opacity:0;transform:translate(-50%,-100%);
@@ -543,22 +548,23 @@ a.book{display:block;text-decoration:none;color:inherit}
 a.book:hover{border-color:var(--ink2)}
 .book h3 span{font-weight:400;color:var(--mute);font-size:13px;margin-left:6px}
 .tabs{display:flex;gap:4px;margin:34px 0 0;border-bottom:1px solid var(--rule);overflow-x:auto}
-.tabs button{font:600 17px/1 "Barlow Condensed",Barlow,sans-serif;color:var(--mute);background:none;
+.tabs button{font:600 17px/1 var(--face);color:var(--mute);background:none;
 border:0;border-bottom:3px solid transparent;padding:12px 16px 11px;cursor:pointer;white-space:nowrap}
 .tabs button:hover{color:var(--ink)}
 .tabs button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--ink)}
 .tabs button:focus-visible{outline:2px solid var(--buy);outline-offset:-2px}
 .tabpanel[hidden]{display:none}
 .tabpanel>section:first-child{margin-top:28px}
-.status{display:flex;gap:10px;align-items:center;font-size:16px;margin:14px 0 4px;color:var(--ink)}
+.status{font-size:16px;margin:14px 0 4px;color:var(--ink)}
+.status .dot{display:inline-block;margin-right:8px;vertical-align:1px}
 .status.bad{color:var(--bad)}.status a{color:inherit}
 .sr{position:absolute;left:-9999px}
 .cards{display:grid;gap:16px;margin-top:20px;grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr))}
 .card{display:block;text-decoration:none;color:inherit}
 a.card:hover{border-color:var(--ink2)}
-.card h3{font:600 20px/1.2 "Barlow Condensed",Barlow,sans-serif;margin:0}
+.card h3{font:600 20px/1.2 var(--face);margin:0}
 .card .who{color:var(--mute);font-size:13px;margin:2px 0 12px}
-.card .money{font:600 40px/1 "Barlow Condensed",Barlow,sans-serif;margin:0}
+.card .money{font:600 40px/1 var(--face);margin:0}
 .card .delta{margin:6px 0 0;font-size:14px}
 .card .line{margin:10px 0 0;color:var(--ink2);font-size:14px}
 .feed ul{list-style:none;margin:0;padding:0}
@@ -568,11 +574,58 @@ a.card:hover{border-color:var(--ink2)}
 .picks li{padding:10px 0;border-bottom:1px solid var(--rule2);font-size:16px}
 .picks .why{display:block;color:var(--ink2);font-size:14px;margin-top:2px}
 details.tech,details.glossary{margin-top:40px;border-top:1px solid var(--rule);padding-top:14px}
-details.tech>summary,details.glossary>summary{font:600 18px/1.2 "Barlow Condensed",Barlow,sans-serif;color:var(--ink2)}
+details.tech>summary,details.glossary>summary{font:600 18px/1.2 var(--face);color:var(--ink2)}
 details.tech[open]>summary{margin-bottom:16px}
 .glossary dl{display:grid;grid-template-columns:150px 1fr;gap:6px 14px;font-size:14px}
 .glossary dt{font-weight:600}.glossary dd{margin:0;color:var(--ink2)}
 @media (max-width:560px){.feed li{grid-template-columns:1fr;gap:0}.glossary dl{grid-template-columns:1fr}}
+.bar{display:flex;align-items:center;gap:16px;padding:12px 0 16px;border-bottom:1px solid var(--rule)}
+.brand{font:800 20px/1 var(--face);letter-spacing:-.02em}
+.brand span{font:600 11px/1 var(--face);color:var(--warn);border:1px solid var(--warn);border-radius:4px;
+padding:3px 6px;margin-left:8px;vertical-align:3px;text-transform:uppercase;letter-spacing:.06em}
+.health{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;text-decoration:none;
+padding:6px 12px;border-radius:999px;background:rgba(46,189,133,.12);color:var(--good);white-space:nowrap}
+.health.bad{background:rgba(246,70,93,.12);color:var(--bad)}
+.bar .stamp{margin-left:auto;color:var(--mute);font-size:13px}
+.alert{margin:12px 0 0;padding:10px 14px;border-radius:8px;background:rgba(246,70,93,.10);color:var(--bad);font-size:14px}
+.cards{display:grid;gap:14px;margin-top:22px;grid-template-columns:repeat(auto-fit,minmax(min(210px,100%),1fr))}
+.acard{display:block;background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:16px 16px 12px;
+text-decoration:none;color:inherit;transition:border-color .12s}
+.acard:hover{border-color:#3A4757}
+.acard:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.aname{margin:0;font-size:13px;font-weight:600;color:var(--ink2)}
+.abal{margin:8px 0 2px;font:800 28px/1 var(--face);letter-spacing:-.02em}
+.achg{margin:0;font-size:13px;color:var(--mute)}
+.achg span{font-weight:700;margin-right:6px}
+.achg.up span{color:var(--good)}.achg.down span{color:var(--bad)}
+.spark{display:block;width:100%;height:44px;margin:12px 0 8px}
+.aline{margin:0;font-size:12px;color:var(--mute)}
+.acard.idle{opacity:.6}
+.duo{display:grid;gap:14px;margin-top:14px;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);align-items:start}
+.pane{background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:16px 18px}
+.pane h2{font:700 15px/1.2 var(--face);margin:0 0 10px;color:var(--ink)}
+table.grid th{font-size:12px;font-weight:600;color:var(--mute);border-bottom:1px solid var(--rule);padding:8px 10px 8px 0}
+table.grid td{padding:10px 10px 10px 0;border-bottom:1px solid var(--rule2)}
+table.grid tr:last-child td{border-bottom:0}
+.feed{list-style:none;margin:0;padding:0}
+.feed li{display:grid;grid-template-columns:78px 1fr auto;gap:10px;align-items:baseline;padding:9px 0;
+border-bottom:1px solid var(--rule2);font-size:14px}
+.feed li:last-child{border-bottom:0}
+.feed time{color:var(--mute);font-size:12px}
+.feed .what small{display:block;color:var(--mute);font-size:12px}
+.feed .amt{font-weight:700;text-align:right}
+.dir{display:inline-block;font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;letter-spacing:.02em}
+.dir.LONG,.dir.BUY{background:rgba(46,189,133,.14);color:var(--good)}
+.dir.SHORT,.dir.SELL{background:rgba(246,70,93,.14);color:var(--bad)}
+.tabs{margin-top:34px}
+section h2{font:700 18px/1.2 var(--face)}
+.panel{border-radius:12px}
+.duo>*{min-width:0}
+@media (max-width:860px){.duo{grid-template-columns:1fr}}
+@media (max-width:560px){.cards{grid-template-columns:1fr 1fr;gap:10px}.acard{padding:12px}
+.abal{font-size:20px}.acard{min-width:0}.aname{font-size:12px}.spark{height:32px;margin:8px 0 6px}.bar{flex-wrap:wrap;gap:10px}
+.bar .stamp{margin-left:0;width:100%}}
+
 @media (max-width:560px){main{padding:18px 16px 48px}.rails{grid-template-columns:1fr}
 .cols,.cols3{grid-template-columns:1fr}.bars{grid-template-columns:110px 1fr 34px 34px}
 td.r{min-width:180px}}
@@ -635,6 +688,8 @@ document.querySelectorAll('.chart[data-s]').forEach(function(c){
 def _n(v, nd=2, sign=False, suffix=""):
     if v is None:
         return "–"
+    if round(v, nd) == 0:
+        v = 0.0                                  # never print a negative zero
     s = f"{v:+,.{nd}f}" if sign else f"{v:,.{nd}f}"
     return s.replace(",", "\u2009").replace(".", ",").replace("\u2009", ".") + suffix
 
@@ -642,6 +697,8 @@ def _n(v, nd=2, sign=False, suffix=""):
 def _pnl(v, nd=2, suffix=""):
     if v is None:
         return '<span class="mute">–</span>'
+    if round(v, nd) == 0:
+        v = 0.0
     cls = "pos" if v > 0 else "neg" if v < 0 else "mute"
     return f'<span class="{cls}">{_n(v, nd, True, suffix)}</span>'
 
@@ -787,7 +844,7 @@ def _rail(mode, l):
         say = f"Nilai {lead[0]} masih kurang {_n(-gap)} poin dari garis."
     if mode == "spot":
         say += " Spot hanya bisa membeli (LONG)."
-    return (f'<div class="rail"><h3>{mode.capitalize()} <span>{_t(l["ts"])} UTC · harga '
+    return (f'<div class="rail"><h3>{mode.capitalize()} <span>{_t(l["ts"])} UTC, harga '
             f'{_n(l["price"])}</span></h3>{"".join(rows)}<p class="note">{say}</p></div>')
 
 
@@ -827,6 +884,8 @@ def _out(o):
 def _money(v, sign=False):
     if v is None:
         return "–"
+    if round(v, 2) == 0:
+        v = 0.0
     s = _n(abs(v))
     return (("+" if v >= 0 else "−") if sign else ("−" if v < 0 else "")) + "$" + s
 
@@ -898,7 +957,44 @@ def _health_rows(f, now):
     return rows
 
 
-def _scanner_tab(s):
+def _arms(s, hy):
+    """H-SC2: the pure arm beside the hybrid arm (same picks hour by hour, + engine score)."""
+    rows = []
+    for name, arm in (("Claude murni", s), ("Claude + skor engine", hy)):
+        for key, label in (("book", "futures"), ("spot_book", "spot")):
+            b = (arm or {}).get(key)
+            if not b:
+                rows.append([e(name), label, "–", "–", "–", "–"])
+                continue
+            st = b["stats"]
+            rows.append([f"<b>{e(name)}</b>", label, _money(b["equity"]),
+                         _pnl((b["equity"] / b["start"] - 1) * 100, 2, "%"), str(st["n"]),
+                         f'{st["win"]}%' if st["win"] is not None else "–"])
+    P = ['<section><h2>Claude murni vs Claude + skor engine</h2><p class="lede">Dua Claude melihat '
+         'angka yang sama pada jam yang sama; yang kedua juga diberi skor BUY/SELL dari engine '
+         'bot BTC untuk tiap koin. Apakah skor engine membantu? Hasil resmi (uji H-SC2) setelah '
+         '60 hari yang sama-sama punya pilihan.</p>'
+         + _table(["lengan", "akun", "nilai", "%", "selesai", "menang"], rows, num=(2, 3, 4, 5))]
+    picks = [c for c in ((hy or {}).get("coins") or []) if c["pick"] and c["pick"][0] != "NONE"]
+    if hy:
+        bar = (hy.get("last") or [None, None])[1]
+        P.append(f'<h3 style="margin-top:18px">Pilihan Claude + engine jam ini <span class="mute" '
+                 f'style="font-weight:400">bar {_t(bar)} UTC</span></h3>')
+        if picks:
+            eng = lambda c: (c["f"] or {}).get("engine_signal") or "–"
+            P.append('<ul class="picks">' + "".join(
+                f'<li><b>{e(c["coin"])}</b> {_side(c["pick"][0])} <span class="mute">yakin {c["pick"][1]}%, '
+                f'engine: {e(eng(c))}</span><span class="why">{e(c["pick"][2] or "")}</span></li>'
+                for c in picks) + "</ul>")
+        else:
+            P.append('<p class="empty">Jam ini tidak memilih koin mana pun.</p>')
+    else:
+        P.append('<p class="empty">Lengan + engine belum berjalan di host ini.</p>')
+    P.append("</section>")
+    return "".join(P)
+
+
+def _scanner_tab(s, hy=None):
     if not s:
         return '<p class="empty">Scanner belum berjalan di host ini.</p>'
     bk, P = s.get("book") or {}, []
@@ -955,6 +1051,7 @@ def _scanner_tab(s):
                          y_fmt="${:,.0f}", label="nilai akun spot") + "</div><div><h3>Posisi spot terakhir yang selesai</h3>"
                  + (_table(["koin", "selesai", "cara selesai", "hasil", "%"], rows, num=(3, 4)) if rows
                     else '<p class="empty">Belum ada posisi LONG yang selesai.</p>') + "</div></div></section>")
+    P.append(_arms(s, hy))
     coins = s.get("coins") or []
     det = []
     if coins:
@@ -1014,7 +1111,7 @@ def _btc_tab(f, now):
             soon = 0 <= (ev["t"] - now).total_seconds() <= MACRO_CLOSE_H * 3600
             items.append(f'<li class="{"soon" if soon else ""}"><span class="when">{_until(now, ev["t"])}</span>'
                          f'<span>{e(ev["event"] or "")}<br><span class="mute">{ev["t"]:%d %b %H:%M} UTC'
-                         f'{" · bot sedang menahan diri" if soon else ""}</span></span></li>')
+                         f'{". Bot sedang menahan diri" if soon else ""}</span></span></li>')
         P.append('<section><h2>Berita ekonomi penting berikutnya</h2><p class="lede">Dua jam sebelum berita '
                  'ini bot menutup posisi dan tidak membuka yang baru.</p>'
                  f'<ul class="agenda">{"".join(items)}</ul></section>')
@@ -1117,6 +1214,88 @@ def _system_tab(f, now):
     return "".join(P)
 
 
+def _spark(curve, equity, start, w=220, h=44):
+    """A sparkline of the account's balance: closes so far, ending at today's equity."""
+    pts = [y for _, y in curve] + [equity]
+    if len(pts) < 2:
+        pts = [start, equity]
+    lo, hi = min(pts + [start]), max(pts + [start])
+    span = (hi - lo) or 1.0
+    X = lambda i: i / (len(pts) - 1) * w
+    Y = lambda v: h - 3 - (v - lo) / span * (h - 6)
+    line = " ".join(f"{X(i):.1f},{Y(v):.1f}" for i, v in enumerate(pts))
+    col = "var(--good)" if equity > start else "var(--bad)" if equity < start else "var(--mute)"
+    area = f"0,{h} " + line + f" {w},{h}"
+    return (f'<svg class="spark" viewBox="0 0 {w} {h}" preserveAspectRatio="none" aria-hidden="true">'
+            f'<line x1="0" x2="{w}" y1="{Y(start):.1f}" y2="{Y(start):.1f}" stroke="var(--rule)" stroke-dasharray="3 3"/>'
+            f'<polygon points="{area}" fill="{col}" opacity=".10"/>'
+            f'<polyline points="{line}" fill="none" stroke="{col}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>')
+
+
+def _cards(rows):
+    out = ['<section class="cards" aria-label="Akun demo">']
+    for name, who, acct, line, tab in rows:
+        if not acct:
+            out.append(f'<div class="acard idle"><p class="aname">{e(name)}</p><p class="abal">–</p>'
+                       f'<p class="aline">belum berjalan</p></div>')
+            continue
+        chg = acct["equity"] - acct["start"]
+        pct = chg / acct["start"] * 100
+        cls = "up" if chg > 0 else "down" if chg < 0 else "flat"
+        arrow = "▲" if chg > 0 else "▼" if chg < 0 else ""
+        out.append(f'<a class="acard" href="#{tab}" data-tab="{tab}" title="{e(who)}">'
+                   f'<p class="aname">{e(name)}</p>'
+                   f'<p class="abal">{_money(acct["equity"])}</p>'
+                   f'<p class="achg {cls}"><span>{(arrow + " ") if arrow else ""}{_n(abs(pct), 2)}%</span> {_money(chg, True)}</p>'
+                   f'{_spark(acct.get("curve") or [], acct["equity"], acct["start"])}'
+                   f'<p class="aline">{e(line)}</p></a>')
+    out.append("</section>")
+    return "".join(out)
+
+
+def _open_all(d, s, hy):
+    rows = []
+    for p in d.get("open") or []:
+        rows.append(("Bot BTC", "BTC", p["type"], None, p.get("move_pct"), None))
+    for key, name, src in (("book", "Claude", s), ("spot_book", "Claude spot", s), ("book", "Claude + engine", hy)):
+        for p in ((src or {}).get(key) or {}).get("open") or []:
+            rows.append((name, p["coin"], p["side"], p.get("size_usd"), p.get("move_pct"), p.get("upnl")))
+    head = '<div class="pane"><h2>Posisi berjalan</h2>'
+    if not rows:
+        return head + '<p class="empty">Tidak ada posisi terbuka.</p></div>'
+    body = "".join(f'<tr><td><b>{e(c)}</b></td><td>{_side(sd)}</td><td class="mute">{e(n)}</td>'
+                   f'<td class="n">{_money(sz) if sz else "–"}</td><td class="n">{_pnl(mv, 2, "%")}</td>'
+                   f'<td class="n">{_pnl(u, 2) if u is not None else "–"}</td></tr>' for n, c, sd, sz, mv, u in rows)
+    return (head + '<div class="scroll"><table class="grid"><thead><tr><th>koin</th><th>arah</th><th>akun</th><th class="n">modal</th>'
+            f'<th class="n">P&amp;L %</th><th class="n">P&amp;L $</th></tr></thead><tbody>{body}</tbody></table></div></div>')
+
+
+def _activity(d, s, now, limit=10):
+    books = [("Bot BTC", d.get("account")), ("Claude", (s or {}).get("book")),
+             ("Claude spot", (s or {}).get("spot_book"))]
+    rows = []
+    for name, acct in books:
+        for en in (acct or {}).get("entries") or []:
+            if not en["t"]:
+                continue
+            p = en["p"]
+            side, coin = p.get("type") or p.get("side"), p.get("coin") or "BTC"
+            if en["open"]:
+                rows.append((en["t"], name, f'Buka {_side(side)} <b>{e(coin)}</b>', ""))
+            else:
+                usd = en["usd"]
+                amt = (f'<span class="{"pos" if usd > 0 else "neg" if usd < 0 else "mute"}">{_money(usd, True)}</span>'
+                       if usd is not None else "")
+                rows.append((en["t"], name, f'Tutup {_side(side)} <b>{e(coin)}</b> <span class="mute">{_out(p.get("outcome"))}</span>', amt))
+    rows.sort(key=lambda r: r[0], reverse=True)
+    head = '<div class="pane"><h2>Aktivitas</h2>'
+    if not rows:
+        return head + '<p class="empty">Belum ada aktivitas.</p></div>'
+    return head + '<ul class="feed">' + "".join(
+        f'<li><time title="{t:%d %b %H:%M} UTC">{_ago(now, t)}</time><span class="what">{txt}'
+        f'<small>{e(n)}</small></span><span class="amt">{amt}</span></li>' for t, n, txt, amt in rows[:limit]) + "</ul></div>"
+
+
 def render(f):
     now = f["now"]
     d, s = f.get("db") or {}, f.get("scanner")
@@ -1126,45 +1305,36 @@ def render(f):
          f"<meta http-equiv=refresh content={REFRESH_S}><title>SpotSignal VPS</title>"
          f"<link rel=preconnect href=https://fonts.gstatic.com crossorigin>"
          f"<link rel=stylesheet href='{FONTS}'><style>{CSS}</style></head><body><main>"]
-    P.append(f'<div class="top"><h1>SpotSignal · uang demo, bukan uang sungguhan</h1>'
-             f'<span class="stamp">Diperbarui {now:%d %b %H:%M} UTC · otomatis tiap {REFRESH_S // 60} menit</span></div>')
+    ok = not probs
+    P.append(f'<header class="bar"><div class="brand">SpotSignal<span>demo</span></div>'
+             f'<a class="health {"ok" if ok else "bad"}" href="#sistem" data-tab="sistem">'
+             f'<span class="dot {"" if ok else "bad"}"></span>{"Sistem sehat" if ok else f"{len(probs)} masalah"}</a>'
+             f'<time class="stamp">{now:%d %b %H:%M} UTC</time></header>')
     if probs:
-        P.append(f'<p class="status bad"><span class="dot bad" aria-hidden="true"></span>{len(probs)} hal perlu dicek: '
-                 f'{e("; ".join(probs))}. <a href="#sistem" data-tab="sistem">Lihat Sistem</a></p>')
-    else:
-        P.append('<p class="status"><span class="dot" aria-hidden="true"></span>Sistem sehat: bot berjalan, data '
-                 'lengkap, siklus terakhir tepat waktu.</p>')
+        P.append(f'<p class="alert">{e("; ".join(probs))}.</p>')
     for err in f["errors"]:
         P.append(f'<div class="err">Bagian tidak terbaca: {e(err)}</div>')
     ac, ca, bk = d.get("account"), d.get("claude_account"), (s or {}).get("book")
+    sb, hy = (s or {}).get("spot_book"), f.get("hybrid") or {}
     tot = d.get("totals") or {}
     n_btc = sum((t or {}).get("n", 0) for t in tot.values())
-    P.append('<h2 class="sr">Uang demo</h2><div class="cards">')
-    P.append(_card("Bot BTC", "robot trading BTC, keputusannya sendiri", ac,
-                   f'{len(d.get("open") or [])} posisi berjalan · {n_btc} selesai', "btc"))
-    if ca:
-        P.append(_card("Bot BTC + saran Claude", "sama, tapi posisi yang tidak disetujui Claude dilewati", ca,
-                       f'{ca["kept"]} diambil · {ca["vetoed"]} dilewati', "btc"))
-    P.append(_card("Claude pilih koin", "Claude memilih dari 9 koin tiap jam, futures (LONG dan SHORT)", bk,
-                   (f'{len(bk["open"])} posisi berjalan · {bk["stats"]["n"]} selesai' if bk else ""), "scanner"))
-    sb = (s or {}).get("spot_book")
-    if sb:
-        P.append(_card("Claude pilih koin, spot", "pilihan yang sama, hanya LONG, biaya spot", sb,
-                       f'{len(sb["open"])} posisi berjalan · {sb["stats"]["n"]} selesai', "scanner"))
-    P.append("</div>")
-    ev = _events(d, s, now)
-    recent = [x for x in ev if (now - x[0]).total_seconds() <= 86400]
-    head = "Yang terjadi 24 jam terakhir" if recent else "Kejadian terakhir"
-    show = recent[:10] if recent else ev[:5]
-    P.append(f'<section class="feed"><h2>{head}</h2>' + (
-        '<ul>' + "".join(f'<li><span class="when">{_ago(now, t)}</span><span class="book">{e(b)}</span>'
-                         f'<span>{txt}</span></li>' for t, b, txt in show) + "</ul>"
-        if show else '<p class="empty">Belum ada kejadian.</p>') + "</section>")
+    rows = [("Bot BTC", "robot BTC dengan aturannya sendiri", ac, f'{len(d.get("open") or [])} terbuka · {n_btc} selesai', "btc"),
+            ("BTC + saran Claude", "posisi yang ditolak Claude dilewati", ca,
+             f'{ca["kept"]} diambil · {ca["vetoed"]} dilewati' if ca else "", "btc"),
+            ("Claude futures", "Claude memilih dari 9 koin, LONG dan SHORT", bk,
+             f'{len(bk["open"])} terbuka · {bk["stats"]["n"]} selesai' if bk else "", "scanner"),
+            ("Claude spot", "pilihan yang sama, hanya LONG", sb,
+             f'{len(sb["open"])} terbuka · {sb["stats"]["n"]} selesai' if sb else "", "scanner")]
+    if hy.get("book"):
+        hb = hy["book"]
+        rows.append(("Claude + engine", "uji pembanding", hb, f'{len(hb["open"])} terbuka · {hb["stats"]["n"]} selesai', "scanner"))
+    P.append(_cards(rows))
+    P.append('<section class="duo">' + _open_all(d, s, hy) + _activity(d, s, now) + "</section>")
     P.append('<nav class="tabs" role="tablist" aria-label="Bagian dashboard">'
              '<button role="tab" id="t-scanner" aria-controls="tab-scanner" data-tab="scanner">Claude pilih koin</button>'
              '<button role="tab" id="t-btc" aria-controls="tab-btc" data-tab="btc">Bot BTC</button>'
              '<button role="tab" id="t-sistem" aria-controls="tab-sistem" data-tab="sistem">Sistem</button></nav>')
-    P.append('<div class="tabpanel" role="tabpanel" id="tab-scanner" aria-labelledby="t-scanner">' + _scanner_tab(s) + "</div>")
+    P.append('<div class="tabpanel" role="tabpanel" id="tab-scanner" aria-labelledby="t-scanner">' + _scanner_tab(s, f.get("hybrid")) + "</div>")
     P.append('<div class="tabpanel" role="tabpanel" id="tab-btc" aria-labelledby="t-btc">' + _btc_tab(f, now) + "</div>")
     P.append('<div class="tabpanel" role="tabpanel" id="tab-sistem" aria-labelledby="t-sistem">' + _system_tab(f, now) + "</div>")
     P.append('<details class="glossary"><summary>Arti istilah</summary><dl>'

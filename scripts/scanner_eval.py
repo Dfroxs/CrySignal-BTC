@@ -30,6 +30,7 @@ HORIZON_H = 24                         # prereg: the criterion
 OTHER_H = (4, 72)                      # prereg: reported only
 COST_PP = 0.20                         # prereg: futures round trip, reported only
 MIN_DAYS, MIN_PICKS = 90, 300
+MIN_PAIRED_DAYS = 60                   # H-SC2
 MAX_ERROR_SHARE = 0.20
 BLOCK, N_BOOT, SEED = 7, 5000, 2026
 
@@ -124,6 +125,29 @@ def verdict_of(days, n_picks, error_share):
     return ("PASS" if ci[0] > 0 else "INCONCLUSIVE"), mean, ci
 
 
+def paired_verdict(days_pure, days_hybrid, err_pure, err_hybrid):
+    """H-SC2: diff = hybrid - pure on days both arms picked. (verdict, mean, ci, n_days)."""
+    both = days_pure.index.intersection(days_hybrid.index)
+    diff = (days_hybrid[both] - days_pure[both]).sort_index().values
+    mean = float(np.mean(diff)) if len(diff) else float("nan")
+    ci = block_ci(diff)
+    if max(err_pure, err_hybrid) > MAX_ERROR_SHARE or len(diff) < MIN_PAIRED_DAYS:
+        return "INCONCLUSIVE", mean, ci, len(diff)
+    if mean <= 0:
+        return "FAIL", mean, ci, len(diff)
+    return ("PASS" if ci[0] > 0 else "INCONCLUSIVE"), mean, ci, len(diff)
+
+
+def arm_days(cyc, picks, closes, start=None):
+    ok = cyc[cyc.error.isna()]
+    if start is not None:
+        ok = ok[ok.bar_close >= start]
+    pv = pick_values(ok, picks[picks.cycle_id.isin(ok.id)], closes, HORIZON_H)
+    days = day_values(pv) if len(pv) else pd.Series(dtype=float)
+    span = cyc if start is None else cyc[cyc.bar_close >= start]
+    return days, float(span.error.notna().mean()) if len(span) else 0.0
+
+
 def score(cyc, picks, closes):
     out = {}
     for model, cm in cyc.groupby(cyc.model.fillna("(error)"), sort=False):
@@ -165,6 +189,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default="data/scanner.db")
     ap.add_argument("--out")
+    ap.add_argument("--hybrid-db", help="H-SC2: also score the hybrid arm against the pure one")
     args = ap.parse_args(argv)
     cyc, picks = load(args.db)
     if cyc.empty:
@@ -185,6 +210,21 @@ def main(argv=None):
                   "btc_vs_rest", "excess_4h", "excess_72h", "cost_usd"):
             if k in r:
                 print(f"  {k}: {r[k]}")
+    if args.hybrid_db and Path(args.hybrid_db).exists():
+        hc, hp = load(args.hybrid_db)
+        bad = leakage_ok(hc)
+        if bad:
+            print(f"H-SC2 LEAKAGE CHECK FAILED for hybrid cycles {bad[:10]}: discarded")
+        elif not hc.empty:
+            start = hc.bar_close.min()          # pairs only from the hybrid arm's first cycle
+            closes = closes_by_coin(min(cyc.bar_close.min(), start), max(cyc.bar_close.max(), hc.bar_close.max()))
+            dp, ep = arm_days(cyc, picks, closes, start)
+            dh, eh = arm_days(hc, hp, closes)
+            v, mean, ci, n = paired_verdict(dp, dh, ep, eh)
+            res["H-SC2"] = {"verdict": v, "mean_diff_pp": mean, "ci90": ci, "paired_days": n,
+                            "errors": {"pure": ep, "hybrid": eh}}
+            print(f"\nH-SC2 hybrid - pure: {v}  mean {mean:+.3f}pp CI90 [{ci[0]:+.3f}, {ci[1]:+.3f}]  "
+                  f"paired days {n}/{MIN_PAIRED_DAYS}")
     if args.out:
         Path(args.out).write_text(json.dumps(res, indent=1, default=str))
     return 0
