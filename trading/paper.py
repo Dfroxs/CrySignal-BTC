@@ -297,13 +297,12 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
             # 3 — full exit: TP2 hit (after partial) or trailing stop hit
             # P&L is blended: each half contributes 50% of total return
             if partial and tp2 and current_price >= tp2:
-                _ec = EXECUTION_CONFIG
-                _fee = _ec["futures_fee_pct"] if pos.get("mode") == "futures" else _ec["spot_fee_pct"]
-                _costs = _fee + _ec.get("slippage_pct", 0.05)  # exit only — entry counted at TP1
-                partial_pnl = pos.get("partial_pnl") or 0
-                remaining_pnl = (tp2 - entry) / entry * 100 - _costs
-                combined_pnl = partial_pnl * 0.5 + remaining_pnl * 0.5
-                sh.close_paper_position(pos_id, "WIN", combined_pnl)
+                # The remainder pays its own round trip, 2 sides, exactly as _calc_pnl and
+                # backtest._net_pnl charge it. "Exit only — entry counted at TP1" was the
+                # 1.5-side blend fixed in _calc_pnl but missed here: every live TP2 win
+                # read ~0.05pp (futures) / 0.075pp (spot) too good.
+                combined_pnl = _calc_pnl(dict(pos, partial_closed=1), tp2)
+                sh.close_paper_position(pos_id, "WIN", combined_pnl, exit_price=tp2)
                 closed.append({
                     "type": pos["type"], "entry": entry,
                     "exit": tp2, "pnl": combined_pnl,
@@ -379,13 +378,12 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
 
             # 3 — full exit: TP2 hit or trailing stop hit
             if partial and tp2 and current_price <= tp2:
-                _ec = EXECUTION_CONFIG
-                _fee = _ec["futures_fee_pct"] if pos.get("mode") == "futures" else _ec["spot_fee_pct"]
-                _costs = _fee + _ec.get("slippage_pct", 0.05)  # exit only — entry counted at TP1
-                partial_pnl = pos.get("partial_pnl") or 0
-                remaining_pnl = (entry - tp2) / entry * 100 - _costs
-                combined_pnl = partial_pnl * 0.5 + remaining_pnl * 0.5
-                sh.close_paper_position(pos_id, "WIN", combined_pnl)
+                # The remainder pays its own round trip, 2 sides, exactly as _calc_pnl and
+                # backtest._net_pnl charge it. "Exit only — entry counted at TP1" was the
+                # 1.5-side blend fixed in _calc_pnl but missed here: every live TP2 win
+                # read ~0.05pp (futures) / 0.075pp (spot) too good.
+                combined_pnl = _calc_pnl(dict(pos, partial_closed=1), tp2)
+                sh.close_paper_position(pos_id, "WIN", combined_pnl, exit_price=tp2)
                 closed.append({
                     "type": pos["type"], "entry": entry,
                     "exit": tp2, "pnl": combined_pnl,

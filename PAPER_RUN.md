@@ -400,6 +400,20 @@ its date.
    so `cycle_log` can record a HOLD with confidence NORMAL. This is cosmetic: no trade opens.
    Fix: clear them as every other gate does.
 
+**Review of `trading/paper.py` + `run_bot.py` gates (2026-11-18).** One booking bug was fixed
+at once, since it changes no signal: the TP2 remainder paid one cost side, so every live TP2
+win was about 0.05pp (futures) / 0.075pp (spot) too good, and the TP2 close had no exit price.
+These fidelity notes go to part B, each a design decision with its own prereg:
+- **Exits are checked on the hourly close only.** The backtest triggers stops and targets
+  intrabar from the bar's high and low, as a real exchange stop would, so live and replay
+  differ on any bar that wicks through a level and closes back. Candidate: check the closed
+  bar's high/low live too.
+- **Spot positions are checked against the perp price** (`run_bot.py` `current_price`),
+  not spot. The gap is the basis, usually under 0.1%.
+- **Re-entry gate observation, not a bug:** SELL #19 (WIN at $68,900, closed 2026-11-15)
+  blocks every lower futures SELL until its 168 h cap, 2026-11-22. 9 blocks since 11-16. This
+  is the tested design (`2026-10-09-reentry-age-results.md`).
+
 Each of 4–6 gets a failing test first, then the fix, and each changes signals. Trivial items
 from the same review, not worth their own entries: OBV slope spans 4 bars over a 5-bar volume
 denominator, and ADX is computed twice per cycle.

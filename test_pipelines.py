@@ -2117,6 +2117,37 @@ def test_the_backtest_charges_a_partial_exit_the_same_as_the_live_path():
         assert abs(bt - (-side * 2)) < 1e-9, f"{mode}: {bt:.4f}"
 
 
+def test_a_live_tp2_exit_pays_a_full_round_trip_and_records_its_price():
+    """The TP2 branch of trading/paper.py booked the remainder at ONE cost side ("entry
+    counted at TP1"), the very 1.5-side blend _calc_pnl and the backtest were fixed away
+    from, so every live TP2 win read ~0.05pp (futures) / 0.075pp (spot) too good. It also
+    closed without an exit price. Driven through check_and_close_positions: TP1 at 101,
+    TP2 at 102, entry 100."""
+    import signals.sentiment as sent
+    from backtest import _net_pnl
+    h, saved, path = _temp_history_db()
+    orig = sent.check_upcoming_macro_events
+    sent.check_upcoming_macro_events = lambda: (False, None)
+    try:
+        from trading.paper import check_and_close_positions
+        for i, (mode, stype, tp1, tp2) in enumerate((("futures", "BUY", 101.0, 102.0), ("spot", "BUY", 101.0, 102.0),
+                                                     ("futures", "SELL", 99.0, 98.0))):
+            sl = 95.0 if stype == "BUY" else 105.0
+            pid = h.open_paper_position({"type": stype, "entry_price": 100.0, "stop_loss": sl,
+                                         "take_profit": tp1, "tp2": tp2, "atr": 0, "strength": 6.0}, mode=mode)
+            check_and_close_positions(tp1, mode=mode, current_atr=0)
+            check_and_close_positions(tp2, mode=mode, current_atr=0)
+            row = h._conn().execute("SELECT outcome, pnl_pct, exit_price, partial_pnl FROM paper_positions WHERE id=?",
+                                    (pid,)).fetchone()
+            side = _cost_per_side(mode)
+            want = _net_pnl(stype, 100.0, tp2, True, 1.0 - 2 * side, mode)
+            assert row["outcome"] == "WIN" and abs(row["partial_pnl"] - (1.0 - 2 * side)) < 1e-6, dict(row)
+            assert abs(row["pnl_pct"] - want) < 0.006, f"{mode} {stype}: booked {row['pnl_pct']} vs backtest {want:.4f}"
+            assert row["exit_price"] == tp2, f"{mode} {stype}: TP2 exit price not recorded ({row['exit_price']})"
+    finally:
+        sent.check_upcoming_macro_events = orig
+        _restore_history_db(h, saved, path)
+
 def test_a_trade_without_a_partial_still_pays_exactly_two_sides():
     """The no-partial path was always right; this holds it there while the other is fixed."""
     from backtest import _net_pnl
@@ -6868,6 +6899,7 @@ if __name__ == "__main__":
     run("run 4: macro HOLD clears levels",        test_macro_forced_hold_clears_levels_and_confidence)
     run("H-VR/H-BS: window, two-part + 2-sided",  test_run4b_window_and_verdicts_follow_the_prereg)
     run("scoring day: once, when due, never early", test_scoring_day_runs_each_test_once_when_due_and_never_early)
+    run("live TP2 pays 2 sides, records its price", test_a_live_tp2_exit_pays_a_full_round_trip_and_records_its_price)
     run("scorers refuse before day 30",           test_scoring_scripts_refuse_before_day_30)
     run("futures hypotheses from futures restart", test_score_run3_scores_futures_hypotheses_from_the_futures_restart)
 
