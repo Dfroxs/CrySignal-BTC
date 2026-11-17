@@ -4,6 +4,32 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-18 — feat(ops): scoring day runs each pre-registered test once, when due
+
+`agents/scoring_day.py`, cron daily at 04:20 UTC. The scoring dates are months away and a chat
+session does not last that long, so each test is scored by machine, on time and once. For
+each test it checks a count or a date, both taken from the instruments themselves:
+- H-SC2: 60 paired days.
+- H-SC: 90 days and 300 picks.
+- H-VR/H-BS: `run4b_eval.END`.
+- H-DR: `hdr_eval.RETURN_BY`.
+- H-VG: `veto_gate_eval.SCORE_BY`.
+- H-FLP-C: 20 error-free flip events since run 4 started.
+
+When a test is due, it runs that test's committed instrument, keeps the full output in
+`data/scoring/`, and sends the tail to Telegram. The test is recorded in
+`data/scoring_state.json` only after the instrument exited 0 and the message was sent. A
+failure is reported and retried the next day. The runner computes no statistic and reads no
+return; `--dry-run` lists what is due.
+
+`scanner_eval.py --only hsc|hsc2`: H-SC2 falls due about a month before H-SC, and scoring it
+must not print H-SC's figure early.
+
+Dry run on the VPS: everything is "not yet", with live counts (1 paired day, 3 v2 picks,
+0 flips). Tests 331/331.
+
+---
+
 ## 2026-11-18 — prereg: run-4 part B on run 4's own cycles (H-VR, H-BS)
 
 `docs/superpowers/specs/2026-11-18-run4b-prereg.md` and `scripts/run4b_eval.py`. Window: run 4's

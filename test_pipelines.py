@@ -4131,6 +4131,53 @@ def test_run4b_window_and_verdicts_follow_the_prereg():
     assert r.verdict_bs(-0.15, -0.26, -0.04, 1200) == "BEARISH"
     assert r.verdict_bs(0.05, -0.06, 0.16, 1200) == "INCONCLUSIVE"
 
+def test_scoring_day_runs_each_test_once_when_due_and_never_early():
+    import json, os, tempfile
+    from datetime import UTC, datetime
+    from agents import scoring_day as sd
+    root = tempfile.mkdtemp()
+    state = os.path.join(root, "state.json")
+    facts = {"pure_days": 90, "pure_picks": 310, "paired_days": 59, "flip_events": 3,
+             "run_start": "2026-11-17T18:44:50+00:00"}
+    ran, sent = [], []
+    run = lambda cmd, cwd: (ran.append(cmd) or 0, "H-SC verdict <PASS> & more")
+    send = lambda t: sent.append(t) or True
+    jan = datetime(2027, 1, 10, tzinfo=UTC)
+    assert sd.run_due(jan, facts, state, root, run=run, send=send) == ["H-SC"], \
+        "only H-SC is due: 59 paired days, dates not reached, 3 flips"
+    assert all("--only" in c and "hsc" in c for c in ran) and "&lt;PASS&gt; &amp;" in sent[0]
+    assert sd.run_due(jan, facts, state, root, run=run, send=send) == [], "scored once, never again"
+    assert os.listdir(os.path.join(root, "data", "scoring")), "full output kept"
+    late = datetime(2027, 2, 16, tzinfo=UTC)
+    fail = lambda cmd, cwd: (1, "Traceback: boom")
+    assert sd.run_due(late, dict(facts, paired_days=60), state, root, run=fail, send=send) == []
+    assert "gagal" in sent[-1] and set(json.load(open(state))) == {"H-SC"}, "a failed run is not marked scored"
+    done = sd.run_due(late, dict(facts, paired_days=60, flip_events=20), state, root, run=run, send=send)
+    assert set(done) == {"H-SC2", "H-VR/H-BS", "H-DR", "H-VG", "H-FLP-C"}, done
+    hdr = [c for c in ran if "scripts/hdr_eval.py" in c]
+    assert hdr[0][-1] == "--fetch-klines" and "--out" in hdr[1], "klines first, then score"
+    nosend = lambda t: False
+    st2 = os.path.join(root, "s2.json")
+    assert sd.run_due(jan, facts, st2, root, run=run, send=nosend) == [] and not os.path.exists(st2), \
+        "unsent result is not recorded, so it is retried"
+    h, saved, path = _temp_history_db()
+    try:
+        con = h._conn()
+        con.execute("INSERT INTO paper_positions (id, type, entry_price, stop_loss, take_profit, opened_at, "
+                    "closed_at, outcome, mode) VALUES (7, 'BUY', 1, 0.9, 1.2, '2026-11-18', '2026-11-19', 'FLIP', 'futures')")
+        for err in (None, None, "x"):
+            con.execute("INSERT INTO shadow_flip_opinions (timestamp, position_id, provider, error) "
+                        "VALUES ('2026-11-19T01:00:00+00:00', 7, 'anthropic', ?)", (err,))
+        con.commit()
+        d = tempfile.mkdtemp(); os.makedirs(os.path.join(d, "data"))
+        import shutil
+        shutil.copy(path, os.path.join(d, "data", "signal_history.db"))
+        json.dump({"started_at": "2026-11-17T18:44:50+00:00"}, open(os.path.join(d, "data", "paper_run_manifest.json"), "w"))
+        f = sd.collect_facts(d)
+        assert f["flip_events"] == 1 and f["paired_days"] == 0 and f["run_start"].startswith("2026-11-17")
+    finally:
+        _restore_history_db(h, saved, path)
+
 def test_scoring_scripts_refuse_before_day_30():
     import inspect
     import scripts.hd_eval as hd, scripts.score_run3 as sr
@@ -6820,6 +6867,7 @@ if __name__ == "__main__":
     run("run 4: HTF penalty on final leader",     test_htf_conflict_penalty_lands_on_the_side_that_finally_leads)
     run("run 4: macro HOLD clears levels",        test_macro_forced_hold_clears_levels_and_confidence)
     run("H-VR/H-BS: window, two-part + 2-sided",  test_run4b_window_and_verdicts_follow_the_prereg)
+    run("scoring day: once, when due, never early", test_scoring_day_runs_each_test_once_when_due_and_never_early)
     run("scorers refuse before day 30",           test_scoring_scripts_refuse_before_day_30)
     run("futures hypotheses from futures restart", test_score_run3_scores_futures_hypotheses_from_the_futures_restart)
 
