@@ -487,6 +487,9 @@ CSS = """
 :root{--paper:#0D1117;--surface:#151B23;--surface2:#1B232D;--ink:#E6EDF3;--ink2:#B7C2CD;--mute:#7D8A97;
 --rule:#262F3A;--rule2:#1F2731;--tint:#18202A;--buy:#2EBD85;--sell:#F6465D;--good:#2EBD85;--bad:#F6465D;
 --warn:#F0B90B;--chip:#1F2731;--accent:#4C8DF6;--c1:#4C8DF6;--c2:#C0812A;color-scheme:dark}
+:root[data-theme=light]{--paper:#F5F7FA;--surface:#FFFFFF;--surface2:#F0F3F6;--ink:#1F2328;--ink2:#424A53;
+--mute:#6B7480;--rule:#D5DBE2;--rule2:#E7EBF0;--tint:#F3F5F8;--buy:#14935F;--sell:#D1293F;--good:#14935F;
+--bad:#D1293F;--warn:#9A6B00;--chip:#EEF1F4;--accent:#2F6FDB;--c1:#2F6FDB;--c2:#A86A12;color-scheme:light}
 :root{--face:"Plus Jakarta Sans",system-ui,-apple-system,"Segoe UI",sans-serif}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
@@ -612,6 +615,10 @@ padding:3px 6px;margin-left:8px;vertical-align:3px;text-transform:uppercase;lett
 padding:6px 12px;border-radius:999px;background:rgba(46,189,133,.12);color:var(--good);white-space:nowrap}
 .health.bad{background:rgba(246,70,93,.12);color:var(--bad)}
 .bar .stamp{margin-left:auto;color:var(--mute);font-size:13px}
+.theme{font:600 13px/1 var(--face);color:var(--ink2);background:var(--surface);border:1px solid var(--rule);
+border-radius:999px;padding:7px 12px;cursor:pointer;white-space:nowrap}
+.theme:hover{color:var(--ink);border-color:var(--mute)}
+.theme:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .alert{margin:12px 0 0;padding:10px 14px;border-radius:8px;background:rgba(246,70,93,.10);color:var(--bad);font-size:14px}
 .cards{display:grid;gap:14px;margin-top:22px;grid-template-columns:repeat(auto-fit,minmax(min(210px,100%),1fr))}
 .acard{display:block;background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:16px 16px 12px;
@@ -718,6 +725,14 @@ table.grid tbody tr.grp:first-child th{padding-top:4px}
 """
 
 JS = """
+(function(){
+  var b=document.querySelector('.theme');if(!b)return;
+  function label(){var light=document.documentElement.dataset.theme==='light';
+    b.textContent=light?'\u263E Gelap':'\u2600 Terang';b.setAttribute('aria-label',light?'Ganti ke tema gelap':'Ganti ke tema terang')}
+  b.addEventListener('click',function(){var r=document.documentElement,t=r.dataset.theme==='light'?'dark':'light';
+    r.dataset.theme=t;try{localStorage.setItem('dash-theme',t)}catch(e){}label()});
+  label();
+})();
 
 (function(){
   var tabs=[].slice.call(document.querySelectorAll('.tabs button')),
@@ -1445,12 +1460,17 @@ def render(f):
          f"<meta name=viewport content='width=device-width,initial-scale=1'>"
          f"<meta http-equiv=refresh content={REFRESH_S}><title>SpotSignal VPS</title>"
          f"<link rel=preconnect href=https://fonts.gstatic.com crossorigin>"
-         f"<link rel=stylesheet href='{FONTS}'><style>{CSS}</style></head><body><main>"]
+         f"<link rel=stylesheet href='{FONTS}'>"
+         # before the stylesheet paints, so a saved light theme does not flash dark first
+         "<script>try{var t=localStorage.getItem('dash-theme');if(t==='light'||t==='dark')"
+         "document.documentElement.dataset.theme=t}catch(e){}</script>"
+         f"<style>{CSS}</style></head><body><main>"]
     ok = not probs
     P.append(f'<header class="bar"><div class="brand">SpotSignal<span>demo</span></div>'
              f'<a class="health {"ok" if ok else "bad"}" href="#sistem" data-tab="sistem">'
              f'<span class="dot {"" if ok else "bad"}"></span>{"Sistem sehat" if ok else f"{len(probs)} masalah"}</a>'
-             f'<time class="stamp">{now:%d %b %H:%M} UTC</time></header>')
+             f'<time class="stamp">{now:%d %b %H:%M} UTC</time>'
+             f'<button class="theme" type="button">\u2600 Terang</button></header>')
     if probs:
         P.append(f'<p class="alert">{e("; ".join(probs))}.</p>')
     for err in f["errors"]:
