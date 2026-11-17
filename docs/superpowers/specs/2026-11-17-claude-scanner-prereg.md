@@ -145,3 +145,34 @@ book-level counterpart of the universe mean, and it is what the dashboard sets b
 Claude's books. **H-SC's and H-SC2's criteria, statistics and dates are unchanged.** The
 random book is reported only and licenses nothing; `scanner_eval.py --db
 data/scanner_random.db` gives its own excess figure for reference.
+
+## Addendum 2026-11-18: prompt v2, so H-SC and H-SC2 restart
+
+The owner asked to cut the API cost while keeping the model (`claude-opus-5-5`, effort low)
+and the hourly cadence. The prompt changes only in **how the same numbers are written and
+how the answer is shaped**. This prereg says "a new prompt ... would be a new test", so the
+change is treated as one.
+
+- **Input:** the same fields and the same coins, written as a CSV table (column names once,
+  one row per coin) instead of indented JSON, rounded to 2 decimals (funding_pct 4,
+  basis_pct 3). No field is removed. The stored `context` is the rounded data and carries
+  `"prompt": "v2"`.
+- **Reply:** a JSON object holding only the coins picked LONG or SHORT, each with
+  confidence and a reason. A coin left out is NONE, and `{}` is NONE for all. Before this,
+  every coin carried a reason, NONE included. Side still comes before reason, so dropping
+  the reasons for NONE removes no text that came before a decision.
+- **System prompt:** the same task, field definitions and instruction to beat a random coin
+  in the same direction, reworded for a table and the shorter reply. The hybrid arm's extra
+  sentence is unchanged apart from "row" in place of "coin".
+- **Measured before deploy** on the 2026-11-17 17:00 bar, one live call per arm into
+  temporary databases (not scored). Pure: input 2,998 → 1,349 tokens, output 614 → 225,
+  $0.0243 → $0.0099. Hybrid: $0.0269 → $0.0134. Both replies were well-formed. That one bar
+  is a format check only. Its picks overlapped v1's on two of three coins, which is no
+  evidence either way: v1 itself repeats only 55% of its LONG/SHORT picks hour to hour.
+
+**Windows.** H-SC (90 days and 300 picks) and H-SC2 (60 paired days) count **only v2 cycles**,
+from the first v2 cycle on the VPS. `scanner_eval.load` keeps only cycles whose context says
+`"prompt": "v2"`. The ~2 days of v1 cycles stay in the databases and are never scored. The
+demo books are not reset; their figures are descriptive and cross the switch. The random arm
+follows the pure arm's picks, whichever prompt made them. Nothing else in the criteria
+changes.

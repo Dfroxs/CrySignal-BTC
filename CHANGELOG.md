@@ -4,6 +4,61 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-18 — feat(dashboard): reorganised around the owner's questions
+
+The owner found the page confusing and asked for a revamp of the position, grouping, tabs and
+design. The causes found on the live page:
+- five unrelated cards with no grouping;
+- running positions shown twice, under inconsistent account names;
+- the question that matters, whether Claude beats random, buried at the bottom of a tab;
+- nothing saying when any figure becomes a result.
+
+The dark trading look stays (the owner's choice); the structure changes.
+
+- **Tabs:** Ringkasan (default) | Pilih koin | Bot BTC | Sistem.
+- **Scoreboard:** strategies are rows (Claude murni, Claude + engine, Acak) and account kinds
+  are columns (futures, spot), so the random baseline sits directly under what it judges.
+  Each Claude cell shows "vs acak", the gap to the random account in the same column. Bot BTC
+  is its own group, with "BTC + saran Claude" shown against the bot. Every account appears,
+  hybrid spot and Acak included.
+- **"Kapan hasilnya bisa dipercaya?":** a day-count meter per running test (H-SC, H-SC2, H-DR,
+  H-VG) with its scoring date. These are counts only (`test_progress`, v2 cycles for the
+  scanner); no statistic is read.
+- **Posisi berjalan:** one table grouped by account, with a P&L subtotal per account. The
+  activity feed covers every account.
+- **Pilih koin:** a coin × account matrix for this hour's picks, Claude's reasons, one balance
+  chart per account kind with three lines (blue `#4C8DF6`, amber `#C0812A`, dashed gray for
+  Acak; validated for colour-blind separation), and the latest closed positions across
+  accounts.
+- An open position in the random or hybrid book is priced from the pure arm's prices when its
+  own cycle did not price that coin. Before this, the % column was empty.
+
+Removed: `_cards`, `_open_all`, `_arms`, `_scanner_tab`, and the unused `_card`/`_events`.
+Checked by screenshot at 1280 px and in a 390 px frame. Tests 326/326.
+
+---
+
+## 2026-11-18 — feat(scanner): prompt v2, ~55% cheaper, same model and cadence; H-SC/H-SC2 restart
+
+The owner found the API cost high: about $36 a month for 48 Opus calls a day. They asked for a
+better prompt while keeping Opus and the hourly cadence, without losing performance.
+
+- **Input:** the same numbers as a CSV table (column names once) instead of indented JSON
+  with every key repeated per coin, rounded to 2 decimals (funding 4, basis 3).
+  `render_table()`; the stored `context` holds the rounded values plus `"prompt": "v2"`.
+- **Reply:** only the coins picked LONG/SHORT, each with confidence and a reason. A coin left
+  out, or `{}`, means NONE. About 72% of answers were NONE, and their reasons were never used.
+- **Measured live on one bar (temporary DBs):** pure $0.0243 → $0.0099 (input 2,998 → 1,349
+  tokens, output 614 → 225), hybrid $0.0269 → $0.0134. Both arms together go from about $36
+  to about $17 a month.
+- **Tests restart:** the H-SC prereg treats a new prompt as a new test, so H-SC and H-SC2 count
+  only v2 cycles (`scanner_eval.load(prompt="v2")`). The demo books carry on. See the
+  addendum in `2026-11-17-claude-scanner-prereg.md`.
+
+Tests 326/326.
+
+---
+
 ## 2026-11-17 — feat(ops): data-collection safety net, random book, H-DR prereg
 
 The owner asked what to improve in the data collection. Four parts; none touches the BTC bot

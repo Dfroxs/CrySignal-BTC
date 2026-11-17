@@ -5640,9 +5640,22 @@ def test_scanner_snapshot_uses_closed_bars_and_passes_numbers_only():
     assert "close\"" not in flat.replace("bar_closed", "") and "bar_open_ms" not in flat
     for c, d in ctx["coins"].items():
         assert d is None or all(v is None or isinstance(v, (int, float)) for v in d.values()), c
-    assert abs(sum(d["ret_24h_vs_universe_pct"] for d in ctx["coins"].values() if d)) < 1e-2
+    # 8 values rounded to 2 decimals drift by at most 8 x 0.005
+    assert abs(sum(d["ret_24h_vs_universe_pct"] for d in ctx["coins"].values() if d)) < 0.05
+    assert ctx["prompt"] == s.PROMPT_VERSION == "v2" and ctx["coins"]["ETH"]["funding_pct"] is not None
+    eth = ctx["coins"]["ETH"]
+    assert eth["ret_4h_pct"] == round(eth["ret_4h_pct"], 2), "returns are shown at 2 decimals"
+    t = s.render_table(ctx)
+    lines = t.splitlines()
+    assert lines[1].startswith("coin,ret_1h_pct,") and t.count("ret_1h_pct") == 1, "column names once"
+    assert len(lines) == 2 + 8 and not any(l.startswith("DOGE,") for l in lines), "a missing coin has no row"
+    btc_row = dict(zip(lines[1].split(","), next(l for l in lines if l.startswith("BTC,")).split(",")))
+    assert btc_row["taker_ratio"] == "null" and btc_row["basis_pct"] == "1.0"
+    assert len(t) < 0.6 * len("Scanner input (JSON):\n" + json.dumps(ctx, indent=1)), "the point of v2"
+    assert "CSV table" in s.SYSTEM and "leave out is NONE" in s.SYSTEM and "{} means NONE" in s.SYSTEM
     p = s.parse_picks('x {"BTC": {"side": "LONG", "confidence": 70, "reason": "ok"}} y', ["BTC", "ETH"])
-    assert p["BTC"]["side"] == "LONG" and p["ETH"]["side"] == "NONE"
+    assert p["BTC"]["side"] == "LONG" and p["ETH"] == {"side": "NONE", "confidence": None, "reason": ""}
+    assert all(v["side"] == "NONE" for v in s.parse_picks("{}", ["BTC", "ETH"]).values()), "{} = NONE for all"
     for bad in ('{"BTC": {"side": "BUY", "confidence": 5}}', '{"BTC": {"side": "LONG", "confidence": 101}}', "no"):
         try:
             s.parse_picks(bad, ["BTC"])
@@ -5864,6 +5877,21 @@ def test_scanner_eval_excess_day_unit_verdict_and_leakage():
     assert e.paired_verdict(pure, hyb[:59], 0.0, 0.0)[0] == "INCONCLUSIVE", "60 paired days needed"
     assert e.paired_verdict(pure, hyb - 2, 0.0, 0.0)[0] == "FAIL"
     assert e.paired_verdict(pure, hyb, 0.0, 0.25)[0] == "INCONCLUSIVE", "health discard"
+    import os, sqlite3, tempfile
+    from agents.scanner import connect
+    db = os.path.join(tempfile.mkdtemp(), "s.db")
+    con = connect(db)
+    for i, (ctx, err) in enumerate(((None, None), ({"bar_closed_utc": "x"}, None),
+                                    ({"bar_closed_utc": "x", "prompt": "v2"}, None),
+                                    ({"bar_closed_utc": "x", "prompt": "v2"}, "APIError")), 1):
+        con.execute("INSERT INTO scan_cycles (timestamp, bar_close, error, context) VALUES (?,?,?,?)",
+                    ("2026-11-18T10:06:00+00:00", f"2026-11-18T{i:02d}:00:00+00:00", err,
+                     json.dumps(ctx) if ctx else None))
+        con.execute("INSERT INTO scan_picks (cycle_id, coin, side, confidence) VALUES (?, 'SOL', 'LONG', 50)", (i,))
+    con.commit(); con.close()
+    cyc, pk = e.load(db)
+    assert list(cyc.id) == [3, 4] and set(pk.cycle_id) == {3, 4}, "a new prompt is a new test: v1 never scored"
+    assert len(e.load(db, prompt=None)[0]) == 4
 
 
 def test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel():
@@ -5915,10 +5943,30 @@ def test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel():
         page = dsh.render(f)
         assert "Semua berjalan normal" not in page, "a blind futures cycle is an issue"
         assert "data futures Binance kosong" in page and "+3,50 pp" in page and "#1 futures SELL" not in page
-        assert "Kapan bot membuka posisi berikutnya?" in page and 'id="tab-scanner"' in page and 'id="tab-btc"' in page and "fetch(" not in page, "the page calls nothing"
+        assert "Kapan bot membuka posisi berikutnya?" in page and 'id="tab-ringkasan"' in page and 'id="tab-koin"' in page and 'id="tab-btc"' in page and "fetch(" not in page, "the page calls nothing"
         assert dsh._nice_ticks(1.08, 7.17) == [2.0, 4.0, 6.0]
-        arms = dsh._arms(None, None, {"book": sb, "spot_book": sb})
-        assert "Acak (pembanding)" in arms and "+0,27%" in arms, "the random baseline sits beside the arms"
+        board = dsh._board({"db": {}, "scanner": {"book": sb, "spot_book": sb},
+                            "random": {"book": dsh.scan_book([]), "spot_book": dsh.scan_book([])}})
+        assert "vs acak" in board and "+$2,70" in board and "belum berjalan" in board, \
+            "each Claude account shows its gap to the random account in the same column"
+        import json
+        from agents.scanner import connect
+        sd = tempfile.mkdtemp()
+        for name, days in (("scanner.db", ("2026-11-18", "2026-11-19", "2026-11-20")),
+                           ("scanner_hybrid.db", ("2026-11-19", "2026-11-20"))):
+            c2 = connect(os.path.join(sd, name))
+            c2.execute("INSERT INTO scan_cycles (timestamp, bar_close, context) VALUES ('x', '2026-11-17T23:00:00+00:00', '{}')")
+            for i, day in enumerate(days):
+                cid = c2.execute("INSERT INTO scan_cycles (timestamp, bar_close, context) VALUES ('x', ?, ?)",
+                                 (f"{day}T0{i}:00:00+00:00", json.dumps({"prompt": "v2"}))).lastrowid
+                c2.execute("INSERT INTO scan_picks (cycle_id, coin, side) VALUES (?, 'SOL', 'LONG'), (?, 'ETH', 'NONE')", (cid, cid))
+            c2.commit(); c2.close()
+        tp = {t["name"]: t for t in dsh.test_progress(os.path.join(sd, "scanner.db"), now)}
+        pure = tp["Claude murni vs rata-rata 9 koin"]
+        assert (pure["have"], pure["picks"]) == (3, (3, 300)), "v1 cycles and NONE are not counted"
+        assert tp["Claude + engine vs Claude murni"]["have"] == 2, "only days both arms picked"
+        assert str(pure["eta"].date()) == "2027-02-16"
+        assert tp["Veto Claude untuk bot BTC"]["need"] == 90
         assert dsh.issues({"host": {"services": {"bot": "active"}}, "db": {"last_cycle_age_min": 5,
                                                                            "last": {}}, "errors": []}) == []
         assert (os.path.getmtime(path), os.path.getsize(path)) == before, "the dashboard wrote to the DB"
