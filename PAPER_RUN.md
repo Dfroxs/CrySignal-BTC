@@ -149,6 +149,11 @@ cost in `data/llm_usage.jsonl` (about $0.022 a call, ~$17/month). First cycle 19
 19:00, 9 coins, no error). H-SC's scored window starts at that first error-free opinion;
 verdict needs 90 days and 300 picks. `spotsignal` and `spotsignal-qa` stayed `active`. The
 flip shadow (`develop`, touches `run_bot.py`) is **not** deployed.
+**Same evening: pulled `5ed6fc3` (PR #40), restarted `spotsignal-dash` only.** Scanner demo
+books (futures LONG/SHORT and an independent spot LONG-only book, 1,000 USD each, table
+`scan_positions` in `data/scanner.db`, created by the next scanner run) and the plain-language
+dashboard (cards for BTC bot, BTC + Claude filter, scanner futures, scanner spot; tabs).
+Trading-path diff empty; `spotsignal` not restarted. PR #41 (hybrid arm H-SC2) is open.
 ---
 
 ## New session? Do this first
