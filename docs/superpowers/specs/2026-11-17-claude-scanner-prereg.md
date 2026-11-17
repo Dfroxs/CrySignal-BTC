@@ -128,3 +128,20 @@ Same day, also fixed before any position existed: a second, independent **spot**
 same picks (`book = 'spot'`): LONG picks only (spot cannot short), 0.30pp round trip, its own
 1,000 USD and one-position-per-coin slots, the same stop/target/24h rule. Like the futures
 book it is reported beside H-SC and licenses nothing.
+
+## Addendum 2026-11-17: a count-matched random book (design decision, not a criterion)
+
+Owner's go, for reading the books: a third arm, `data/scanner_random.db`, asks no model. Each
+hour, after the pure arm, it takes that bar's pure LONG/SHORT picks (same number, sides and
+confidences) and deals them to coins drawn uniformly from those fetched that hour, seeded by
+the bar (`random.Random("scanner-random:<bar>")`), so every cycle can be reproduced. A pure
+cycle that errored or is missing is recorded as an error row in the random DB. It trades its
+own futures and spot books under exactly the rules above. Fixed before any random position
+existed.
+
+Why: H-SC's statistic already subtracts the universe mean, but the dollar books do not. A
+book that is up in a rising market says nothing about selection. The random book is the
+book-level counterpart of the universe mean, and it is what the dashboard sets beside
+Claude's books. **H-SC's and H-SC2's criteria, statistics and dates are unchanged.** The
+random book is reported only and licenses nothing; `scanner_eval.py --db
+data/scanner_random.db` gives its own excess figure for reference.

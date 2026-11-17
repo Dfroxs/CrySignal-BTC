@@ -3244,8 +3244,8 @@ def _clean_facts():
     return {"cycles_24h": {"futures": 24, "spot": 6}, "last_cycle_age_h": 0.5,
             "futures_blind_24h": 0, "variants_null_share_24h": 0.0, "opened_24h": 0,
             "opened_7d": 2, "open_positions": 1, "closed_24h": [], "blocks_24h": {},
-            "fired_24h": {}, "thresholds": {}, "spot_svc": "active", "alloc_svc": "active",
-            "spot_log_errors": 0, "alloc_errors_24h": 0, "alloc_decisions_24h": 1,
+            "fired_24h": {}, "thresholds": {}, "spot_svc": "active",
+            "spot_log_errors": 0,
             "backup_latest": "db-20261105.db", "today": "20261105"}
 
 def test_ops_anomalies_are_decided_by_rules_not_by_the_model():
@@ -3272,7 +3272,7 @@ def test_ops_report_still_sends_when_the_llm_fails():
         raise LLMError("down")
     code = run_report(_clean_facts(), ask_fn=boom, send_fn=lambda t: sent.append(t) or True)
     assert code == 0 and sent and "ringkasan AI tidak tersedia" in sent[0], sent
-    code = run_report(dict(_clean_facts(), alloc_svc="inactive"), ask_fn=boom,
+    code = run_report(dict(_clean_facts(), spot_svc="inactive"), ask_fn=boom,
                       send_fn=lambda t: sent.append(t) or True)
     assert code == 1, "an anomaly must make the report exit non-zero for cron"
 
@@ -3942,12 +3942,12 @@ def test_hb_verdict_follows_the_prereg():
     assert verdict(s(40, 0.6, 0.2, 1.0), 0.0) == "PASS"
     assert verdict(s(40, 0.3, -0.1, 0.7), 0.0) == "INCONCLUSIVE"
 
-def _hd_folder(d, syms, n_hours, signal):
+def _hd_folder(d, syms, n_hours, signal, start="2026-09-10"):
     """Synthetic archive + klines where ls_global leads the next 24h by `signal`."""
     import numpy as np, pandas as pd
     import scripts.hd_eval as hd
     rng = np.random.default_rng(1)
-    t0 = pd.Timestamp("2026-09-10")
+    t0 = pd.Timestamp(start)
     (d / "klines").mkdir(parents=True, exist_ok=True)
     for k, sym in enumerate(syms):
         ts = pd.date_range(t0, periods=n_hours, freq="h")
@@ -3995,6 +3995,34 @@ def test_hd_pooled_ic_finds_a_planted_signal_and_not_a_null_one():
         assert abs(r0["pooled"]) < 0.1 and hd.screen(r0) == "no lead", r0
         few = hd.pooled_ic({s: frames[s] for s in hd.ALTS[:3]}, "ls_global", n_boot=20)
         assert hd.verdict_hd1(few) == "INCONCLUSIVE"            # < 4 alts counted
+
+def test_hdr_scores_only_hours_hd_never_saw_with_eight_alts_and_btc_alone():
+    import tempfile
+    from pathlib import Path
+    import pandas as pd
+    import scripts.hdr_eval as hdr
+    assert str(hdr.FROM.date()) == "2026-11-08" and str(hdr.RETURN_BY.date()) == "2027-02-06"
+    assert len(hdr.ALTS) == 8 and "BTCUSDT" not in hdr.ALTS
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        _hd_folder(d, list(hdr.ALTS) + ["BTCUSDT"], 100 * 24, 6.0, start="2026-11-01")
+        frames = {s: hdr.scored_rows(hdr.load_symbol(d, s)) for s in hdr.ALTS}
+        f = frames["ETHUSDT"]
+        assert f.index.min() == hdr.FROM, "nothing H-D could have scored"
+        assert (f["_last_bar"] + pd.Timedelta(hours=1) <= hdr.RETURN_BY).all()
+        r = hdr.pooled_ic(frames, "ls_global", n_boot=100)
+        assert hdr.verdict_alts(r) == "PASS", r
+        btc = hdr.pooled_ic({"BTCUSDT": hdr.scored_rows(hdr.load_symbol(d, "BTCUSDT"))}, "ls_global", n_boot=100)
+        assert hdr.verdict_btc(btc) == "PASS", btc
+        five = hdr.pooled_ic({s: frames[s] for s in hdr.ALTS[:5]}, "ls_global", n_boot=20)
+        assert hdr.verdict_alts(five) == "INCONCLUSIVE", "fewer than 6 alts counted"
+        null = hdr.pooled_ic(frames, "taker", n_boot=100)
+        assert hdr.verdict_alts(null) != "PASS", null
+    assert hdr.verdict_btc({"counted": ["BTCUSDT"], "pooled": -0.01, "ci": [-0.1, 0.08]}) == "FAIL"
+    assert hdr.verdict_alts({"counted": list(hdr.ALTS), "pooled": 0.05, "ci": [0.01, 0.1],
+                             "per_symbol": {s: {"ic": 0.05 if i < 5 else -0.01}
+                                            for i, s in enumerate(hdr.ALTS)}}) == "INCONCLUSIVE", \
+        "a CI above 0 still needs 6 of 8 alts positive"
 
 def test_scoring_scripts_refuse_before_day_30():
     import inspect
@@ -4704,9 +4732,12 @@ def _alarm_db(cycles, shadow=None):
     return path
 
 def _alarm_clean():
-    return {"spot_svc": "active", "alloc_svc": "active", "db_error": None,
+    return {"spot_svc": "active", "db_error": None,
             "last_cycle_age_min": 9.0, "futures_funding_zero": False,
-            "mem_available_mb": 380.0, "disk_used_pct": 41.0, "shadow_failing": []}
+            "mem_available_mb": 380.0, "disk_used_pct": 41.0, "shadow_failing": [],
+            "scanner": {"murni": {"missing": False, "age_min": 5.0, "failing": False, "db_error": None},
+                        "hybrid": {"missing": True}, "acak": {"missing": True}},
+            "backup_age_h": {"db": 7.0, "scanner": 7.0}, "derivs_age_h": 6.5}
 
 def test_alarm_db_facts_read_both_timestamp_forms_and_the_latest_futures_cycle():
     import os
@@ -4766,16 +4797,16 @@ def test_alarm_host_facts_read_services_memory_and_disk_through_injected_sources
     seen = []
     def run(cmd):
         seen.append(cmd)
-        return "active" if "--user" not in cmd else "failed"
+        return "active"
     Usage = namedtuple("Usage", "total used free")
     try:
         f = collect_host_facts(run=run, meminfo_path=mi,
                                disk_usage=lambda p: Usage(100, 93, 7))
     finally:
         os.unlink(mi)
-    assert f["spot_svc"] == "active" and f["alloc_svc"] == "failed", f
+    assert f["spot_svc"] == "active" and "alloc_svc" not in f, f
     assert f["mem_available_mb"] == 100.0 and f["disk_used_pct"] == 93.0, f
-    assert any("--user" in c and "nakhoda-alloc" in c for c in seen), seen
+    assert not any("nakhoda-alloc" in c for c in seen), "removed 2026-11-11: no check, no alarm"
     f = collect_host_facts(run=lambda c: "", meminfo_path="/nonexistent/meminfo",
                            disk_usage=lambda p: (_ for _ in ()).throw(OSError("x")))
     assert f["spot_svc"] == "unknown" and f["mem_available_mb"] is None
@@ -4784,11 +4815,11 @@ def test_alarm_host_facts_read_services_memory_and_disk_through_injected_sources
 def test_alarm_rules_name_each_condition_by_a_stable_key():
     from agents.alarm import conditions
     assert conditions(_alarm_clean()) == {}
-    bad = dict(_alarm_clean(), spot_svc="failed", alloc_svc="inactive", last_cycle_age_min=130.0,
+    bad = dict(_alarm_clean(), spot_svc="failed", last_cycle_age_min=130.0,
                futures_funding_zero=True, mem_available_mb=90.0, disk_used_pct=95.0,
                shadow_failing=["deepseek"])
     c = conditions(bad)
-    assert set(c) == {"svc:spotsignal", "svc:nakhoda-alloc", "cycle_stale", "futures_blind",
+    assert set(c) == {"svc:spotsignal", "cycle_stale", "futures_blind",
                       "memory", "disk", "shadow:deepseek"}, set(c)
     assert "130" in c["cycle_stale"] and "funding" in c["futures_blind"], c
     # Edges: 75 min is still fine, 120 MB is still fine, 90% is still fine.
@@ -4801,6 +4832,88 @@ def test_alarm_rules_name_each_condition_by_a_stable_key():
     # Unknown host readings (no /proc on a Mac) are not alarms; an unknown service is.
     assert conditions(dict(_alarm_clean(), mem_available_mb=None, disk_used_pct=None)) == {}
     assert "svc:spotsignal" in conditions(dict(_alarm_clean(), spot_svc="unknown"))
+
+def test_alarm_watches_scanner_arms_backups_and_the_derivs_archive():
+    import os, sqlite3, tempfile, time
+    from datetime import UTC, datetime, timedelta
+    from agents.alarm import collect_file_facts, collect_scanner_facts, conditions
+    now = datetime(2026, 11, 17, 16, 10, tzinfo=UTC)
+    d = tempfile.mkdtemp()
+
+    def arm(name, rows):
+        con = sqlite3.connect(os.path.join(d, name))
+        con.execute("CREATE TABLE scan_cycles (id INTEGER PRIMARY KEY, timestamp TEXT, error TEXT)")
+        con.executemany("INSERT INTO scan_cycles (timestamp, error) VALUES (?,?)", rows)
+        con.commit(); con.close()
+    iso = lambda m: (now - timedelta(minutes=m)).isoformat()
+    arm("scanner.db", [(iso(65), None), (iso(5), None)])
+    arm("scanner_hybrid.db", [(iso(125), "x"), (iso(65), "x"), (iso(5), "APIError")])
+    f = collect_scanner_facts(d, now)
+    assert f["murni"] == {"missing": False, "age_min": 5.0, "failing": False, "db_error": None}, f
+    assert f["hybrid"]["failing"] and f["acak"] == {"missing": True}, f
+    c = conditions(dict(_alarm_clean(), scanner=f))
+    assert set(c) == {"scanner_err:hybrid"}, "a not-yet-deployed arm is not an alarm"
+    f["murni"]["age_min"] = 80.0
+    assert "80 menit" in conditions(dict(_alarm_clean(), scanner=f))["scanner:murni"]
+    assert "scanner:murni" in conditions(dict(_alarm_clean(), scanner={"murni": {"missing": True}}))
+
+    open(os.path.join(d, "signal_history.db"), "w").close()
+    os.makedirs(os.path.join(d, "backups")); os.makedirs(os.path.join(d, "derivs"))
+    for name, hours in (("db-20261117.db", 13), ("db-20261116.db", 37), ("scanner-20261115.db", 61)):
+        path = os.path.join(d, "backups", name); open(path, "w").close()
+        t = now.timestamp() - hours * 3600; os.utime(path, (t, t))
+    path = os.path.join(d, "derivs", "BTCUSDT_oi.csv"); open(path, "w").close()
+    t = now.timestamp() - 30 * 3600; os.utime(path, (t, t))
+    f = collect_file_facts(d, now)
+    assert f["backup_age_h"] == {"db": 13.0, "scanner": 61.0, "scanner_hybrid": None}, \
+        "newest copy per prefix; scanner- never reads scanner_hybrid-; no source db, no check"
+    assert f["derivs_age_h"] == 30.0
+    c = conditions(dict(_alarm_clean(), **f))
+    assert set(c) == {"backup:scanner", "backup:scanner_hybrid", "derivs"}, set(c)
+    assert "tidak ada" in c["backup:scanner_hybrid"] and "61 jam" in c["backup:scanner"], c
+
+
+def test_ops_report_and_dashboard_show_scanner_arms_backups_and_archive():
+    import os, tempfile
+    from datetime import UTC, datetime, timedelta
+    from pathlib import Path
+    from agents import dashboard as dsh, ops_report as ops
+    from agents.scanner import connect
+    now = datetime(2026, 11, 17, 16, 10, tzinfo=UTC)
+    root = Path(tempfile.mkdtemp()); (root / "data").mkdir()
+    iso = lambda h: (now - timedelta(hours=h)).isoformat()
+    con = connect(root / "data" / "scanner.db")
+    for i, (h, err) in enumerate(((30, None), (2, None), (1, "APIError"))):
+        con.execute("INSERT INTO scan_cycles (timestamp, bar_close, error) VALUES (?,?,?)", (iso(h), iso(h + 1), err))
+    con.execute("INSERT INTO scan_picks (cycle_id, coin, side, confidence) VALUES (2,'SOL','LONG',60),(2,'ETH','NONE',5)")
+    for book, closed, pnl in (("futures", iso(3), 4.5), ("futures", None, None), ("spot", iso(40), -2.0)):
+        con.execute("INSERT INTO scan_positions (book, coin, side, opened_bar, entry, stop, target, "
+                    "closed_bar, pnl_usd, size_usd) VALUES (?,?,?,?,1,0.9,1.2,?,?,100)",
+                    (book, "SOL", "LONG", iso(50), closed, pnl))
+    con.commit(); con.close()
+    f = ops.collect_scanner_facts(root, now)
+    assert set(f) == {"murni"}, "an arm without a database is not reported"
+    m = f["murni"]
+    assert (m["cycles_24h"], m["errors_24h"], m["picks_24h"]) == (2, 1, 1), m
+    assert m["books"]["futures"] == {"balance": 1004.5, "open": 1, "closed_24h": 1}, m
+    assert m["books"]["spot"] == {"balance": 998.0, "open": 0, "closed_24h": 0}, m
+    an = ops.anomalies(dict(_clean_facts(), scanner=f))
+    assert any("1/2 siklus error" in a for a in an), "half the cycles errored is above 20%"
+    assert ops.anomalies(dict(_clean_facts(), scanner={"acak": {"cycles_24h": 0, "errors_24h": 0}}))
+    out = ops.render(dict(_clean_facts(), scanner=f), [])
+    assert "Scanner" in out and "futures $1,004.50 (1 terbuka, 1 tutup 24j)" in out, out
+    _assert_html_safe(out)
+
+    h = dsh.host_facts(root, now, run=lambda c: "active")
+    rows = {n: (ok, v) for ok, n, v, _ in dsh._health_rows({"host": h, "db": {}}, now)}
+    names = list(rows)
+    assert "Scanner Claude murni" in names and "Scanner Acak (pembanding)" not in names, names
+    assert rows["Scanner Claude murni"] == (True, "60 menit lalu"), rows
+    assert rows["Arsip data L/S, OI, taker"] == (False, "tidak ada"), "a missing archive is flagged, as the alarm does"
+    assert "Backup Claude murni" in names and "Backup bot BTC" not in names, names
+    bad = dsh.issues({"host": h, "db": None, "errors": []})
+    assert any("backup scanner: tidak ada" in b for b in bad), "the dashboard uses the alarm's rules"
+
 
 def test_alarm_alerts_once_re_alerts_after_six_hours_and_recovers_once():
     from datetime import UTC, datetime, timedelta
@@ -5675,6 +5788,43 @@ def test_scanner_hybrid_arm_adds_engine_fields_only_to_its_own_prompt_and_db():
     assert purposes == ["scanner", "scanner_hybrid"]
 
 
+def test_scanner_random_arm_deals_pure_picks_count_matched_and_mirrors_failures():
+    import json
+    import os
+    import sqlite3
+    import tempfile
+    from types import SimpleNamespace as NS
+    from agents import scanner as s
+    get, now = _scanner_get()
+    snap = s.snapshot(now, get)
+    picks = {"SOL": {"side": "LONG", "confidence": 70, "reason": "x"},
+             "AVAX": {"side": "SHORT", "confidence": 55, "reason": "y"},
+             "ETH": {"side": "NONE", "confidence": 10, "reason": "z"}}
+    ask = lambda prompt, **k: NS(text=json.dumps(picks), provider="anthropic", model="claude-opus-5-5",
+                                 input_tokens=10, output_tokens=5)
+    d = tempfile.mkdtemp()
+    pure, rnd, u = (os.path.join(d, n) for n in ("pure.db", "rnd.db", "u.jsonl"))
+    never = lambda *a, **k: (_ for _ in ()).throw(AssertionError("random arm asked a model"))
+    rid_early = s.run_once(never, get, rnd, now, u, snap=snap, arm="random", pure_db=pure + "x")
+    con = sqlite3.connect(rnd)
+    assert con.execute("SELECT error FROM scan_cycles WHERE id=?", (rid_early,)).fetchone()[0], \
+        "no pure cycle is an error row, not a silent skip"
+    rnd = os.path.join(d, "rnd2.db")
+    assert s.run_once(ask, get, pure, now, u, snap=snap)
+    rid = s.run_once(never, get, rnd, now, u, snap=snap, arm="random", pure_db=pure)
+    con = sqlite3.connect(rnd)
+    model, cost = con.execute("SELECT model, cost_usd FROM scan_cycles WHERE id=?", (rid,)).fetchone()
+    assert model == "random" and cost is None
+    got = con.execute("SELECT coin, side, confidence FROM scan_picks WHERE cycle_id=?", (rid,)).fetchall()
+    assert sorted((sd, cf) for _, sd, cf in got) == [("LONG", 70), ("SHORT", 55)], "same count, sides, confidences"
+    bar = con.execute("SELECT bar_close FROM scan_cycles").fetchone()[0]
+    live = [c for c in s.UNIVERSE if snap["coins"].get(c)]
+    again = s.random_picks(s.pure_picks(pure, bar), live, bar)
+    assert {c: p["side"] for c, p in again.items()} == {c: sd for c, sd, _ in got}, "seeded by the bar"
+    assert len([json.loads(x) for x in open(u)]) == 1, "no usage line for the random arm"
+    assert con.execute("SELECT COUNT(*) FROM scan_positions").fetchone()[0] >= 1, "it trades its own books"
+
+
 def test_scanner_eval_excess_day_unit_verdict_and_leakage():
     import json
     import numpy as np
@@ -5767,6 +5917,8 @@ def test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel():
         assert "data futures Binance kosong" in page and "+3,50 pp" in page and "#1 futures SELL" not in page
         assert "Kapan bot membuka posisi berikutnya?" in page and 'id="tab-scanner"' in page and 'id="tab-btc"' in page and "fetch(" not in page, "the page calls nothing"
         assert dsh._nice_ticks(1.08, 7.17) == [2.0, 4.0, 6.0]
+        arms = dsh._arms(None, None, {"book": sb, "spot_book": sb})
+        assert "Acak (pembanding)" in arms and "+0,27%" in arms, "the random baseline sits beside the arms"
         assert dsh.issues({"host": {"services": {"bot": "active"}}, "db": {"last_cycle_age_min": 5,
                                                                            "last": {}}, "errors": []}) == []
         assert (os.path.getmtime(path), os.path.getsize(path)) == before, "the dashboard wrote to the DB"
@@ -6125,6 +6277,8 @@ if __name__ == "__main__":
     run("alert once, 6h re-alert, recover once",  test_alarm_alerts_once_re_alerts_after_six_hours_and_recovers_once)
     run("message short, escaped, Indonesian",     test_alarm_message_is_short_escaped_and_indonesian)
     run("state saved only after send; exit 1",    test_alarm_run_saves_state_only_after_a_send_and_exits_nonzero_while_active)
+    run("alarm: scanner arms, backups, archive",  test_alarm_watches_scanner_arms_backups_and_the_derivs_archive)
+    run("ops report + dashboard: scanner, backups", test_ops_report_and_dashboard_show_scanner_arms_backups_and_archive)
 
     print("\n── 36. Ops report: activity, agent health, LLM cost ──")
     run("ops lists opens/closes with side+entry", test_ops_lists_positions_opened_and_closed_with_side_and_entry)
@@ -6179,6 +6333,7 @@ if __name__ == "__main__":
     run("H-B verdict per prereg",                 test_hb_verdict_follows_the_prereg)
     run("H-D return after stat known, BTC window", test_hd_return_starts_after_the_stat_is_known_and_btc_window_holds)
     run("H-D finds planted signal, not null",     test_hd_pooled_ic_finds_a_planted_signal_and_not_a_null_one)
+    run("H-DR: unseen hours, 8 alts, BTC alone",  test_hdr_scores_only_hours_hd_never_saw_with_eight_alts_and_btc_alone)
     run("scorers refuse before day 30",           test_scoring_scripts_refuse_before_day_30)
     run("futures hypotheses from futures restart", test_score_run3_scores_futures_hypotheses_from_the_futures_restart)
 
@@ -6208,6 +6363,7 @@ if __name__ == "__main__":
     run("H-SC eval: excess, days, verdict, leak",   test_scanner_eval_excess_day_unit_verdict_and_leakage)
     run("scanner paper book: open, stop, target, time", test_scanner_paper_book_opens_one_per_coin_and_exits_stop_first_target_or_time)
     run("H-SC2 hybrid arm: engine fields, own db",  test_scanner_hybrid_arm_adds_engine_fields_only_to_its_own_prompt_and_db)
+    run("random arm: count-matched, seeded, no model", test_scanner_random_arm_deals_pure_picks_count_matched_and_mirrors_failures)
     run("dashboard: read-only, local, no blank",    test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel)
     run("basis own checkpoint, no stale reason", test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason)
 

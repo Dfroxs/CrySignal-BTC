@@ -73,7 +73,7 @@ def _tables(con):
 # ── Facts ───────────────────────────────────────────────────────────────────────────
 
 def host_facts(root, now, run=None):
-    from agents.alarm import _run, collect_host_facts
+    from agents.alarm import _run, collect_file_facts, collect_host_facts, collect_scanner_facts
     run = run or _run
     h = collect_host_facts(run=run)
     svc = {"bot": h["spot_svc"],
@@ -88,10 +88,13 @@ def host_facts(root, now, run=None):
         tail = log.read_text(errors="replace").splitlines()[-400:]
         log_errors = sum(bool(re.search(r"error|traceback|exception", ln, re.I)) for ln in tail)
     head = run(f"git -C '{root}' rev-parse --short HEAD")
+    files = collect_file_facts(root / "data", now)
     return {"services": svc, "mem_available_mb": h["mem_available_mb"],
             "disk_used_pct": h["disk_used_pct"], "bot_since": _dt(m.group(1)) if m else None,
             "backup_latest": backups[-1].stem.removeprefix("db-") if backups else None,
-            "backup_age_h": b_age, "log_errors": log_errors, "git_head": head or None}
+            "backup_age_h": b_age, "log_errors": log_errors, "git_head": head or None,
+            "scanner_arms": collect_scanner_facts(root / "data", now),
+            "backup_age_h_by": files["backup_age_h"], "derivs_age_h": files["derivs_age_h"]}
 
 
 def manifest_facts(root):
@@ -422,8 +425,25 @@ def collect(root, db, scanner_db, now=None, run=None):
     part("macro", lambda: macro_facts(root, now))
     part("scanner", lambda: scanner_facts(scanner_db))
     part("hybrid", lambda: scanner_facts(Path(scanner_db).with_name("scanner_hybrid.db")))
+    part("random", lambda: scanner_facts(Path(scanner_db).with_name("scanner_random.db")))
     part("cost", lambda: cost_facts(db, root, now))
     return out
+
+
+ARM_LABEL = {"murni": "Claude murni", "hybrid": "Claude + engine", "acak": "Acak (pembanding)"}
+BACKUP_LABEL = {"db": "bot BTC", "scanner": "Claude murni", "scanner_hybrid": "Claude + engine",
+                "scanner_random": "acak"}
+
+
+def _side_conditions(h):
+    """The alarm's own rules for the scanner arms, backups and derivatives archive, so the
+    page and the Telegram alarm can never disagree on what is wrong."""
+    from agents.alarm import conditions
+    if "scanner_arms" not in h:
+        return {}
+    c = conditions({"spot_svc": "active", "last_cycle_age_min": 0, "scanner": h["scanner_arms"],
+                    "backup_age_h": h.get("backup_age_h_by") or {}, "derivs_age_h": h.get("derivs_age_h")})
+    return {k: v for k, v in c.items() if k.split(":")[0] in ("scanner", "scanner_err", "backup", "derivs")}
 
 
 def issues(f):
@@ -445,9 +465,7 @@ def issues(f):
     disk = h.get("disk_used_pct")
     if disk is not None and disk > MAX_DISK_PCT:
         out.append(f"disk {disk:.0f}% terpakai")
-    b = h.get("backup_age_h")
-    if b is not None and b > MAX_BACKUP_AGE_H:
-        out.append(f"backup terakhir {b:.0f} jam lalu")
+    out += _side_conditions(h).values()
     for err in f.get("errors") or []:
         out.append(f"panel {err.split(':')[0]} gagal dibaca")
     return out
@@ -950,17 +968,36 @@ def _health_rows(f, now):
     mem, disk = h.get("mem_available_mb"), h.get("disk_used_pct")
     add(mem is None or mem >= MIN_MEM_MB, "Memori bebas", f"{mem:.0f} MB" if mem is not None else "–", "VPS 1 GB; di bawah 150 MB berbahaya")
     add(disk is None or disk <= MAX_DISK_PCT, "Disk terpakai", f"{disk:.0f}%" if disk is not None else "–", "di atas 85% perlu dibersihkan")
-    ba = h.get("backup_age_h")
-    add(ba is None or ba <= MAX_BACKUP_AGE_H, "Backup database", f"{ba:.0f} jam lalu" if ba is not None else "–", "harian jam 03:00 UTC")
+    bad = _side_conditions(h)
+    for arm, a in (h.get("scanner_arms") or {}).items():
+        if a.get("missing"):
+            continue                                    # not deployed on this host
+        age = a.get("age_min")
+        val = ("error 3x berturut-turut" if a.get("failing") else
+               f"{age:.0f} menit lalu" if age is not None else "belum ada siklus")
+        add(f"scanner:{arm}" not in bad and f"scanner_err:{arm}" not in bad, f"Scanner {ARM_LABEL[arm]}",
+            val, "jalan tiap jam di menit :05; lebih dari 75 menit = macet")
+    by = h.get("backup_age_h_by")
+    if by is None:                                      # older facts: one bot backup only
+        ba = h.get("backup_age_h")
+        add(ba is None or ba <= MAX_BACKUP_AGE_H, "Backup database", f"{ba:.0f} jam lalu" if ba is not None else "–", "harian jam 03:00 UTC")
+    for prefix, age in (by or {}).items():
+        add(f"backup:{prefix}" not in bad, f"Backup {BACKUP_LABEL.get(prefix, prefix)}",
+            f"{age:.0f} jam lalu" if age is not None else "tidak ada", "harian jam 03:00 UTC, disimpan 30 hari")
+    if "derivs_age_h" in h:
+        age = h["derivs_age_h"]
+        add("derivs" not in bad, "Arsip data L/S, OI, taker", f"{age:.0f} jam lalu" if age is not None else "tidak ada",
+            "harian jam 03:40 UTC; Binance hanya menyimpan 30 hari, jadi yang hilang tak bisa diambil lagi")
     le = h.get("log_errors")
     add(not le, "Error di log", "tidak ada" if le == 0 else f"{le} baris" if le else "–", "400 baris terakhir paper_run.log")
     return rows
 
 
-def _arms(s, hy):
-    """H-SC2: the pure arm beside the hybrid arm (same picks hour by hour, + engine score)."""
+def _arms(s, hy, rnd=None):
+    """H-SC2: the pure arm beside the hybrid arm (same picks hour by hour, + engine score),
+    and the random baseline that deals the pure arm's picks to random coins."""
     rows = []
-    for name, arm in (("Claude murni", s), ("Claude + skor engine", hy)):
+    for name, arm in (("Claude murni", s), ("Claude + skor engine", hy), ("Acak (pembanding)", rnd)):
         for key, label in (("book", "futures"), ("spot_book", "spot")):
             b = (arm or {}).get(key)
             if not b:
@@ -970,10 +1007,12 @@ def _arms(s, hy):
             rows.append([f"<b>{e(name)}</b>", label, _money(b["equity"]),
                          _pnl((b["equity"] / b["start"] - 1) * 100, 2, "%"), str(st["n"]),
                          f'{st["win"]}%' if st["win"] is not None else "–"])
-    P = ['<section><h2>Claude murni vs Claude + skor engine</h2><p class="lede">Dua Claude melihat '
+    P = ['<section><h2>Claude murni, Claude + skor engine, dan acak</h2><p class="lede">Dua Claude melihat '
          'angka yang sama pada jam yang sama; yang kedua juga diberi skor BUY/SELL dari engine '
          'bot BTC untuk tiap koin. Apakah skor engine membantu? Hasil resmi (uji H-SC2) setelah '
-         '60 hari yang sama-sama punya pilihan.</p>'
+         '60 hari yang sama-sama punya pilihan.</p><p class="lede">Baris <b>Acak</b> mengambil jumlah '
+         'dan arah posisi yang sama dengan Claude murni tiap jam, tapi koinnya diundi. Kalau Claude '
+         'tidak jauh lebih baik dari baris ini, untungnya datang dari pasar, bukan dari pilihannya.</p>'
          + _table(["lengan", "akun", "nilai", "%", "selesai", "menang"], rows, num=(2, 3, 4, 5))]
     picks = [c for c in ((hy or {}).get("coins") or []) if c["pick"] and c["pick"][0] != "NONE"]
     if hy:
@@ -994,7 +1033,7 @@ def _arms(s, hy):
     return "".join(P)
 
 
-def _scanner_tab(s, hy=None):
+def _scanner_tab(s, hy=None, rnd=None):
     if not s:
         return '<p class="empty">Scanner belum berjalan di host ini.</p>'
     bk, P = s.get("book") or {}, []
@@ -1051,7 +1090,7 @@ def _scanner_tab(s, hy=None):
                          y_fmt="${:,.0f}", label="nilai akun spot") + "</div><div><h3>Posisi spot terakhir yang selesai</h3>"
                  + (_table(["koin", "selesai", "cara selesai", "hasil", "%"], rows, num=(3, 4)) if rows
                     else '<p class="empty">Belum ada posisi LONG yang selesai.</p>') + "</div></div></section>")
-    P.append(_arms(s, hy))
+    P.append(_arms(s, hy, rnd))
     coins = s.get("coins") or []
     det = []
     if coins:
@@ -1334,7 +1373,7 @@ def render(f):
              '<button role="tab" id="t-scanner" aria-controls="tab-scanner" data-tab="scanner">Claude pilih koin</button>'
              '<button role="tab" id="t-btc" aria-controls="tab-btc" data-tab="btc">Bot BTC</button>'
              '<button role="tab" id="t-sistem" aria-controls="tab-sistem" data-tab="sistem">Sistem</button></nav>')
-    P.append('<div class="tabpanel" role="tabpanel" id="tab-scanner" aria-labelledby="t-scanner">' + _scanner_tab(s, f.get("hybrid")) + "</div>")
+    P.append('<div class="tabpanel" role="tabpanel" id="tab-scanner" aria-labelledby="t-scanner">' + _scanner_tab(s, f.get("hybrid"), f.get("random")) + "</div>")
     P.append('<div class="tabpanel" role="tabpanel" id="tab-btc" aria-labelledby="t-btc">' + _btc_tab(f, now) + "</div>")
     P.append('<div class="tabpanel" role="tabpanel" id="tab-sistem" aria-labelledby="t-sistem">' + _system_tab(f, now) + "</div>")
     P.append('<details class="glossary"><summary>Arti istilah</summary><dl>'

@@ -42,6 +42,7 @@ KLINES = 1000                                 # EMA200's seed weight after 1000 
 HTTP_TIMEOUT_S = 10
 ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = ROOT / "data" / "scanner.db"
+RANDOM_DB_PATH = ROOT / "data" / "scanner_random.db"       # count-matched random baseline, no model
 HYBRID_DB_PATH = ROOT / "data" / "scanner_hybrid.db"       # H-SC2 arm, same schema
 USAGE_PATH = ROOT / "data" / "llm_usage.jsonl"
 
@@ -225,6 +226,34 @@ def add_engine_scores(snap, get=_get, score=engine_score):
             f["_engine"] = {"engine_buy_score": None, "engine_sell_score": None,
                             "engine_threshold": None, "engine_signal": None}
     return snap
+
+
+def random_picks(pure, coins, bar):
+    """Count-matched random baseline for the books: this bar's pure LONG/SHORT picks (same
+    number, sides and confidences) dealt to coins drawn uniformly from `coins`. Seeded by
+    the bar, so any cycle can be reproduced. A design decision for reading the books."""
+    import random
+    acts = [(p["side"], p["confidence"]) for p in pure.values() if p["side"] in ("LONG", "SHORT")]
+    rng = random.Random(f"scanner-random:{bar}")
+    chosen = rng.sample(list(coins), min(len(acts), len(coins)))
+    rng.shuffle(acts)
+    return {c: {"side": sd, "confidence": cf, "reason": "(acak)"} for c, (sd, cf) in zip(chosen, acts)}
+
+
+def pure_picks(path, bar):
+    """The pure arm's picks for `bar`. Raises when that cycle is missing or errored, so the
+    random arm records the same failure as an error row."""
+    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        row = con.execute("SELECT id, error FROM scan_cycles WHERE bar_close = ?", (bar,)).fetchone()
+        if row is None:
+            raise LookupError(f"pure arm has no cycle for {bar}")
+        if row[1]:
+            raise RuntimeError(f"pure arm errored: {row[1]}"[:300])
+        return {c: {"side": sd, "confidence": cf} for c, sd, cf in con.execute(
+            "SELECT coin, side, confidence FROM scan_picks WHERE cycle_id = ?", (row[0],))}
+    finally:
+        con.close()
 
 
 def build_context(snap, engine=False):
@@ -426,11 +455,11 @@ def _iso(ms):
 
 
 def run_once(ask_fn=None, get=_get, db_path=DB_PATH, now_ms=None, usage_path=USAGE_PATH,
-             snap=None, arm="pure"):
+             snap=None, arm="pure", pure_db=DB_PATH):
     """Fetch (unless `snap` is given), ask, store. Returns the cycle id, or None when this bar
     was already scanned or no coin could be fetched. Never raises on a model failure: that is
-    an error row. `arm="hybrid"` (H-SC2) adds the engine fields and their sentence."""
-    from agents.llm import cost_usd
+    an error row. `arm="hybrid"` (H-SC2) adds the engine fields and their sentence;
+    `arm="random"` asks no model and deals the pure arm's picks of this bar at random."""
     snap = snap or snapshot(now_ms, get)
     if snap["bar_close_ms"] is None:
         logger.error("no coin could be fetched; nothing asked")
@@ -451,15 +480,12 @@ def run_once(ask_fn=None, get=_get, db_path=DB_PATH, now_ms=None, usage_path=USA
                "cost_usd": None}
         picks, t0 = {}, time.time()
         try:
-            if ask_fn is None:
-                from agents.llm import ask as ask_fn
-            reply = ask_fn(prompt, system=SYSTEM_HYBRID if arm == "hybrid" else SYSTEM, provider="anthropic",
-                           model=os.getenv("SCANNER_MODEL") or DEFAULT_MODEL, max_tokens=16000)
-            rec.update(model=reply.model, input_tokens=reply.input_tokens,
-                       output_tokens=reply.output_tokens,
-                       cost_usd=cost_usd(reply.model, reply.input_tokens, reply.output_tokens))
-            _record_usage(usage_path, reply, "scanner" if arm == "pure" else "scanner_hybrid")
-            picks = parse_picks(reply.text, [c for c, f in snap["coins"].items() if f])
+            if arm == "random":
+                rec["model"] = "random"
+                picks = random_picks(pure_picks(pure_db, bar),
+                                     [c for c in UNIVERSE if snap["coins"].get(c)], bar)
+            else:
+                picks = _ask(ask_fn, prompt, arm, rec, usage_path, snap)
         except Exception as exc:  # noqa: BLE001 - a model failure is data
             rec["error"] = f"{type(exc).__name__}: {exc}"[:300]
         rec["latency_ms"] = int((time.time() - t0) * 1000)
@@ -486,6 +512,20 @@ def run_once(ask_fn=None, get=_get, db_path=DB_PATH, now_ms=None, usage_path=USA
         con.close()
 
 
+def _ask(ask_fn, prompt, arm, rec, usage_path, snap):
+    """One model call; fills `rec` with model, tokens and cost, returns the parsed picks."""
+    from agents.llm import cost_usd
+    if ask_fn is None:
+        from agents.llm import ask as ask_fn
+    reply = ask_fn(prompt, system=SYSTEM_HYBRID if arm == "hybrid" else SYSTEM, provider="anthropic",
+                   model=os.getenv("SCANNER_MODEL") or DEFAULT_MODEL, max_tokens=16000)
+    rec.update(model=reply.model, input_tokens=reply.input_tokens,
+               output_tokens=reply.output_tokens,
+               cost_usd=cost_usd(reply.model, reply.input_tokens, reply.output_tokens))
+    _record_usage(usage_path, reply, "scanner" if arm == "pure" else "scanner_hybrid")
+    return parse_picks(reply.text, [c for c, f in snap["coins"].items() if f])
+
+
 def _record_usage(path, reply, purpose="scanner"):
     """Into the ops report's cost ledger, so the monthly budget line counts the scanner."""
     try:
@@ -500,7 +540,8 @@ def main(argv=None):
     ap.add_argument("--dry-run", action="store_true", help="fetch and print the prompt only")
     ap.add_argument("--db", default=str(DB_PATH))
     ap.add_argument("--hybrid-db", default=str(HYBRID_DB_PATH))
-    ap.add_argument("--no-hybrid", action="store_true", help="run the pure arm only")
+    ap.add_argument("--no-hybrid", action="store_true", help="skip the hybrid arm")
+    ap.add_argument("--random-db", default=str(RANDOM_DB_PATH))
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     from dotenv import load_dotenv
@@ -521,6 +562,11 @@ def main(argv=None):
             logger.info("hybrid scan cycle %s", hid)
         except Exception as exc:  # noqa: BLE001 - the hybrid arm never costs the pure one
             logger.error("hybrid arm failed: %s", exc)
+    try:                                                    # after pure: it deals pure's picks
+        rid = run_once(db_path=args.random_db, snap=snap, arm="random", pure_db=args.db)
+        logger.info("random scan cycle %s", rid)
+    except Exception as exc:  # noqa: BLE001 - the baseline never costs either arm
+        logger.error("random arm failed: %s", exc)
     return 0
 
 

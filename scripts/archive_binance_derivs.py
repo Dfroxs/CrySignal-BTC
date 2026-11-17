@@ -25,7 +25,10 @@ from pathlib import Path
 import requests
 
 BASE = "https://fapi.binance.com/futures/data/"
-SYMBOLS = ("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT")
+# The first six are H-D's and stay frozen. ADA/LINK/AVAX joined 2026-11-17 to cover the
+# scanner's universe (H-D allows additions, never scored in H-D; H-DR scores them).
+SYMBOLS = ("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT",
+           "ADAUSDT", "LINKUSDT", "AVAXUSDT")
 STATS = {                               # file stem -> endpoint
     "ls_global": "globalLongShortAccountRatio",
     "ls_top_account": "topLongShortAccountRatio",

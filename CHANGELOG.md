@@ -4,6 +4,58 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-17 — feat(ops): data-collection safety net, random book, H-DR prereg
+
+The owner asked what to improve in the data collection. Four parts; none touches the BTC bot
+or needs a restart.
+
+- **Backups cover the scanner.** `deploy/backup_db.sh` copied only `signal_history.db`. Now
+  it also copies `scanner.db`, `scanner_hybrid.db` and `scanner_random.db` (when present),
+  as `<name>-YYYYMMDD.db`, with an integrity check and 30-day retention per prefix. The bot's
+  copy keeps its `db-` name for `morning_check.sh`. Forward-only opinions cannot be
+  regenerated, so before this a lost disk ended H-SC and H-SC2.
+- **Alarm.** It had sent "nakhoda-alloc inactive" every 6 hours since that bot was removed
+  on 2026-11-11, which is noise that hides real alerts. That check is gone from
+  `agents/alarm.py` and `agents/ops_report.py`; `qa_knowledge.md` is updated to match. New
+  checks:
+  - each scanner arm: newest cycle more than 75 min old, or its last 3 cycles all errored.
+    An arm that is not deployed is not an alarm; a missing pure DB is.
+  - each backup prefix: newest copy more than 26 h old, or none at all.
+  - the derivatives archive: no write in 26 h.
+
+  H-SC turns INCONCLUSIVE when more than 20% of cycles error, so a silent outage can cost
+  the whole window.
+- **Random book** (`agents/scanner.py`, `data/scanner_random.db`). Each hour it deals the pure
+  arm's LONG/SHORT picks (same count, sides and confidences) to random coins, seeded by the
+  bar, and trades its own futures and spot books under the same rules. It asks no model and
+  costs nothing. It is a design decision for reading the books, recorded in the H-SC prereg
+  addendum; H-SC and H-SC2 are unchanged. The dashboard shows it beside the two Claude arms.
+  The ask step moved into `_ask()`; behaviour is unchanged.
+- **H-DR prereg + instrument.**
+  - H-D was INCONCLUSIVE (ls_global pooled +0.047 [-0.060, +0.165]), so H-DR re-tests global
+    L/S as momentum on hours H-D never saw: stamps from 2026-11-08, returns by 2027-02-06,
+    8 alts plus BTC alone, H-D's statistics.
+  - The power statement is written in advance.
+  - `scripts/hdr_eval.py` refuses to score before 2027-02-06.
+  - `archive_binance_derivs.py` gains ADA, LINK and AVAX. Additions are allowed by H-D, and
+    H-D's six are unchanged.
+
+  `docs/superpowers/specs/2026-11-17-derivs-replication-prereg.md`.
+
+Same day, owner: "update juga untuk dashboardnya sama notif ke telegram".
+- **Dashboard, Sistem tab**: one row per deployed scanner arm (age of newest cycle, or "error
+  3x"), one per backup (bot BTC, Claude murni, Claude + engine, acak), and one for the
+  derivatives archive. The rules are the alarm's own (`_side_conditions` calls
+  `alarm.conditions`), so the page's health pill and Telegram never disagree.
+- **Telegram, daily 03:30 report**: a "Scanner" section. Per arm it shows cycles, errors and
+  picks in 24h, and each $1,000 book's realised balance with open and 24h-closed counts. New
+  anomalies: an arm with no cycle in 24h, or more than 20% errored cycles, which is the share
+  that turns H-SC/H-SC2 INCONCLUSIVE.
+
+Tests 325/325 (new: random arm, alarm watch, H-DR window and verdicts, report + dashboard rows).
+
+---
+
 ## 2026-11-17 — feat(dashboard): dark trading-app design (owner rejected the passbook)
 
 Owner: "jelek banget"; asked, they chose a dark trading-app look and named the problems as
