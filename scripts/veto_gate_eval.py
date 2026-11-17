@@ -33,8 +33,8 @@ from scripts.shadow_cluster import episodes  # noqa: E402
 from scripts.shadow_eval import TF, _hourly_prices, signed_forward, trade_outcomes  # noqa: E402
 
 PROVIDER = "anthropic"
-FROM = pd.Timestamp("2026-11-17 00:00:00")      # first opinion after H-S was scored
-SCORE_BY = pd.Timestamp("2027-02-15 00:00:00")  # window end and earliest scoring date
+FROM = pd.Timestamp("2026-11-17 18:44:50")      # run-4 restart (manifest started_at; amendment)
+SCORE_BY = FROM + pd.Timedelta(days=90)         # window end and earliest scoring date
 GAP_H = 12
 MIN_EPISODES, MIN_ACTED = 30, 10                # power guard
 N_BOOT, SEED = 5000, 2026

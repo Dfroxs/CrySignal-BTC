@@ -115,6 +115,8 @@ none ever will be.
 
 - **Window:** opinions stamped from the run-4 restart (the new manifest's `started_at`) to
   that time plus 90 days. `veto_gate_eval.FROM` and `SCORE_BY` are set to those two
-  timestamps in the deploy commit, before any window opinion exists.
+  timestamps in the deploy commit, before any window opinion exists. **Set: run 4 started
+  2026-11-17 18:44:50 UTC at `3377027`, so the window is 2026-11-17 18:44:50 to
+  2027-02-15 18:44:50 UTC.**
 - Everything else is unchanged: the gate, the episode unit, the statistic, the criteria,
   the power guard and the discipline.
