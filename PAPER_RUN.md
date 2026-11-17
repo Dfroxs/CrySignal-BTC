@@ -154,6 +154,11 @@ books (futures LONG/SHORT and an independent spot LONG-only book, 1,000 USD each
 `scan_positions` in `data/scanner.db`, created by the next scanner run) and the plain-language
 dashboard (cards for BTC bot, BTC + Claude filter, scanner futures, scanner spot; tabs).
 Trading-path diff empty; `spotsignal` not restarted. PR #41 (hybrid arm H-SC2) is open.
+**2026-11-17 04:33 UTC: pulled `7acd78d` (PR #41), restarted `spotsignal-dash` only.** Hybrid
+scanner arm H-SC2 live: same cron, a second Claude call per hour with the engine's score per
+coin, `data/scanner_hybrid.db` with its own futures and spot books; first cycle bar 04:00, no
+error, $0.025. Dashboard now the dark trading-app design. `spotsignal` not restarted. H-SC2
+pairs from the hybrid arm's first cycle (2026-11-17 04:00 bar).
 ---
 
 ## New session? Do this first
