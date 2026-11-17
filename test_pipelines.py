@@ -5999,9 +5999,22 @@ def test_scanner_snapshot_uses_closed_bars_and_passes_numbers_only():
     assert "close\"" not in flat.replace("bar_closed", "") and "bar_open_ms" not in flat
     for c, d in ctx["coins"].items():
         assert d is None or all(v is None or isinstance(v, (int, float)) for v in d.values()), c
-    assert abs(sum(d["ret_24h_vs_universe_pct"] for d in ctx["coins"].values() if d)) < 1e-2
+    # 8 values rounded to 2 decimals drift by at most 8 x 0.005
+    assert abs(sum(d["ret_24h_vs_universe_pct"] for d in ctx["coins"].values() if d)) < 0.05
+    assert ctx["prompt"] == s.PROMPT_VERSION == "v2" and ctx["coins"]["ETH"]["funding_pct"] is not None
+    eth = ctx["coins"]["ETH"]
+    assert eth["ret_4h_pct"] == round(eth["ret_4h_pct"], 2), "returns are shown at 2 decimals"
+    t = s.render_table(ctx)
+    lines = t.splitlines()
+    assert lines[1].startswith("coin,ret_1h_pct,") and t.count("ret_1h_pct") == 1, "column names once"
+    assert len(lines) == 2 + 8 and not any(l.startswith("DOGE,") for l in lines), "a missing coin has no row"
+    btc_row = dict(zip(lines[1].split(","), next(l for l in lines if l.startswith("BTC,")).split(",")))
+    assert btc_row["taker_ratio"] == "null" and btc_row["basis_pct"] == "1.0"
+    assert len(t) < 0.6 * len("Scanner input (JSON):\n" + json.dumps(ctx, indent=1)), "the point of v2"
+    assert "CSV table" in s.SYSTEM and "leave out is NONE" in s.SYSTEM and "{} means NONE" in s.SYSTEM
     p = s.parse_picks('x {"BTC": {"side": "LONG", "confidence": 70, "reason": "ok"}} y', ["BTC", "ETH"])
-    assert p["BTC"]["side"] == "LONG" and p["ETH"]["side"] == "NONE"
+    assert p["BTC"]["side"] == "LONG" and p["ETH"] == {"side": "NONE", "confidence": None, "reason": ""}
+    assert all(v["side"] == "NONE" for v in s.parse_picks("{}", ["BTC", "ETH"]).values()), "{} = NONE for all"
     for bad in ('{"BTC": {"side": "BUY", "confidence": 5}}', '{"BTC": {"side": "LONG", "confidence": 101}}', "no"):
         try:
             s.parse_picks(bad, ["BTC"])
@@ -6223,6 +6236,21 @@ def test_scanner_eval_excess_day_unit_verdict_and_leakage():
     assert e.paired_verdict(pure, hyb[:59], 0.0, 0.0)[0] == "INCONCLUSIVE", "60 paired days needed"
     assert e.paired_verdict(pure, hyb - 2, 0.0, 0.0)[0] == "FAIL"
     assert e.paired_verdict(pure, hyb, 0.0, 0.25)[0] == "INCONCLUSIVE", "health discard"
+    import os, sqlite3, tempfile
+    from agents.scanner import connect
+    db = os.path.join(tempfile.mkdtemp(), "s.db")
+    con = connect(db)
+    for i, (ctx, err) in enumerate(((None, None), ({"bar_closed_utc": "x"}, None),
+                                    ({"bar_closed_utc": "x", "prompt": "v2"}, None),
+                                    ({"bar_closed_utc": "x", "prompt": "v2"}, "APIError")), 1):
+        con.execute("INSERT INTO scan_cycles (timestamp, bar_close, error, context) VALUES (?,?,?,?)",
+                    ("2026-11-18T10:06:00+00:00", f"2026-11-18T{i:02d}:00:00+00:00", err,
+                     json.dumps(ctx) if ctx else None))
+        con.execute("INSERT INTO scan_picks (cycle_id, coin, side, confidence) VALUES (?, 'SOL', 'LONG', 50)", (i,))
+    con.commit(); con.close()
+    cyc, pk = e.load(db)
+    assert list(cyc.id) == [3, 4] and set(pk.cycle_id) == {3, 4}, "a new prompt is a new test: v1 never scored"
+    assert len(e.load(db, prompt=None)[0]) == 4
 
 
 def test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel():

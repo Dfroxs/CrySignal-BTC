@@ -46,21 +46,24 @@ RANDOM_DB_PATH = ROOT / "data" / "scanner_random.db"       # count-matched rando
 HYBRID_DB_PATH = ROOT / "data" / "scanner_hybrid.db"       # H-SC2 arm, same schema
 USAGE_PATH = ROOT / "data" / "llm_usage.jsonl"
 
+PROMPT_VERSION = "v2"   # 2026-11-18: table input, picks-only reply (H-SC addendum); v1 = JSON both ways
 SYSTEM = (
     "You are a crypto futures scanner. Once an hour you receive numbers only for a fixed "
     "set of Binance USD-M perpetuals (all quoted in USDT), measured on the 1h bar that has "
-    "just closed. For EACH coin decide LONG, SHORT or NONE for a trade held about 24 hours. "
-    "NONE is a normal answer; pick only where you expect the coin to beat a random coin "
-    "taken in the same direction. Fields: ret_*_pct are close-to-close returns; "
-    "close_vs_ema*_pct is (close - EMA) / EMA x 100; range_pos_24h is 0 at the 24h low and "
-    "1 at the 24h high; vol_ratio is the last bar's volume over its 24h mean; funding_pct is "
-    "the last funding rate in percent; basis_pct is (mark - index) / index x 100; "
-    "oi_change_24h_pct is the open-interest change; ls_ratio is the global long/short "
-    "account ratio; taker_ratio is taker buy over sell volume; ret_24h_vs_universe_pct is "
-    "the coin's 24h return minus the mean of all coins. A null is a value that could not be "
-    "fetched. Reply with ONLY a JSON object, one entry per coin: "
-    '{"BTC": {"side": "LONG" or "SHORT" or "NONE", "confidence": integer 0-100, '
-    '"reason": "at most 25 words, in Indonesian"}, ...}.'
+    "just closed, as a CSV table with one row per coin. For EACH coin decide LONG, SHORT or "
+    "NONE for a trade held about 24 hours. NONE is a normal answer; pick only where you "
+    "expect the coin to beat a random coin taken in the same direction. Columns: ret_*_pct "
+    "are close-to-close returns; close_vs_ema*_pct is (close - EMA) / EMA x 100; "
+    "range_pos_24h is 0 at the 24h low and 1 at the 24h high; vol_ratio is the last bar's "
+    "volume over its 24h mean; funding_pct is the last funding rate in percent; basis_pct is "
+    "(mark - index) / index x 100; oi_change_24h_pct is the open-interest change; ls_ratio "
+    "is the global long/short account ratio; taker_ratio is taker buy over sell volume; "
+    "ret_24h_vs_universe_pct is the coin's 24h return minus the mean of all coins. null is a "
+    "value that could not be fetched; a coin missing from the table could not be fetched at "
+    "all and must not be picked. Reply with ONLY a JSON object holding just the coins you "
+    'pick LONG or SHORT: {"ETH": {"side": "LONG" or "SHORT", "confidence": integer 0-100, '
+    '"reason": "at most 25 words, in Indonesian"}, ...}. Every coin you leave out is NONE; '
+    "{} means NONE for all of them."
 )
 
 
@@ -177,7 +180,7 @@ def snapshot(now_ms=None, get=_get):
 # ── Hybrid arm (H-SC2): the engine's own score per coin, added to the same input ──────
 
 SYSTEM_HYBRID = SYSTEM + (
-    " Each coin also carries engine_buy_score, engine_sell_score, engine_threshold and "
+    " Each row also carries engine_buy_score, engine_sell_score, engine_threshold and "
     "engine_signal (BUY/SELL/HOLD): the score of a rule-based indicator system on the same "
     "closed 1h bar; it fires when a score passes its threshold. That system's record on "
     "altcoins is poor, so treat it as one more input, not as authority."
@@ -256,7 +259,16 @@ def pure_picks(path, bar):
         con.close()
 
 
+DECIMALS = {"funding_pct": 4, "basis_pct": 3}       # every other number: 2 decimals
+
+
+def _r(key, v):
+    return round(v, DECIMALS.get(key, 2)) if isinstance(v, float) else v
+
+
 def build_context(snap, engine=False):
+    """The numbers the model sees, rounded as it sees them (`render_table`). Stored as the
+    cycle's `context`, so a stored row is exactly what was asked about."""
     live = [f for f in snap["coins"].values() if f and f.get("ret_24h_pct") is not None]
     mean24 = float(np.mean([f["ret_24h_pct"] for f in live])) if live else None
     coins = {}
@@ -270,9 +282,21 @@ def build_context(snap, engine=False):
         d["ret_24h_vs_universe_pct"] = (_num(f["ret_24h_pct"] - mean24)
                                         if mean24 is not None and f["ret_24h_pct"] is not None
                                         else None)
-        coins[c] = d
+        coins[c] = {k: _r(k, v) for k, v in d.items()}
     bar = datetime.fromtimestamp(snap["bar_close_ms"] / 1000, UTC).strftime("%Y-%m-%d %H:%M")
-    return {"bar_closed_utc": bar, "coins": coins}
+    return {"bar_closed_utc": bar, "prompt": PROMPT_VERSION, "coins": coins}
+
+
+def render_table(ctx):
+    """CSV with the column names once: the same numbers as JSON at under half the tokens."""
+    live = {c: d for c, d in ctx["coins"].items() if d}
+    if not live:
+        return f"Bar closed {ctx['bar_closed_utc']} UTC. No coin could be fetched."
+    cols = list(next(iter(live.values())))
+    cell = lambda v: "null" if v is None else str(v)
+    rows = [",".join(["coin"] + cols)] + [",".join([c] + [cell(d.get(k)) for k in cols])
+                                          for c, d in live.items()]
+    return f"Bar closed {ctx['bar_closed_utc']} UTC, one row per coin:\n" + "\n".join(rows)
 
 
 def parse_picks(text, coins=UNIVERSE):
@@ -285,7 +309,7 @@ def parse_picks(text, coins=UNIVERSE):
     for c in coins:
         e = o.get(c)
         if e is None:
-            out[c] = {"side": "NONE", "confidence": None, "reason": "(not answered)"}
+            out[c] = {"side": "NONE", "confidence": None, "reason": ""}   # v2: left out = NONE
             continue
         side, conf = e.get("side"), e.get("confidence")
         if side not in SIDES:
@@ -475,7 +499,7 @@ def run_once(ask_fn=None, get=_get, db_path=DB_PATH, now_ms=None, usage_path=USA
         except Exception as exc:  # noqa: BLE001 - the book must never cost a scan
             logger.warning("paper book not managed: %s", exc)
         ctx = build_context(snap, engine=(arm == "hybrid"))
-        prompt = "Scanner input (JSON):\n" + json.dumps(ctx, indent=1)
+        prompt = render_table(ctx)
         rec = {"model": None, "error": None, "input_tokens": None, "output_tokens": None,
                "cost_usd": None}
         picks, t0 = {}, time.time()
@@ -548,7 +572,7 @@ def main(argv=None):
     load_dotenv(ROOT / ".env")
     if args.dry_run:
         snap = snapshot()
-        print(json.dumps(build_context(snap), indent=1) if snap["bar_close_ms"] else "no data")
+        print(render_table(build_context(snap)) if snap["bar_close_ms"] else "no data")
         return 0
     snap = snapshot()
     if snap["bar_close_ms"] is None:
