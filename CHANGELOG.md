@@ -4,6 +4,27 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-18 — feat(scanner): prompt v2, ~55% cheaper, same model and cadence; H-SC/H-SC2 restart
+
+The owner found the API cost high: about $36 a month for 48 Opus calls a day. They asked for a
+better prompt while keeping Opus and the hourly cadence, without losing performance.
+
+- **Input:** the same numbers as a CSV table (column names once) instead of indented JSON
+  with every key repeated per coin, rounded to 2 decimals (funding 4, basis 3).
+  `render_table()`; the stored `context` holds the rounded values plus `"prompt": "v2"`.
+- **Reply:** only the coins picked LONG/SHORT, each with confidence and a reason. A coin left
+  out, or `{}`, means NONE. About 72% of answers were NONE, and their reasons were never used.
+- **Measured live on one bar (temporary DBs):** pure $0.0243 → $0.0099 (input 2,998 → 1,349
+  tokens, output 614 → 225), hybrid $0.0269 → $0.0134. Both arms together go from about $36
+  to about $17 a month.
+- **Tests restart:** the H-SC prereg treats a new prompt as a new test, so H-SC and H-SC2 count
+  only v2 cycles (`scanner_eval.load(prompt="v2")`). The demo books carry on. See the
+  addendum in `2026-11-17-claude-scanner-prereg.md`.
+
+Tests 326/326.
+
+---
+
 ## 2026-11-17 — feat(ops): data-collection safety net, random book, H-DR prereg
 
 The owner asked what to improve in the data collection. Four parts; none touches the BTC bot

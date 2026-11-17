@@ -24,7 +24,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from agents.scanner import UNIVERSE  # noqa: E402
+from agents.scanner import PROMPT_VERSION, UNIVERSE  # noqa: E402
 
 HORIZON_H = 24                         # prereg: the criterion
 OTHER_H = (4, 72)                      # prereg: reported only
@@ -35,7 +35,9 @@ MAX_ERROR_SHARE = 0.20
 BLOCK, N_BOOT, SEED = 7, 5000, 2026
 
 
-def load(db):
+def load(db, prompt=PROMPT_VERSION):
+    """Cycles asked with `prompt` (and their picks). Addendum 2026-11-18: a new prompt is a
+    new test, so v1 cycles never enter a v2 score."""
     con = sqlite3.connect(db)
     cyc = pd.read_sql("SELECT id, timestamp, bar_close, model, error, cost_usd, context "
                       "FROM scan_cycles ORDER BY bar_close", con)
@@ -43,6 +45,10 @@ def load(db):
     con.close()
     for c in ("timestamp", "bar_close"):
         cyc[c] = pd.to_datetime(cyc[c], utc=True).dt.tz_localize(None)
+    if prompt is not None:
+        ver = cyc.context.map(lambda x: json.loads(x).get("prompt", "v1") if isinstance(x, str) else None)
+        cyc = cyc[ver == prompt].reset_index(drop=True)
+        picks = picks[picks.cycle_id.isin(cyc.id)]
     return cyc, picks
 
 
