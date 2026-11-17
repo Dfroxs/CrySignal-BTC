@@ -4,6 +4,28 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-18 — prereg: run-4 part B on run 4's own cycles (H-VR, H-BS)
+
+`docs/superpowers/specs/2026-11-18-run4b-prereg.md` and `scripts/run4b_eval.py`. Window: run 4's
+first 60 days, scored on or after 2027-01-16 18:44:50 UTC with `live_ic` statistics. Written
+with about a day in the window and nothing computed.
+
+- **H-VR (`rel_ic_dir`):**
+  - PASS needs both a positive gap to base (replicating H-V1) and a positive IC of its own.
+  - H-V1 passed only by being less wrong than base; its own IC was +0.023.
+  - Beating base alone is INCONCLUSIVE.
+- **H-BS (basis direction):** two-sided, BULLISH / BEARISH / INCONCLUSIVE.
+  - Basis has been disabled since 2026-10-15. H-F (history, bearish) and H-L1 (run 3 live,
+    bullish) conflict.
+  - A correction: the 2026-11-18 engine review called basis "read backwards". The condition
+    does not score live, so that finding was stale.
+- **Plan and dashboard:** the run-4 plan's candidates now point at these tests. The
+  dashboard's progress meters gain "Perbaikan engine", due 16 Jan 2027.
+
+Tests 330/330.
+
+---
+
 ## 2026-11-18 — feat(run 4, part A): engine fixes, futures fee 0.05%, flip shadow; H-VG restarts
 
 The owner moved run 4's decided items forward rather than wait for 2027-02-15. Every item
