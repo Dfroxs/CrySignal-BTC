@@ -4,6 +4,22 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-17 — feat(dashboard): passbook design (owner asked for the frontend-design skill)
+
+The page now reads like a bank passbook, the owner's own frame for demo money. Header rule
+and "buku kas demo"; one status sentence; the hero "Uang demo, modal $1.000 per akun" draws
+every account (BTC bot, BTC + Claude filter, scanner futures, scanner spot, and the hybrid arm
+when present) as a bar growing right (gain) or left (loss) from one 1,000 USD line on a
+shared scale, with the balance beside it; it replaces four identical cards. "Mutasi terakhir"
+is a passbook ledger across the BTC bot and both scanner books: date, account, description,
+amount, balance after the close, alternating tint rows (`usd_account` and `scan_book` now
+record their entries). Palette: security-tint paper #EEF2EE, blue-black ink, stamp red for
+losses, deep green for gains, BUY blue / SELL orange unchanged; dark mode is ink-blue, not
+black. One typeface, Public Sans, 800 for balances. Middle-dot separators removed. Checked by
+screenshot in light, dark and at phone width. Tests 321/321.
+
+---
+
 ## 2026-11-16 — feat: hybrid scanner arm (H-SC2): Claude + the engine's score, concurrent
 
 Pre-registered first (`2026-11-17-claude-scanner-hybrid-prereg.md`). The scanner process now
