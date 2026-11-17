@@ -171,6 +171,21 @@ pairs from the hybrid arm's first cycle (2026-11-17 04:00 bar).
 - **H-DR** is pre-registered; it is scored on or after 2027-02-06.
 
 `spotsignal` was not restarted.
+**2026-11-17 18:17 UTC: pulled `3a90822` (PRs #43 + #44), restarted `spotsignal-dash` only.**
+- **Scanner prompt v2** (table input, picks-only reply, about 55% cheaper; same Opus, same
+  hourly cadence).
+  - The first v2 cycle is the 19:00 bar (cron 19:05).
+  - H-SC and H-SC2 count only v2 cycles (prereg addendum). The 18:00 bar and earlier are v1
+    and are never scored.
+- **Dashboard revamp:**
+  - scoreboard versus random;
+  - test progress meters;
+  - positions grouped by account;
+  - picks matrix.
+
+  The 8081 preview worktree was removed.
+
+`spotsignal` was not restarted.
 ---
 
 ## New session? Do this first
