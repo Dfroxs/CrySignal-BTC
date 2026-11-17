@@ -14,6 +14,13 @@ held coin is ignored, opposite or not), entry at the bar close, stop 1.5 x ATR(1
 only if free cash covers it). `run_once` walks open positions through the newly
 closed bars before asking, and opens after storing the picks; a book failure is logged and
 never costs a scan. The model never sees the book, so H-SC is unchanged (prereg addendum).
+Fourth book (owner): "Claude pilih koin, spot" (`dashboard.spot_book`), the scanner's LONG
+positions re-priced as spot: SHORT picks skipped (spot cannot short), same entries and exits,
+0.30pp spot round trip instead of 0.20pp, its own 1,000 USD at 10% of realised equity. Display
+only, no extra API call. A LONG pick the futures book skipped (coin held SHORT) is missed.
+Dashboard also rewritten in plain language (owner: "masih bingung"): one status line, money
+cards, an activity feed in sentences, LONG ↑ / SHORT ↓, "kena stop/target", technical detail
+folded away, a glossary.
 Third book (owner): "BTC + filter Claude", the same BTC positions with Claude's entry opinion
 as a veto (`dashboard.claude_filter`): DISAGREE dropped, AGREE / no opinion / errored kept, as
 a fail-open gate would. Display only. Live at the time: 1,010.87 USD (+1.09%) vs 1,001.81
