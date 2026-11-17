@@ -196,6 +196,8 @@ def main(argv=None):
     ap.add_argument("--db", default="data/scanner.db")
     ap.add_argument("--out")
     ap.add_argument("--hybrid-db", help="H-SC2: also score the hybrid arm against the pure one")
+    ap.add_argument("--only", choices=("hsc", "hsc2"), default=None,
+                    help="score one test only, so a test due first never prints the other early")
     args = ap.parse_args(argv)
     cyc, picks = load(args.db)
     if cyc.empty:
@@ -206,7 +208,7 @@ def main(argv=None):
         print(f"LEAKAGE CHECK FAILED for cycles {bad[:10]} ({len(bad)}): run discarded")
         return 2
     closes = closes_by_coin(cyc.bar_close.min(), cyc.bar_close.max())
-    res = score(cyc, picks, closes)
+    res = score(cyc, picks, closes) if args.only != "hsc2" else {}
     print(f"source {args.db}: {len(cyc)} cycles, {cyc.bar_close.min()} .. {cyc.bar_close.max()}")
     for model, r in res.items():
         print(f"\n{model}: {r['verdict']}  mean day excess {r['mean_day_excess_pp']:+.3f}pp "
@@ -216,7 +218,7 @@ def main(argv=None):
                   "btc_vs_rest", "excess_4h", "excess_72h", "cost_usd"):
             if k in r:
                 print(f"  {k}: {r[k]}")
-    if args.hybrid_db and Path(args.hybrid_db).exists():
+    if args.only != "hsc" and args.hybrid_db and Path(args.hybrid_db).exists():
         hc, hp = load(args.hybrid_db)
         bad = leakage_ok(hc)
         if bad:
