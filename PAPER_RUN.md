@@ -2,6 +2,25 @@
 
 **Rewritten 2026-10-09, when run 3 started. Read this first when you come back.**
 
+**Run 4 started 2026-11-17 18:44:50 UTC at `3377027`** (PR #46, run-4 part A). Owner's go.
+Bot restarted by killing the MainPID; systemd respawned it, pid 383220, active 18:44:35.
+- **No position was open at the restart.**
+- **Run 3 archived:** `data/paper_run_manifest.run3.json`, plus
+  `data/backups/FINAL-run3-20261117-1844-signal_history.db` (integrity ok).
+- **New manifest** made with `start_paper_run.py --force`. It freezes `futures_fee_pct`
+  0.05; thresholds are spot 4.3 / futures 4.91. 19 earlier positions stay in the DB.
+- **What changed (trading path):**
+  - HTF conflict penalty applied last;
+  - session bump at the bar's close hour;
+  - a macro-forced HOLD clears its levels;
+  - futures fee 0.05%;
+  - stop checked before flip;
+  - flip shadow (H-FLP-C, `shadow_flip_opinions`).
+- **H-VG** window: 2026-11-17 18:44:50 to 2027-02-15 18:44:50 UTC (PR #47, `030af16`). H-SC,
+  H-SC2 and H-DR are unaffected (separate processes and data).
+- **Part B** of the run-4 plan (veto gate, L/S, `rel_ic_dir`, basis) waits for its own
+  results.
+
 **Run 3 started 2026-10-09 05:41:31 UTC at `c0e8764`** (manifest on the host; run 2's
 is archived as `paper_run_manifest.run2.json`, its final DB as
 `data/backups/FINAL-run2-20261009-signal_history.db`, integrity ok, also on the Mac).
