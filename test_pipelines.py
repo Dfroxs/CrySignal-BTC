@@ -5699,6 +5699,13 @@ def test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel():
         assert (cf["kept"], cf["vetoed"], cf["vetoed_pnl"], cf["kept_pnl"]) == (2, 1, -2.0, 5.0), \
             "only DISAGREE is dropped; no opinion is kept"
         assert abs(cf["realised"] - (1000 + 4.0 + 1.004)) < 1e-9 and cf["fresh_kept"] == 2
+        pos = [{"side": "LONG", "coin": "SOL", "opened_bar": "2026-11-17T01:00:00+00:00",
+                "closed_bar": "2026-11-17T05:00:00+00:00", "pnl_pct": 2.8, "outcome": "TARGET"},
+               {"side": "SHORT", "coin": "XRP", "opened_bar": "2026-11-17T01:00:00+00:00",
+                "closed_bar": "2026-11-17T05:00:00+00:00", "pnl_pct": 5.0, "outcome": "TARGET"}]
+        sb = dsh.spot_book(pos, [])
+        assert sb["skipped_short"] == 1 and sb["stats"]["n"] == 1, "spot cannot short"
+        assert abs(sb["realised"] - (1000 + (2.8 + 0.20 - 0.30))) < 1e-9, "spot costs, 10% of 1,000"
         assert f["scanner"] is None and f["host"]["services"]["Q&A"] == "active"
         page = dsh.render(f)
         assert "Semua berjalan normal" not in page, "a blind futures cycle is an issue"

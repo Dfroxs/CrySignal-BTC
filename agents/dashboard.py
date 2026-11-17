@@ -374,12 +374,37 @@ def scanner_facts(path):
         out["book"] = {"open": opened, "closed": closed[::-1][:CLOSED_ROWS], "stats": _book(rows),
                        "start": BOOK_START_USD, "realised": realised, "equity": realised + upnl,
                        "upnl": upnl, "used": used, "cash": realised - used, "curve": curve}
+        out["spot_book"] = spot_book(pos, opened)
         held = {p["coin"]: p for p in opened}
         out["coins"] = [{"coin": c, "f": coins.get(c), "price": px.get(c), "pick": pick.get(c),
                          "pos": held.get(c)} for c in UNIVERSE]
         return out
     finally:
         con.close()
+
+
+SPOT_COST_PP = 0.30                  # spot round trip: 0.10% fee + 0.05% slippage, each way
+
+
+def spot_book(pos, opened):
+    """The scanner's LONG positions re-priced as spot (owner, 2026-11-16): spot cannot short,
+    so SHORT picks are skipped; same entries and exits (same stop/target rule), spot costs
+    instead of futures costs, its own 1,000 USD sized at 10% of its realised equity. Display
+    only. A LONG pick the futures book skipped because the coin was held SHORT is missed here."""
+    from agents.scanner import BOOK_COST_PP
+    longs = [p for p in pos if p["side"] == "LONG"]
+    closed = [{"opened_at": p["opened_bar"], "closed_at": p["closed_bar"], "coin": p["coin"],
+               "outcome": p["outcome"], "pnl_pct": p["pnl_pct"] + BOOK_COST_PP - SPOT_COST_PP}
+              for p in longs if p["closed_bar"] and p["pnl_pct"] is not None]
+    open_ = [{"opened_at": p["opened_bar"], "move_pct": p.get("move_pct")}
+             for p in opened if p["side"] == "LONG"]
+    acc = usd_account(closed, open_)
+    closed.sort(key=lambda c: c["closed_at"])
+    acc.update(stats=_book([(_dt(c["opened_at"]), _dt(c["closed_at"]), c["pnl_pct"], c["outcome"])
+                            for c in closed]),
+               open=len(open_), skipped_short=sum(1 for p in pos if p["side"] == "SHORT"),
+               closed=closed[::-1][:CLOSED_ROWS])
+    return acc
 
 
 def cost_facts(db, root, now):
@@ -544,7 +569,7 @@ border:0;border-bottom:3px solid transparent;padding:12px 16px 11px;cursor:point
 .status{display:flex;gap:10px;align-items:center;font-size:16px;margin:14px 0 4px;color:var(--ink)}
 .status.bad{color:var(--bad)}.status a{color:inherit}
 .sr{position:absolute;left:-9999px}
-.cards{display:grid;gap:16px;margin-top:20px;grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr))}
+.cards{display:grid;gap:16px;margin-top:20px;grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr))}
 .card{display:block;text-decoration:none;color:inherit}
 a.card:hover{border-color:var(--ink2)}
 .card h3{font:600 20px/1.2 "Barlow Condensed",Barlow,sans-serif;margin:0}
@@ -928,6 +953,18 @@ def _scanner_tab(s):
                          y_fmt="${:,.0f}", label="nilai akun Claude pilih koin") + "</div><div><h3>Posisi terakhir yang selesai</h3>"
                  + (_table(["koin", "arah", "selesai", "cara selesai", "hasil", "%"], rows, num=(4, 5))
                     if rows else '<p class="empty">Belum ada posisi yang selesai.</p>') + "</div></div></section>")
+    sb = s.get("spot_book")
+    if sb:
+        rows = [[f"<b>{e(c['coin'])}</b>", _t(c["closed_at"]), _out(c["outcome"]), _pnl(c["pnl_pct"], 2, "%")]
+                for c in sb["closed"]]
+        P.append('<section><h2>Versi spot</h2><p class="lede">Kalau pilihan Claude dijalankan di akun '
+                 'spot: hanya LONG (spot tidak bisa SHORT), biaya spot 0,30% per posisi (futures 0,20%), '
+                 'modal $1.000 sendiri. Masuk dan keluarnya sama dengan posisi LONG di atas.</p>'
+                 '<div class="cols"><div><h3>Nilai akun spot (dolar)</h3>'
+                 + chart([{"n": "", "c": "var(--ink)", "p": sb["curve"]}], width=560, height=190,
+                         y_fmt="${:,.0f}", label="nilai akun spot") + "</div><div><h3>Posisi spot terakhir yang selesai</h3>"
+                 + (_table(["koin", "selesai", "cara selesai", "hasil"], rows, num=(3,)) if rows
+                    else '<p class="empty">Belum ada posisi LONG yang selesai.</p>') + "</div></div></section>")
     coins = s.get("coins") or []
     det = []
     if coins:
@@ -1118,8 +1155,13 @@ def render(f):
     if ca:
         P.append(_card("Bot BTC + saran Claude", "sama, tapi posisi yang tidak disetujui Claude dilewati", ca,
                        f'{ca["kept"]} diambil · {ca["vetoed"]} dilewati', "btc"))
-    P.append(_card("Claude pilih koin", "Claude memilih dari 9 koin tiap jam", bk,
+    P.append(_card("Claude pilih koin", "Claude memilih dari 9 koin tiap jam, futures (LONG dan SHORT)", bk,
                    (f'{len(bk["open"])} posisi berjalan · {bk["stats"]["n"]} selesai' if bk else ""), "scanner"))
+    sb = (s or {}).get("spot_book")
+    if sb:
+        P.append(_card("Claude pilih koin, spot", "pilihan yang sama, hanya LONG, biaya spot", sb,
+                       f'{sb["open"]} posisi berjalan · {sb["stats"]["n"]} selesai · '
+                       f'{sb["skipped_short"]} SHORT dilewati', "scanner"))
     P.append("</div>")
     ev = _events(d, s, now)
     recent = [x for x in ev if (now - x[0]).total_seconds() <= 86400]
