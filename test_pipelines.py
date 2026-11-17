@@ -5940,6 +5940,15 @@ def test_scanner_paper_book_opens_one_per_coin_and_exits_stop_first_target_or_ti
     assert s.open_book(con, 3, {"BTC": {"side": "SHORT", "confidence": 90}}, snap, t0 + 30 * H) == 1
     size = con.execute("SELECT size_usd FROM scan_positions ORDER BY id DESC LIMIT 1").fetchone()[0]
     assert size == round(equity * 0.10, 2), "size compounds with realised equity"
+    sp = {"BTC": {"side": "LONG", "confidence": 70}, "ETH": {"side": "SHORT", "confidence": 70}}
+    assert s.open_book(con, 5, sp, snap, t0 + 30 * H, "spot") == 1, "spot takes LONG only"
+    assert con.execute("SELECT COUNT(*) FROM scan_positions WHERE book='spot' AND coin='BTC' "
+                       "AND closed_bar IS NULL").fetchone()[0] == 1, "BTC held SHORT in futures, LONG in spot"
+    sid = con.execute("SELECT id FROM scan_positions WHERE book='spot'").fetchone()[0]
+    s._close_pos(con, sid, "spot", "LONG", 100.0, 100.0, t0 + 31 * H, 103.0, "TARGET")
+    assert abs(con.execute("SELECT pnl_pct FROM scan_positions WHERE id=?", (sid,)).fetchone()[0]
+               - (3.0 - 0.30)) < 1e-9, "spot cost 0.30pp"
+    assert s.book_account(con, "spot") == (1000 + 2.7, 0), "each book has its own 1,000 USD"
     saved = s.BOOK_FRACTION
     try:
         s.BOOK_FRACTION = 0.5             # BTC holds ~10%, so one more 50% fits and the next does not
@@ -6024,13 +6033,10 @@ def test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel():
         assert (cf["kept"], cf["vetoed"], cf["vetoed_pnl"], cf["kept_pnl"]) == (2, 1, -2.0, 5.0), \
             "only DISAGREE is dropped; no opinion is kept"
         assert abs(cf["realised"] - (1000 + 4.0 + 1.004)) < 1e-9 and cf["fresh_kept"] == 2
-        pos = [{"side": "LONG", "coin": "SOL", "opened_bar": "2026-11-17T01:00:00+00:00",
-                "closed_bar": "2026-11-17T05:00:00+00:00", "pnl_pct": 2.8, "outcome": "TARGET"},
-               {"side": "SHORT", "coin": "XRP", "opened_bar": "2026-11-17T01:00:00+00:00",
-                "closed_bar": "2026-11-17T05:00:00+00:00", "pnl_pct": 5.0, "outcome": "TARGET"}]
-        sb = dsh.spot_book(pos, [])
-        assert sb["skipped_short"] == 1 and sb["stats"]["n"] == 1, "spot cannot short"
-        assert abs(sb["realised"] - (1000 + (2.8 + 0.20 - 0.30))) < 1e-9, "spot costs, 10% of 1,000"
+        sb = dsh.scan_book([{"coin": "SOL", "side": "LONG", "opened_bar": "2026-11-17T01:00:00+00:00",
+                             "closed_bar": "2026-11-17T05:00:00+00:00", "pnl_pct": 2.7, "pnl_usd": 2.7,
+                             "outcome": "TARGET", "size_usd": 100.0}])
+        assert sb["stats"]["n"] == 1 and abs(sb["equity"] - 1002.7) < 1e-9 and sb["curve"][0][1] == 1000
         assert f["scanner"] is None and f["host"]["services"]["Q&A"] == "active"
         page = dsh.render(f)
         assert "Semua berjalan normal" not in page, "a blind futures cycle is an issue"

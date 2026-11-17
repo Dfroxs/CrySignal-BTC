@@ -123,3 +123,8 @@ equity at entry, opened only if the free cash covers it. Fixed before any positi
 existed. The model never sees the book, so the picks H-SC scores are unchanged, and **H-SC's
 criteria, statistic and dates are unchanged**: it is still scored on `excess` per day from
 `scan_picks`, never on this book. The book's P&L is reported beside H-SC and licenses nothing.
+
+Same day, also fixed before any position existed: a second, independent **spot** book on the
+same picks (`book = 'spot'`): LONG picks only (spot cannot short), 0.30pp round trip, its own
+1,000 USD and one-position-per-coin slots, the same stop/target/24h rule. Like the futures
+book it is reported beside H-SC and licenses nothing.

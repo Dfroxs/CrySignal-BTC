@@ -242,6 +242,7 @@ def connect(path=DB_PATH):
         -- Paper book driven by the picks (design decision for data, not part of H-SC).
         CREATE TABLE IF NOT EXISTS scan_positions (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            book        TEXT NOT NULL DEFAULT 'futures',   -- futures / spot (BOOKS)
             coin        TEXT NOT NULL,
             side        TEXT NOT NULL,           -- LONG / SHORT
             cycle_id    INTEGER REFERENCES scan_cycles(id),
@@ -254,11 +255,11 @@ def connect(path=DB_PATH):
             closed_bar  TEXT,                    -- close of the bar the exit happened in
             exit        REAL,
             outcome     TEXT,                    -- STOP / TARGET / TIME
-            pnl_pct     REAL,                    -- after BOOK_COST_PP
+            pnl_pct     REAL,                    -- after the book's round-trip cost
             size_usd    REAL,                    -- BOOK_FRACTION of realised equity at entry
             pnl_usd     REAL
         );
-        CREATE INDEX IF NOT EXISTS idx_scan_pos_open ON scan_positions(coin, closed_bar);
+        CREATE INDEX IF NOT EXISTS idx_scan_pos_open ON scan_positions(book, coin, closed_bar);
     """)
     return con
 
@@ -269,20 +270,27 @@ def connect(path=DB_PATH):
 # 3 x ATR, closed at the close of the bar 24h after entry; a bar touching both levels counts
 # as the stop. A 1,000 USD demo account: each position is 10% of realised equity (it
 # compounds), opened only if the cash not already in positions covers it. The model never
-# sees this book, so H-SC's picks are unaffected by it.
+# sees these books, so H-SC's picks are unaffected by them.
+# Two independent books on the same picks: futures takes LONG and SHORT; spot (owner, same
+# day) takes LONG only, since spot cannot short, at spot costs. Each has its own 1,000 USD,
+# its own one-position-per-coin slots and its own exits.
 
 BOOK_STOP_ATR, BOOK_TARGET_ATR, BOOK_HOLD_H = 1.5, 3.0, 24
-BOOK_COST_PP = 0.20                  # futures round trip, as the H-SC prereg's net figure
-BOOK_START_USD = 1000.0              # owner, 2026-11-16
+BOOK_START_USD = 1000.0              # owner, 2026-11-16, per book
 BOOK_FRACTION = 0.10                 # of realised equity per position; 9 coins fit in 90%
+BOOKS = {   # round trip in pp: (fee + 0.05% slippage) x 2; sides the book can take
+    "futures": {"cost_pp": 0.20, "sides": ("LONG", "SHORT")},   # 0.05% taker
+    "spot":    {"cost_pp": 0.30, "sides": ("LONG",)},           # 0.10% taker
+}
+BOOK_COST_PP = BOOKS["futures"]["cost_pp"]
 
 
-def book_account(con):
-    """(realised equity, USD tied up in open positions)."""
+def book_account(con, book="futures"):
+    """(realised equity, USD tied up in open positions) of one book."""
     real = con.execute("SELECT COALESCE(SUM(pnl_usd), 0) FROM scan_positions "
-                       "WHERE closed_bar IS NOT NULL").fetchone()[0]
+                       "WHERE book = ? AND closed_bar IS NOT NULL", (book,)).fetchone()[0]
     used = con.execute("SELECT COALESCE(SUM(size_usd), 0) FROM scan_positions "
-                       "WHERE closed_bar IS NULL").fetchone()[0]
+                       "WHERE book = ? AND closed_bar IS NULL", (book,)).fetchone()[0]
     return BOOK_START_USD + real, used
 
 
@@ -292,9 +300,9 @@ def book_levels(side, entry, atr_pct):
     return entry - d * BOOK_STOP_ATR * a, entry + d * BOOK_TARGET_ATR * a
 
 
-def _close_pos(con, pid, side, entry, size, bar_close_ms, exit_px, outcome):
+def _close_pos(con, pid, book, side, entry, size, bar_close_ms, exit_px, outcome):
     d = 1 if side == "LONG" else -1
-    pct = d * (exit_px / entry - 1) * 100 - BOOK_COST_PP
+    pct = d * (exit_px / entry - 1) * 100 - BOOKS[book]["cost_pp"]
     con.execute("UPDATE scan_positions SET closed_bar=?, exit=?, outcome=?, pnl_pct=?, pnl_usd=? "
                 "WHERE id=?", (_iso(bar_close_ms), exit_px, outcome, round(pct, 4),
                                round(pct / 100 * size, 4), pid))
@@ -303,8 +311,8 @@ def _close_pos(con, pid, side, entry, size, bar_close_ms, exit_px, outcome):
 def manage_book(con, snap):
     """Walk every open position through the closed bars after its entry. Returns closes."""
     closed = 0
-    for pid, coin, side, opened, entry, stop, target, size in con.execute(
-            "SELECT id, coin, side, opened_bar, entry, stop, target, size_usd FROM scan_positions "
+    for pid, book, coin, side, opened, entry, stop, target, size in con.execute(
+            "SELECT id, book, coin, side, opened_bar, entry, stop, target, size_usd FROM scan_positions "
             "WHERE closed_bar IS NULL").fetchall():
         f = snap["coins"].get(coin)
         if not f:
@@ -318,35 +326,37 @@ def manage_book(con, snap):
             hit_stop = lo <= stop if side == "LONG" else hi >= stop
             hit_tgt = hi >= target if side == "LONG" else lo <= target
             if hit_stop or hit_tgt:
-                _close_pos(con, pid, side, entry, size, end, stop if hit_stop else target,
+                _close_pos(con, pid, book, side, entry, size, end, stop if hit_stop else target,
                            "STOP" if hit_stop else "TARGET")
                 closed += 1
                 break
             if end >= deadline:
-                _close_pos(con, pid, side, entry, size, end, cl, "TIME")
+                _close_pos(con, pid, book, side, entry, size, end, cl, "TIME")
                 closed += 1
                 break
     return closed
 
 
-def open_book(con, cid, picks, snap, bar_close_ms):
-    """One position per coin: a pick for a coin already held is ignored, and one the free cash
-    cannot cover is skipped. Size = BOOK_FRACTION of realised equity."""
-    held = {r[0] for r in con.execute("SELECT coin FROM scan_positions WHERE closed_bar IS NULL")}
-    equity, used = book_account(con)
+def open_book(con, cid, picks, snap, bar_close_ms, book="futures"):
+    """One position per coin and book: a pick for a coin the book already holds is ignored,
+    one the book cannot take (SHORT on spot) or the free cash cannot cover is skipped.
+    Size = BOOK_FRACTION of the book's realised equity."""
+    held = {r[0] for r in con.execute("SELECT coin FROM scan_positions WHERE book = ? AND "
+                                      "closed_bar IS NULL", (book,))}
+    equity, used = book_account(con, book)
     size = round(equity * BOOK_FRACTION, 2)
     opened = 0
     for coin, p in picks.items():
         f = snap["coins"].get(coin)
-        if p["side"] == "NONE" or coin in held or not f or not f.get("atr_pct"):
+        if p["side"] not in BOOKS[book]["sides"] or coin in held or not f or not f.get("atr_pct"):
             continue
         if size <= 0 or used + size > equity:
             logger.info("book: no cash for %s (%.2f used of %.2f)", coin, used, equity)
             continue
         stop, target = book_levels(p["side"], f["close"], f["atr_pct"])
-        con.execute("INSERT INTO scan_positions (coin, side, cycle_id, confidence, opened_bar, "
-                    "entry, stop, target, atr_pct, size_usd) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                    (coin, p["side"], cid, p["confidence"], _iso(bar_close_ms), f["close"],
+        con.execute("INSERT INTO scan_positions (book, coin, side, cycle_id, confidence, opened_bar, "
+                    "entry, stop, target, atr_pct, size_usd) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (book, coin, p["side"], cid, p["confidence"], _iso(bar_close_ms), f["close"],
                      stop, target, f["atr_pct"], size))
         used += size
         opened += 1
@@ -406,7 +416,8 @@ def run_once(ask_fn=None, get=_get, db_path=DB_PATH, now_ms=None, usage_path=USA
             [(cid, c, p["side"], p["confidence"], p["reason"], snap["coins"][c]["close"])
              for c, p in picks.items()])
         try:
-            open_book(con, cid, picks, snap, snap["bar_close_ms"])
+            for book in BOOKS:
+                open_book(con, cid, picks, snap, snap["bar_close_ms"], book)
         except Exception as exc:  # noqa: BLE001
             logger.warning("paper book not opened: %s", exc)
         con.commit()

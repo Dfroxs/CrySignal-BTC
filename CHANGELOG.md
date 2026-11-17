@@ -14,10 +14,12 @@ held coin is ignored, opposite or not), entry at the bar close, stop 1.5 x ATR(1
 only if free cash covers it). `run_once` walks open positions through the newly
 closed bars before asking, and opens after storing the picks; a book failure is logged and
 never costs a scan. The model never sees the book, so H-SC is unchanged (prereg addendum).
-Fourth book (owner): "Claude pilih koin, spot" (`dashboard.spot_book`), the scanner's LONG
-positions re-priced as spot: SHORT picks skipped (spot cannot short), same entries and exits,
-0.30pp spot round trip instead of 0.20pp, its own 1,000 USD at 10% of realised equity. Display
-only, no extra API call. A LONG pick the futures book skipped (coin held SHORT) is missed.
+Fourth book (owner): "Claude pilih koin, spot", an independent book in `scan_positions`
+(`book = 'spot'`): every LONG pick opens a spot position (SHORT skipped, spot cannot short),
+with its own 1,000 USD, its own one-position-per-coin slots and exits, 0.30pp round trip
+(futures 0.20pp). Same picks, one model call, no extra cost. A first draft derived it from
+the futures book's LONG positions and so missed a LONG pick on a coin held SHORT in futures;
+replaced before merge at the owner's request.
 Dashboard also rewritten in plain language (owner: "masih bingung"): one status line, money
 cards, an activity feed in sentences, LONG ↑ / SHORT ↓, "kena stop/target", technical detail
 folded away, a glossary.
