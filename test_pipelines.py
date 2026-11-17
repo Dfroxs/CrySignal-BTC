@@ -4110,6 +4110,27 @@ def test_veto_gate_episode_effect_follows_the_gate_and_guards_power():
     few_acted = pd.concat([eff[~eff["acted"]]] * 20, ignore_index=True)
     assert vg.verdict(few_acted, n_boot=50)["verdict"] == "INCONCLUSIVE", "the gate must act 10 times"
 
+def test_run4b_window_and_verdicts_follow_the_prereg():
+    import inspect
+    import numpy as np
+    import pandas as pd
+    import scripts.run4b_eval as r
+    assert str(r.FROM) == "2026-11-17 18:44:50" and str(r.END) == "2027-01-16 18:44:50"
+    assert "refused" in inspect.getsource(r.main)
+    idx = pd.date_range("2026-11-17 17:00", "2027-01-17 00:00", freq="h")
+    w = r.window(pd.DataFrame({"x": np.arange(len(idx))}, index=idx))
+    assert w.index.min() == pd.Timestamp("2026-11-17 19:00"), "first full hour of run 4"
+    assert (w.index + pd.Timedelta(hours=24) <= r.END).all() and w.index.max() == pd.Timestamp("2027-01-15 18:00")
+    # H-VR needs BOTH a positive gap to base and a positive own IC
+    assert r.verdict_vr((0.12, 0.05, 0.2), (0.08, 0.02, 0.15), 1200) == "PASS"
+    assert r.verdict_vr((0.12, 0.05, 0.2), (0.02, -0.1, 0.13), 1200) == "INCONCLUSIVE", "less wrong than base is not enough"
+    assert r.verdict_vr((-0.01, -0.1, 0.05), (0.08, 0.02, 0.15), 1200) == "FAIL"
+    assert r.verdict_vr((0.12, 0.05, 0.2), (0.08, 0.02, 0.15), 999) == "INCONCLUSIVE", "power guard"
+    # H-BS is two-sided
+    assert r.verdict_bs(0.15, 0.04, 0.26, 1200) == "BULLISH"
+    assert r.verdict_bs(-0.15, -0.26, -0.04, 1200) == "BEARISH"
+    assert r.verdict_bs(0.05, -0.06, 0.16, 1200) == "INCONCLUSIVE"
+
 def test_scoring_scripts_refuse_before_day_30():
     import inspect
     import scripts.hd_eval as hd, scripts.score_run3 as sr
@@ -6798,6 +6819,7 @@ if __name__ == "__main__":
     run("run 4: session bump at bar close hour",  test_session_bump_reads_the_hour_the_bar_closes_not_opens)
     run("run 4: HTF penalty on final leader",     test_htf_conflict_penalty_lands_on_the_side_that_finally_leads)
     run("run 4: macro HOLD clears levels",        test_macro_forced_hold_clears_levels_and_confidence)
+    run("H-VR/H-BS: window, two-part + 2-sided",  test_run4b_window_and_verdicts_follow_the_prereg)
     run("scorers refuse before day 30",           test_scoring_scripts_refuse_before_day_30)
     run("futures hypotheses from futures restart", test_score_run3_scores_futures_hypotheses_from_the_futures_restart)
 

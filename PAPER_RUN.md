@@ -413,9 +413,14 @@ change live behaviour.
   LLM never gates a live trade (run-3 plan). It fails open on errors.
 - **L/S momentum entry condition:** only if H-DR1 and H-DR2 both PASS, and then after its own
   condition-vs-random test.
-- **`rel_ic_dir` bias rule** (H-V1, run 3): needs a prereg.
-- **Neutralise the bullish basis reading** (H-F: the engine reads basis backwards): needs a
-  prereg.
+- **`rel_ic_dir` bias rule:** only if **H-VR** PASSes. It must beat base *and* predict on its
+  own; H-V1's own IC was ~0.
+- **Basis direction:** the condition has been **disabled since 2026-10-15**, so the review's
+  "read backwards" was stale. **H-BS** decides the direction: BULLISH re-enables the original
+  reading, BEARISH re-enables it flipped, INCONCLUSIVE keeps it off. H-F (history, bearish)
+  and H-L1 (run 3 live, bullish) conflict.
+- H-VR and H-BS: `2026-11-18-run4b-prereg.md`, `scripts/run4b_eval.py`, scored on or after
+  **2027-01-16 18:44:50 UTC**, on run 4's first 60 days.
 
 **On restart day:** archive the run-3 manifest and DB the way run 2's were. Then:
 - score H-VG on its window, up to the restart;
