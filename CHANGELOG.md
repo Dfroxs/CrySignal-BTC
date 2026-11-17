@@ -4,6 +4,22 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-18 — feat(dashboard): light / dark theme toggle
+
+The owner asked to choose between light and dark. A button at the top right switches theme,
+and the choice is kept per browser (`localStorage`, `dash-theme`). Dark stays the default,
+since it is the owner's original pick.
+
+- **Light tokens** (`:root[data-theme=light]`): paper `#F5F7FA`, surface white, ink `#1F2328`.
+  Gain and loss are darkened (`#14935F` / `#D1293F`) to keep contrast on white. Chart lines
+  are `#2F6FDB` / `#A86A12`, validated for colour-blind separation on white.
+- **No flash:** a tiny script in `<head>` applies a saved theme before the stylesheet paints,
+  so a light page does not flash dark on each 5-minute refresh.
+
+Checked by screenshot (light, both main tabs). Tests 326/326.
+
+---
+
 ## 2026-11-18 — feat(dashboard): reorganised around the owner's questions
 
 The owner found the page confusing and asked for a revamp of the position, grouping, tabs and
