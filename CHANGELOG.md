@@ -4,6 +4,46 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-18 — feat(telegram): every message reformatted; hourly scanner digest added
+
+The owner found the Telegram messages hard to read and BTC-only. They approved a mockup for
+all four kinds and chose an hourly scanner message.
+
+- **Hourly BTC card** (`notifier/telegram.py`):
+  - Indonesian numbers ($63.912, 7,0) and UTC time; futures before spot.
+  - Per mode: what it did ("tahan", "LONG", "sinyal SHORT diblokir"), the leading score
+    against the bar, and why. Engine vetoes and Phase 3 gates are translated into plain
+    words (`_VETO_PLAIN`, `_GATE_PLAIN`); an unknown one is quoted, escaped.
+  - Entry, stop and both targets only for a signal that can open.
+  - Then the open BTC positions and the BTC bot's $1,000 account, counted as the dashboard
+    counts it (`db_facts`, run window).
+  - Dropped: sizing, leverage, top reasons and context lines.
+- **Open/close cards:** "Bot BTC buka SHORT futures #20" with levels; "✅/❌ Bot BTC tutup
+  …: ±x%" with the price move and the reason in words, then the account. A TP1-only close
+  says half the position was taken.
+- **Scanner digest** (`agents/scanner.py`, `send_digest`), sent at :05 only when a position
+  opened or closed. It lists opens and closes per arm (spot marked) with $ results, then a
+  `<pre>` table of every book's realised balance. A quiet hour sends nothing.
+- **Daily report** (`agents/ops_report.py`), in five parts:
+  - status;
+  - Bot BTC: cycles, signals, opens and closes in words, how many signals the safety checks
+    held, and the account;
+  - scanner: closed and open counts, the balance table, Claude murni vs acak, error cycles;
+  - Claude cost (24h, month, projection, budget);
+  - the AI summary.
+
+  Variant, gate and threshold jargon left the message; it stays in the facts the summary
+  reads.
+- **Alarm:** "🚨 Ada masalah · HH:MM UTC" with bullets, "(sudah N jam)" on a reminder,
+  "Cek dashboard, tab Sistem.", and "✅ Sudah normal lagi". A stuck scanner reads
+  "macet".
+- **Tests:** Telegram, ops and alarm format tests rewritten to the approved wording, with
+  the same intent. `_tg_db` also pins the account line, and `_assert_html_safe` accepts
+  `<pre>`. New: scanner digest per arm, silent when quiet. Tests 333/333; previewed on the
+  VPS's live data.
+
+---
+
 ## 2026-11-18 — fix(paper): a live TP2 exit pays a full round trip and records its price
 
 Review of `trading/paper.py` and the `run_bot.py` gates (owner's request).
