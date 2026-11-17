@@ -4079,7 +4079,8 @@ def test_veto_gate_episode_effect_follows_the_gate_and_guards_power():
     import inspect
     import pandas as pd
     import scripts.veto_gate_eval as vg
-    assert str(vg.FROM) == "2026-11-17 00:00:00" and str(vg.SCORE_BY.date()) == "2027-02-15"
+    assert str(vg.FROM) == "2026-11-17 18:44:50" and str(vg.SCORE_BY) == "2027-02-15 18:44:50", \
+        "the window starts at the run-4 restart (amendment)"
     assert "refused" in inspect.getsource(vg.main)
     t = lambda h: pd.Timestamp("2026-11-20") + pd.Timedelta(hours=h)
     ops = pd.DataFrame([
