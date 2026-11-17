@@ -15,7 +15,9 @@ before Telegram renders it.
 
 Health and spend only: positions opened/closed, signals fired, whether the score
 variants still differ from base, shadow agents' calls/errors/latency, and LLM tokens and
-estimated USD (24h, month to date, projection) against LLM_MONTHLY_BUDGET_USD. The
+estimated USD (24h, month to date, projection) against LLM_MONTHLY_BUDGET_USD. Plus each
+scanner arm's cycles, errors and demo-book balances, as the dashboard shows them: the
+books license nothing (H-SC scores `scan_picks`, never a book). The
 report's own summary call is logged to data/llm_usage.jsonl and counted from then on.
 
     python3 -m agents.ops_report --dry-run          # print, send nothing
@@ -269,6 +271,46 @@ def collect_host_facts(root, now, run=_run):
             "backup_due": _backup_due(now)}
 
 
+SCANNER_ARMS = (("murni", "scanner.db"), ("hybrid", "scanner_hybrid.db"), ("acak", "scanner_random.db"))
+MAX_SCANNER_ERROR_SHARE = 0.20  # H-SC/H-SC2 turn INCONCLUSIVE above this share of errored cycles
+
+
+def collect_scanner_facts(root, now):
+    """Per deployed scanner arm: cycles, errors and LONG/SHORT picks in 24h, and each demo
+    book's realised balance, open and 24h-closed positions. Read-only; a broken arm is
+    {'error': ...}, never raised."""
+    from agents.scanner import BOOK_START_USD, BOOKS
+    since = (now - timedelta(hours=24)).isoformat()
+    out = {}
+    for arm, name in SCANNER_ARMS:
+        path = Path(root) / "data" / name
+        if not path.exists():
+            continue
+        try:
+            con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            try:
+                n, errs = con.execute("SELECT COUNT(*), COALESCE(SUM(error IS NOT NULL), 0) FROM "
+                                      "scan_cycles WHERE timestamp >= ?", (since,)).fetchone()
+                picks = con.execute("SELECT COUNT(*) FROM scan_picks p JOIN scan_cycles c ON "
+                                    "c.id = p.cycle_id WHERE c.timestamp >= ? AND p.side != 'NONE'",
+                                    (since,)).fetchone()[0]
+                books = {}
+                for book in BOOKS:
+                    pnl, opened = con.execute(
+                        "SELECT COALESCE(SUM(CASE WHEN closed_bar IS NOT NULL THEN pnl_usd END), 0), "
+                        "COALESCE(SUM(closed_bar IS NULL), 0) FROM scan_positions WHERE book = ?",
+                        (book,)).fetchone()
+                    closed = con.execute("SELECT COUNT(*) FROM scan_positions WHERE book = ? AND "
+                                         "closed_bar >= ?", (book, since)).fetchone()[0]
+                    books[book] = {"balance": BOOK_START_USD + pnl, "open": opened, "closed_24h": closed}
+            finally:
+                con.close()
+            out[arm] = {"cycles_24h": n, "errors_24h": errs, "picks_24h": picks, "books": books}
+        except sqlite3.Error as exc:
+            out[arm] = {"error": str(exc)}
+    return out
+
+
 def _backup_due(now):
     """The date of the newest backup that should exist by now. Between 00:00 and the
     03:00 cron, today's has not been written yet; demanding it then raised a false
@@ -299,6 +341,14 @@ def anomalies(f):
         out.append(f"varian kosong di {share:.0%} siklus (batas {MAX_VARIANT_NULL:.0%})")
     if f.get("spot_log_errors"):
         out.append(f"{f['spot_log_errors']} baris error di paper_run.log")
+    for arm, a in (f.get("scanner") or {}).items():
+        if a.get("error"):
+            out.append(f"scanner {arm}: database tidak terbaca ({a['error']})")
+        elif not a["cycles_24h"]:
+            out.append(f"scanner {arm}: tidak ada siklus dalam 24 jam")
+        elif a["errors_24h"] / a["cycles_24h"] > MAX_SCANNER_ERROR_SHARE:
+            out.append(f"scanner {arm}: {a['errors_24h']}/{a['cycles_24h']} siklus error 24j "
+                       f"(di atas {MAX_SCANNER_ERROR_SHARE:.0%} uji jadi INCONCLUSIVE)")
     due = f.get("backup_due") or f.get("today")
     if (f.get("backup_latest") or "") < f"db-{due}.db":     # YYYYMMDD sorts as a date
         out.append(f"backup {due} tidak ada (terbaru: {f.get('backup_latest') or 'tidak ada'})")
@@ -425,6 +475,17 @@ def render(f, anoms, summary=None, source=None):
     top = list((f.get("blocks_24h") or {}).items())[:3]
     if top:
         lines.append("gerbang teratas: " + ", ".join(f"{e(g)} {n}" for g, n in top))
+    scan = f.get("scanner") or {}
+    if scan:
+        lines.append("\n<b>Scanner</b> (akun demo $1.000 per buku)")
+    for arm, a in scan.items():
+        if a.get("error"):
+            lines.append(f"{e(arm)}: tidak terbaca")
+            continue
+        bk = " · ".join(f"{e(b)} ${d['balance']:,.2f} ({d['open']} terbuka, {d['closed_24h']} tutup 24j)"
+                        for b, d in a["books"].items())
+        lines.append(f"{e(arm)}: {a['cycles_24h']} siklus, {a['errors_24h']} error, "
+                     f"{a['picks_24h']} pilihan · {bk}")
     lat = f.get("shadow_latency_ms_24h") or {}
     for prov, (n, errs) in (f.get("shadow_24h") or {}).items():
         ms = lat.get(prov)
@@ -510,7 +571,8 @@ def main() -> int:
         pass                          # no manifest: plain 24h / 7-day windows
     usage = Path(args.root) / "data" / "llm_usage.jsonl"
     facts = {**collect_db_facts(args.db, now, run_start), **collect_host_facts(args.root, now),
-             **collect_cost_facts(args.db, usage, now), "llm_budget_usd": budget_from_env()}
+             **collect_cost_facts(args.db, usage, now), "llm_budget_usd": budget_from_env(),
+             "scanner": collect_scanner_facts(args.root, now)}
     send = (lambda t: print(t) or True) if args.dry_run else None
     return run_report(facts, send_fn=send, provider=args.provider, use_llm=not args.no_llm,
                       usage_path=usage)

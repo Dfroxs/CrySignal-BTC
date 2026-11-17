@@ -4873,6 +4873,48 @@ def test_alarm_watches_scanner_arms_backups_and_the_derivs_archive():
     assert "tidak ada" in c["backup:scanner_hybrid"] and "61 jam" in c["backup:scanner"], c
 
 
+def test_ops_report_and_dashboard_show_scanner_arms_backups_and_archive():
+    import os, tempfile
+    from datetime import UTC, datetime, timedelta
+    from pathlib import Path
+    from agents import dashboard as dsh, ops_report as ops
+    from agents.scanner import connect
+    now = datetime(2026, 11, 17, 16, 10, tzinfo=UTC)
+    root = Path(tempfile.mkdtemp()); (root / "data").mkdir()
+    iso = lambda h: (now - timedelta(hours=h)).isoformat()
+    con = connect(root / "data" / "scanner.db")
+    for i, (h, err) in enumerate(((30, None), (2, None), (1, "APIError"))):
+        con.execute("INSERT INTO scan_cycles (timestamp, bar_close, error) VALUES (?,?,?)", (iso(h), iso(h + 1), err))
+    con.execute("INSERT INTO scan_picks (cycle_id, coin, side, confidence) VALUES (2,'SOL','LONG',60),(2,'ETH','NONE',5)")
+    for book, closed, pnl in (("futures", iso(3), 4.5), ("futures", None, None), ("spot", iso(40), -2.0)):
+        con.execute("INSERT INTO scan_positions (book, coin, side, opened_bar, entry, stop, target, "
+                    "closed_bar, pnl_usd, size_usd) VALUES (?,?,?,?,1,0.9,1.2,?,?,100)",
+                    (book, "SOL", "LONG", iso(50), closed, pnl))
+    con.commit(); con.close()
+    f = ops.collect_scanner_facts(root, now)
+    assert set(f) == {"murni"}, "an arm without a database is not reported"
+    m = f["murni"]
+    assert (m["cycles_24h"], m["errors_24h"], m["picks_24h"]) == (2, 1, 1), m
+    assert m["books"]["futures"] == {"balance": 1004.5, "open": 1, "closed_24h": 1}, m
+    assert m["books"]["spot"] == {"balance": 998.0, "open": 0, "closed_24h": 0}, m
+    an = ops.anomalies(dict(_clean_facts(), scanner=f))
+    assert any("1/2 siklus error" in a for a in an), "half the cycles errored is above 20%"
+    assert ops.anomalies(dict(_clean_facts(), scanner={"acak": {"cycles_24h": 0, "errors_24h": 0}}))
+    out = ops.render(dict(_clean_facts(), scanner=f), [])
+    assert "Scanner" in out and "futures $1,004.50 (1 terbuka, 1 tutup 24j)" in out, out
+    _assert_html_safe(out)
+
+    h = dsh.host_facts(root, now, run=lambda c: "active")
+    rows = {n: (ok, v) for ok, n, v, _ in dsh._health_rows({"host": h, "db": {}}, now)}
+    names = list(rows)
+    assert "Scanner Claude murni" in names and "Scanner Acak (pembanding)" not in names, names
+    assert rows["Scanner Claude murni"] == (True, "60 menit lalu"), rows
+    assert rows["Arsip data L/S, OI, taker"] == (False, "tidak ada"), "a missing archive is flagged, as the alarm does"
+    assert "Backup Claude murni" in names and "Backup bot BTC" not in names, names
+    bad = dsh.issues({"host": h, "db": None, "errors": []})
+    assert any("backup scanner: tidak ada" in b for b in bad), "the dashboard uses the alarm's rules"
+
+
 def test_alarm_alerts_once_re_alerts_after_six_hours_and_recovers_once():
     from datetime import UTC, datetime, timedelta
     from agents.alarm import step
@@ -6236,6 +6278,7 @@ if __name__ == "__main__":
     run("message short, escaped, Indonesian",     test_alarm_message_is_short_escaped_and_indonesian)
     run("state saved only after send; exit 1",    test_alarm_run_saves_state_only_after_a_send_and_exits_nonzero_while_active)
     run("alarm: scanner arms, backups, archive",  test_alarm_watches_scanner_arms_backups_and_the_derivs_archive)
+    run("ops report + dashboard: scanner, backups", test_ops_report_and_dashboard_show_scanner_arms_backups_and_archive)
 
     print("\n── 36. Ops report: activity, agent health, LLM cost ──")
     run("ops lists opens/closes with side+entry", test_ops_lists_positions_opened_and_closed_with_side_and_entry)

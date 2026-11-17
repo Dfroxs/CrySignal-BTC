@@ -42,7 +42,17 @@ or needs a restart.
 
   `docs/superpowers/specs/2026-11-17-derivs-replication-prereg.md`.
 
-Tests 324/324 (new: random arm, alarm watch, H-DR window and verdicts).
+Same day, owner: "update juga untuk dashboardnya sama notif ke telegram".
+- **Dashboard, Sistem tab**: one row per deployed scanner arm (age of newest cycle, or "error
+  3x"), one per backup (bot BTC, Claude murni, Claude + engine, acak), and one for the
+  derivatives archive. The rules are the alarm's own (`_side_conditions` calls
+  `alarm.conditions`), so the page's health pill and Telegram never disagree.
+- **Telegram, daily 03:30 report**: a "Scanner" section. Per arm it shows cycles, errors and
+  picks in 24h, and each $1,000 book's realised balance with open and 24h-closed counts. New
+  anomalies: an arm with no cycle in 24h, or more than 20% errored cycles, which is the share
+  that turns H-SC/H-SC2 INCONCLUSIVE.
+
+Tests 325/325 (new: random arm, alarm watch, H-DR window and verdicts, report + dashboard rows).
 
 ---
 
