@@ -4,6 +4,19 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-17 — feat(dashboard): dark trading-app design (owner rejected the passbook)
+
+Owner: "jelek banget"; asked, they chose a dark trading-app look and named the problems as
+old-fashioned, colours, too much text and layout. Now: a top bar (brand, DEMO badge, health
+pill linking to Sistem, time); one card per demo account with the balance, change and a
+sparkline of its balance; below, "Posisi berjalan" across all books and a compact
+"Aktivitas" feed; the detail tabs follow. Trading colour convention: green = LONG / gain, red =
+SHORT / loss, as badges. Plus Jakarta Sans. Negative zero no longer printed. Checked by
+screenshot on desktop and in a 390 px frame (two-column cards, scrolling tables). The passbook
+version of the same day is replaced. Tests 321/321.
+
+---
+
 ## 2026-11-17 — feat(dashboard): passbook design (owner asked for the frontend-design skill)
 
 The page now reads like a bank passbook, the owner's own frame for demo money. Header rule
