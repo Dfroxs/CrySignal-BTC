@@ -6302,10 +6302,30 @@ def test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel():
         page = dsh.render(f)
         assert "Semua berjalan normal" not in page, "a blind futures cycle is an issue"
         assert "data futures Binance kosong" in page and "+3,50 pp" in page and "#1 futures SELL" not in page
-        assert "Kapan bot membuka posisi berikutnya?" in page and 'id="tab-scanner"' in page and 'id="tab-btc"' in page and "fetch(" not in page, "the page calls nothing"
+        assert "Kapan bot membuka posisi berikutnya?" in page and 'id="tab-ringkasan"' in page and 'id="tab-koin"' in page and 'id="tab-btc"' in page and "fetch(" not in page, "the page calls nothing"
         assert dsh._nice_ticks(1.08, 7.17) == [2.0, 4.0, 6.0]
-        arms = dsh._arms(None, None, {"book": sb, "spot_book": sb})
-        assert "Acak (pembanding)" in arms and "+0,27%" in arms, "the random baseline sits beside the arms"
+        board = dsh._board({"db": {}, "scanner": {"book": sb, "spot_book": sb},
+                            "random": {"book": dsh.scan_book([]), "spot_book": dsh.scan_book([])}})
+        assert "vs acak" in board and "+$2,70" in board and "belum berjalan" in board, \
+            "each Claude account shows its gap to the random account in the same column"
+        import json
+        from agents.scanner import connect
+        sd = tempfile.mkdtemp()
+        for name, days in (("scanner.db", ("2026-11-18", "2026-11-19", "2026-11-20")),
+                           ("scanner_hybrid.db", ("2026-11-19", "2026-11-20"))):
+            c2 = connect(os.path.join(sd, name))
+            c2.execute("INSERT INTO scan_cycles (timestamp, bar_close, context) VALUES ('x', '2026-11-17T23:00:00+00:00', '{}')")
+            for i, day in enumerate(days):
+                cid = c2.execute("INSERT INTO scan_cycles (timestamp, bar_close, context) VALUES ('x', ?, ?)",
+                                 (f"{day}T0{i}:00:00+00:00", json.dumps({"prompt": "v2"}))).lastrowid
+                c2.execute("INSERT INTO scan_picks (cycle_id, coin, side) VALUES (?, 'SOL', 'LONG'), (?, 'ETH', 'NONE')", (cid, cid))
+            c2.commit(); c2.close()
+        tp = {t["name"]: t for t in dsh.test_progress(os.path.join(sd, "scanner.db"), now)}
+        pure = tp["Claude murni vs rata-rata 9 koin"]
+        assert (pure["have"], pure["picks"]) == (3, (3, 300)), "v1 cycles and NONE are not counted"
+        assert tp["Claude + engine vs Claude murni"]["have"] == 2, "only days both arms picked"
+        assert str(pure["eta"].date()) == "2027-02-16"
+        assert tp["Veto Claude untuk bot BTC"]["need"] == 90
         assert dsh.issues({"host": {"services": {"bot": "active"}}, "db": {"last_cycle_age_min": 5,
                                                                            "last": {}}, "errors": []}) == []
         assert (os.path.getmtime(path), os.path.getsize(path)) == before, "the dashboard wrote to the DB"

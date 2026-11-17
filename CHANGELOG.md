@@ -4,6 +4,40 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-18 — feat(dashboard): reorganised around the owner's questions
+
+The owner found the page confusing and asked for a revamp of the position, grouping, tabs and
+design. The causes found on the live page:
+- five unrelated cards with no grouping;
+- running positions shown twice, under inconsistent account names;
+- the question that matters, whether Claude beats random, buried at the bottom of a tab;
+- nothing saying when any figure becomes a result.
+
+The dark trading look stays (the owner's choice); the structure changes.
+
+- **Tabs:** Ringkasan (default) | Pilih koin | Bot BTC | Sistem.
+- **Scoreboard:** strategies are rows (Claude murni, Claude + engine, Acak) and account kinds
+  are columns (futures, spot), so the random baseline sits directly under what it judges.
+  Each Claude cell shows "vs acak", the gap to the random account in the same column. Bot BTC
+  is its own group, with "BTC + saran Claude" shown against the bot. Every account appears,
+  hybrid spot and Acak included.
+- **"Kapan hasilnya bisa dipercaya?":** a day-count meter per running test (H-SC, H-SC2, H-DR,
+  H-VG) with its scoring date. These are counts only (`test_progress`, v2 cycles for the
+  scanner); no statistic is read.
+- **Posisi berjalan:** one table grouped by account, with a P&L subtotal per account. The
+  activity feed covers every account.
+- **Pilih koin:** a coin × account matrix for this hour's picks, Claude's reasons, one balance
+  chart per account kind with three lines (blue `#4C8DF6`, amber `#C0812A`, dashed gray for
+  Acak; validated for colour-blind separation), and the latest closed positions across
+  accounts.
+- An open position in the random or hybrid book is priced from the pure arm's prices when its
+  own cycle did not price that coin. Before this, the % column was empty.
+
+Removed: `_cards`, `_open_all`, `_arms`, `_scanner_tab`, and the unused `_card`/`_events`.
+Checked by screenshot at 1280 px and in a 390 px frame. Tests 326/326.
+
+---
+
 ## 2026-11-18 — feat(scanner): prompt v2, ~55% cheaper, same model and cadence; H-SC/H-SC2 restart
 
 The owner found the API cost high: about $36 a month for 48 Opus calls a day. They asked for a
