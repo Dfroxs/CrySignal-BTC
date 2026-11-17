@@ -23,6 +23,22 @@ def _esc(text):
     return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _idn(v, nd=2, sign=False):
+    """A number the Indonesian way: 1.234,56. Never a negative zero."""
+    if round(v, nd) == 0:
+        v = 0.0
+    t = f"{v:+,.{nd}f}" if sign else f"{v:,.{nd}f}"
+    return t.replace(",", "\u2009").replace(".", ",").replace("\u2009", ".").replace("-", "−")
+
+
+def _usd(v, nd=2, sign=False):
+    """$1.001,81; with `sign`, +$2,74 / −$2,12."""
+    if round(v, nd) == 0:
+        v = 0.0
+    body = "$" + _idn(abs(v), nd)
+    return (("+" if v >= 0 else "−") if sign else ("−" if v < 0 else "")) + body
+
+
 def _dir(val):
     if val > 0:
         return _UP

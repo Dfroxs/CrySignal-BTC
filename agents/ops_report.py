@@ -451,60 +451,70 @@ def _capped(lines, cap=MAX_POSITION_LINES):
     return lines if len(lines) <= cap else lines[:cap] + [f"… +{len(lines) - cap} lagi"]
 
 
+_OUT_WORD = {"WIN": "untung", "LOSS": "rugi", "MACRO_CLOSE": "tutup jelang berita", "FLIP": "berbalik",
+             "TIME_EXIT": "batas waktu", "VOL_EXIT": "pasar liar", "FUNDING_EXIT": "funding mahal",
+             "BREAKER_CLOSE": "pengaman"}
+_ARM_NAME = {"murni": "murni", "hybrid": "engine", "acak": "acak"}
+
+
 def render(f, anoms, summary=None, source=None):
+    """The daily report, redesigned with the owner on 2026-11-18: status, BTC bot, scanner
+    with its balances against the random arm, cost, then the AI summary. Plain words; the
+    research jargon (variants, gate names) stays in the facts the summary reads."""
+    from notifier.common import _idn, _usd
     e = html.escape
-    lines = [f"<b>📋 Laporan harian bot</b> · {e(_day(f.get('today')))}"]
+    lines = [f"📋 <b>Laporan harian</b> · {e(_day(f.get('today')))}"]
     if anoms:
-        lines.append(f"\n⚠️ <b>{len(anoms)} hal perlu diperiksa</b>")
+        lines.append(f"⚠️ <b>{len(anoms)} hal perlu dicek</b>")
         lines += [f"• {e(a)}" for a in anoms]
     else:
-        lines.append("\n✅ semua bersih")
-    cyc = f.get("cycles_24h") or {}
-    lines.append(f"\nsiklus 24j: futures {cyc.get('futures', 0)} · spot {cyc.get('spot', 0)}")
-    fired = f.get("fired_24h") or {}
-    lines.append(f"sinyal 24j: futures {fired.get('futures', 0)} · spot {fired.get('spot', 0)}")
-    lines.append(f"posisi baru 24j / 7h: {f.get('opened_24h')} / {f.get('opened_7d')} · "
-                 f"terbuka: {f.get('open_positions')}")
-    pos = lambda p: f"{e(str(p['mode']))} {e(str(p['side']))} @ {_money(p.get('entry'))}"
-    lines += _capped([f"dibuka: {pos(p)}" for p in f.get("opened_list_24h") or []])
-    lines += _capped([f"ditutup: {pos(c)} {e(str(c['outcome']))} {_pct(c.get('pnl_pct'))}"
-                      for c in f.get("closed_24h") or []])
-    for mode, d in sorted((f.get("variant_diff_24h") or {}).items()):
-        lines.append(f"varian ≠ base 24j {e(mode)}: engine {d.get('rel_engine_dir', 0)} · "
-                     f"ic {d.get('rel_ic_dir', 0)} /{d.get('cycles', 0)} siklus")
-    top = list((f.get("blocks_24h") or {}).items())[:3]
-    if top:
-        lines.append("gerbang teratas: " + ", ".join(f"{e(g)} {n}" for g, n in top))
+        lines.append("✅ Semua sistem normal")
+
+    cyc, fired = f.get("cycles_24h") or {}, f.get("fired_24h") or {}
+    lines += ["", "<b>Bot BTC</b> (24 jam)",
+              f"Siklus {cyc.get('futures', 0)} futures, {cyc.get('spot', 0)} spot · "
+              f"sinyal {sum(fired.values()) if fired else 0} · posisi baru {f.get('opened_24h') or 0}"]
+    side = lambda t: "LONG" if t == "BUY" else "SHORT"
+    lines += _capped([f"• buka {side(p['side'])} {e(str(p['mode']))} di {_usd(p['entry'], 0)}"
+                      if isinstance(p.get("entry"), (int, float)) else f"• buka {side(p['side'])} {e(str(p['mode']))}"
+                      for p in f.get("opened_list_24h") or []])
+    lines += _capped([f"• tutup {side(c['side'])} {e(str(c['mode']))}: "
+                      f"{_idn(c['pnl_pct'], 2, True) + '%' if isinstance(c.get('pnl_pct'), (int, float)) else '?'}, "
+                      f"{e(_OUT_WORD.get(c['outcome'], str(c['outcome'])))}" for c in f.get("closed_24h") or []])
+    blocked = sum((f.get("blocks_24h") or {}).values())
+    if blocked:
+        lines.append(f"Sinyal ditahan pemeriksaan keamanan: {blocked}x")
+    if f.get("btc_account"):
+        lines.append(e(f["btc_account"]))
+
     scan = f.get("scanner") or {}
     if scan:
-        lines.append("\n<b>Scanner</b> (akun demo $1.000 per buku)")
-    for arm, a in scan.items():
-        if a.get("error"):
-            lines.append(f"{e(arm)}: tidak terbaca")
-            continue
-        bk = " · ".join(f"{e(b)} ${d['balance']:,.2f} ({d['open']} terbuka, {d['closed_24h']} tutup 24j)"
-                        for b, d in a["books"].items())
-        lines.append(f"{e(arm)}: {a['cycles_24h']} siklus, {a['errors_24h']} error, "
-                     f"{a['picks_24h']} pilihan · {bk}")
-    lat = f.get("shadow_latency_ms_24h") or {}
-    for prov, (n, errs) in (f.get("shadow_24h") or {}).items():
-        ms = lat.get(prov)
-        med = f", median {ms / 1000:.1f} dtk" if ms is not None else ""
-        lines.append(f"shadow {e(prov)}: {n} pendapat, {errs} gagal{med}")
-    cost = f.get("llm_cost_24h") or {}
-    if cost or f.get("llm_usd_mtd"):
-        per = " · ".join(f"{e(p)} {_tok(d['input_tokens'] + d['output_tokens'])} tok "
-                         f"${d['usd']:.2f}{'+?' if d.get('unpriced') else ''}"
-                         for p, d in sorted(cost.items()))
-        lines.append(f"biaya LLM 24j: {per or '$0.00'}")
+        live = {k: a for k, a in scan.items() if not a.get("error")}
+        n_open = sum(d["open"] for a in live.values() for d in a["books"].values())
+        n_done = sum(d["closed_24h"] for a in live.values() for d in a["books"].values())
+        lines += ["", f"<b>Scanner</b> (24 jam): {n_done} posisi ditutup, {n_open} masih terbuka"]
+        rows = [f"{'':8}{'futures':>11}{'spot':>11}"]
+        for arm, a in scan.items():
+            cell = lambda b: (_usd(a["books"][b]["balance"]) if not a.get("error") else "–").rjust(11)
+            rows.append(f"{_ARM_NAME.get(arm, arm):8}{cell('futures')}{cell('spot')}")
+        lines.append("<pre>" + "\n".join(rows) + "</pre>")
+        if "murni" in live and "acak" in live:
+            gap = lambda b: live["murni"]["books"][b]["balance"] - live["acak"]["books"][b]["balance"]
+            lines.append(f"Claude murni vs acak: futures {_usd(gap('futures'), sign=True)} · "
+                         f"spot {_usd(gap('spot'), sign=True)}")
+        errs = [f"{_ARM_NAME.get(k, k)} {a['errors_24h']}/{a['cycles_24h']}" for k, a in live.items() if a["errors_24h"]]
+        if errs:
+            lines.append("Siklus error: " + ", ".join(errs))
+
+    if f.get("llm_usd_mtd") is not None or f.get("llm_usd_24h") is not None:
         budget = f.get("llm_budget_usd")
-        lines.append(f"biaya LLM bulan ini: ${f.get('llm_usd_mtd') or 0:.2f} · proyeksi "
-                     f"${f.get('llm_usd_projected_month') or 0:.2f}"
-                     + (f" / anggaran ${budget:.2f}" if budget else ""))
-    if f.get("thresholds"):
-        lines.append("threshold: " + fmt_thresholds(f["thresholds"], e))
+        lines += ["", f"<b>Biaya Claude</b>: {_usd(f.get('llm_usd_24h') or 0)} (24 jam) · "
+                      f"{_usd(f.get('llm_usd_mtd') or 0)} bulan ini · perkiraan "
+                      f"{_usd(f.get('llm_usd_projected_month') or 0)}/bulan"
+                      + (f" (batas {_usd(budget, 0)})" if budget else "")]
+
     if summary:
-        lines.append(f"\n<b>Ringkasan AI</b> <i>({e(source or '')})</i>\n{e(summary)}")
+        lines.append(f"\n<b>Ringkasan AI</b>\n{e(summary)}")
     else:
         lines.append("\n<i>ringkasan AI tidak tersedia</i>")
     return fit_html("\n".join(lines))
@@ -573,6 +583,11 @@ def main() -> int:
     facts = {**collect_db_facts(args.db, now, run_start), **collect_host_facts(args.root, now),
              **collect_cost_facts(args.db, usage, now), "llm_budget_usd": budget_from_env(),
              "scanner": collect_scanner_facts(args.root, now)}
+    try:                                    # the same $1,000 account the dashboard shows
+        from notifier.telegram import _account_line
+        facts["btc_account"] = _account_line()
+    except Exception:  # noqa: BLE001 - the account line never costs the report
+        pass
     send = (lambda t: print(t) or True) if args.dry_run else None
     return run_report(facts, send_fn=send, provider=args.provider, use_llm=not args.no_llm,
                       usage_path=usage)

@@ -550,6 +550,83 @@ def _ask(ask_fn, prompt, arm, rec, usage_path, snap):
     return parse_picks(reply.text, [c for c, f in snap["coins"].items() if f])
 
 
+# ── Hourly Telegram digest (owner, 2026-11-18): only when a position opened or closed ─
+
+ARM_DBS = (("Claude murni", "murni", DB_PATH), ("Claude + engine", "engine", HYBRID_DB_PATH),
+           ("Acak", "acak", RANDOM_DB_PATH))
+_OUT_WORD = {"STOP": "kena stop", "TARGET": "kena target", "TIME": "batas 24 jam"}
+
+
+def book_snapshot(path):
+    """{position id: row} of one arm's books, read-only; {} without a database."""
+    if not Path(path).exists():
+        return {}
+    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        con.row_factory = sqlite3.Row
+        return {r["id"]: dict(r) for r in con.execute(
+            "SELECT id, book, coin, side, closed_bar, outcome, pnl_usd FROM scan_positions")}
+    except sqlite3.Error:
+        return {}
+    finally:
+        con.close()
+
+
+def digest(bar_iso, before, after, balances):
+    """The hour's opens and closes per arm, then every book's realised balance. None when
+    nothing opened or closed: a quiet hour sends nothing."""
+    from notifier.common import _esc, _usd
+    tag = lambda p: f"{p['side']} {_esc(p['coin'])}" + (" spot" if p["book"] == "spot" else "")
+    opened, closed = [], []
+    for name, _, _ in ARM_DBS:
+        b, a = before.get(name, {}), after.get(name, {})
+        new = [a[i] for i in sorted(a) if i not in b]
+        done = [a[i] for i in sorted(a) if a[i]["closed_bar"] and not (b.get(i) or {}).get("closed_bar")]
+        if new:
+            opened.append(f"• {name}: " + ", ".join(tag(p) for p in new))
+        for p in done:
+            closed.append(f"• {name}: {tag(p)} {_OUT_WORD.get(p['outcome'], _esc(p['outcome'] or ''))} "
+                          f"{_usd(p['pnl_usd'] or 0, sign=True)}")
+    if not opened and not closed:
+        return None
+    bar = datetime.fromisoformat(bar_iso).strftime("%H:%M")
+    lines = [f"🧭 <b>Scanner</b> · bar {bar} UTC"]
+    if opened:
+        lines += ["<b>Dibuka</b>"] + opened
+    if closed:
+        lines += ["<b>Ditutup</b>"] + closed
+    rows = [f"{'':8}{'futures':>11}{'spot':>11}"]
+    for name, short, _ in ARM_DBS:
+        fut, spot = balances.get(name, (None, None))
+        cell = lambda v: (_usd(v) if v is not None else "–").rjust(11)
+        rows.append(f"{short:8}{cell(fut)}{cell(spot)}")
+    lines.append("<pre>" + "\n".join(rows) + "</pre>")
+    return "\n".join(lines)
+
+
+def balances_of(path):
+    """(futures, spot) realised balance of one arm, or (None, None) without a database."""
+    if not Path(path).exists():
+        return (None, None)
+    con = connect(path)
+    try:
+        return tuple(book_account(con, b)[0] for b in ("futures", "spot"))
+    finally:
+        con.close()
+
+
+def send_digest(bar_iso, before, paths=None, send=None):
+    paths = paths or {name: path for name, _, path in ARM_DBS}
+    after = {name: book_snapshot(path) for name, path in paths.items()}
+    text = digest(bar_iso, before, after, {name: balances_of(path) for name, path in paths.items()})
+    if not text:
+        return False
+    if send is None:
+        from notifier.common import _send_telegram_message
+        send = lambda t: _send_telegram_message(t, "scanner")
+    return bool(send(text))
+
+
 def _record_usage(path, reply, purpose="scanner"):
     """Into the ops report's cost ledger, so the monthly budget line counts the scanner."""
     try:
@@ -578,6 +655,8 @@ def main(argv=None):
     if snap["bar_close_ms"] is None:
         logger.error("no coin could be fetched; nothing asked")
         return 0
+    paths = {"Claude murni": args.db, "Claude + engine": args.hybrid_db, "Acak": args.random_db}
+    before = {name: book_snapshot(path) for name, path in paths.items()}
     cid = run_once(db_path=args.db, snap=snap)              # pure arm first, unchanged
     logger.info("scan cycle %s", cid)
     if not args.no_hybrid:
@@ -591,6 +670,10 @@ def main(argv=None):
         logger.info("random scan cycle %s", rid)
     except Exception as exc:  # noqa: BLE001 - the baseline never costs either arm
         logger.error("random arm failed: %s", exc)
+    try:
+        send_digest(_iso(snap["bar_close_ms"]), before, paths)
+    except Exception as exc:  # noqa: BLE001 - the digest never costs a cycle
+        logger.warning("scanner digest not sent: %s", exc)
     return 0
 
 
