@@ -159,6 +159,18 @@ scanner arm H-SC2 live: same cron, a second Claude call per hour with the engine
 coin, `data/scanner_hybrid.db` with its own futures and spot books; first cycle bar 04:00, no
 error, $0.025. Dashboard now the dark trading-app design. `spotsignal` not restarted. H-SC2
 pairs from the hybrid arm's first cycle (2026-11-17 04:00 bar).
+**2026-11-17 16:45 UTC: pulled `7d0cf02` (PR #42), restarted `spotsignal-dash` only.**
+- **Backups:** `backup_db.sh` now also copies `scanner-`, `scanner_hybrid-` and
+  `scanner_random-YYYYMMDD.db`. It was run once by hand, so today's copies exist.
+- **Alarm and daily report:** the nakhoda-alloc check is gone, and its stale key was removed
+  from `data/alarm_state.json` by hand, so no "pulih" message was sent. New checks cover the
+  scanner arms, backup age and archive age. The daily report has a Scanner section.
+- **Archive:** gains ADA/LINK/AVAX. Run once by hand: 696 backfilled rows per stat.
+- **Random arm** `data/scanner_random.db`: first cycle on bar 16:00, run by hand. It dealt
+  pure's 1 LONG + 2 SHORT to ADA, BTC and BNB.
+- **H-DR** is pre-registered; it is scored on or after 2027-02-06.
+
+`spotsignal` was not restarted.
 ---
 
 ## New session? Do this first
