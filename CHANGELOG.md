@@ -4,6 +4,33 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-18 — feat(run 4, part A): engine fixes, futures fee 0.05%, flip shadow; H-VG restarts
+
+The owner moved run 4's decided items forward rather than wait for 2027-02-15. Every item
+changes signals or booking, so this needs one bot restart. Each engine fix has a test that
+failed first.
+
+- **HTF conflict penalty applied last** (`signals/engine.py`, new checkpoint
+  `htf_conflict_penalty`, `CONDITION_MAX` row 0/0). It used to hit whichever side led after
+  6 of ~22 conditions. Measured on the test case: an uptrend with bearish market structure
+  scored BUY −1.0 while a SELL fired at 7.0 unpenalised. It now lands on the side that leads
+  once everything has scored.
+- **Session bump at the bar's close hour.** `df.index` is the open time, so a 4h spot bar
+  opened 04:00 (decided 08:01) took the Asia +0.5; it now takes 0. Futures 1h bars shift by
+  one hour.
+- **Macro-forced HOLD** clears `stop_loss`, `take_profit`, `tp2` and `confidence`.
+- **`futures_fee_pct` 0.04 → 0.05** (Binance USD-M VIP0 taker).
+- **Stop before flip** (`0cfcd0c`) and the **flip shadow** (`agents/flip_shadow.py`,
+  `shadow_flip_opinions`, for H-FLP-C) ship with this. They were on develop only.
+- **H-VG restarts** at the run-4 restart (prereg amendment). Its one-day-old window held 5
+  opinions, none scored.
+- The PR branch merges main into develop's line. Develop's CHANGELOG and tests were verified
+  as supersets. The research scripts and results docs that were develop-only reach main too.
+
+Tests 329/329.
+
+---
+
 ## 2026-11-18 — docs(PAPER_RUN): engine review findings added to the run-4 plan
 
 The owner asked whether the engine's logic is sound. A review of `signals/engine.py` found

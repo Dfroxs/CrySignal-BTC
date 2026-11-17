@@ -294,18 +294,13 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         else:
             signal['reasons'].append(f"⚠️  HTF Disagreement ({htf_label}) — caution")
 
-        # Penalty for true HTF conflict (one timeframe BULLISH, other BEARISH).
-        # NEUTRAL vs anything is ambiguous — no penalty.
-        # Penalises the dominant buy/sell side by -1.0 so borderline signals don't fire
-        # against the longer-term trend.
+        # A true HTF conflict (one timeframe BULLISH, the other BEARISH) is penalised
+        # after every condition has scored (see `htf_conflict_penalty`). NEUTRAL vs
+        # anything is ambiguous — no penalty.
         htf_dirs = [htf.get(k) for k in htf_keys]
-        if not htf['aligned'] and 'BULLISH' in htf_dirs and 'BEARISH' in htf_dirs:
-            if buy_conditions >= sell_conditions:
-                buy_conditions = max(0, buy_conditions - 1.0)
-                signal['reasons'].append("⬇ HTF conflict penalty −1.0 (4H vs 1D opposing)")
-            else:
-                sell_conditions = max(0, sell_conditions - 1.0)
-                signal['reasons'].append("⬇ HTF conflict penalty −1.0 (4H vs 1D opposing)")
+        _htf_conflict = not htf['aligned'] and 'BULLISH' in htf_dirs and 'BEARISH' in htf_dirs
+    else:
+        _htf_conflict = False
 
     _mark('htf')
 
@@ -570,11 +565,17 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     # made the backtest evaluate every historical candle as if it were the hour
     # the script was launched (always one session, regardless of when the bar
     # actually occurred). Falls back to wall-clock if the index isn't datetime.
+    # The index is the bar's OPEN time (ccxt), so the hour is taken at its CLOSE,
+    # when the decision is made (run 4, item 5): a 4h spot bar opened 04:00 is
+    # decided at 08:01, not in the Asia session.
     from datetime import UTC, datetime
     try:
         last_ts = df.index[-1]
         if hasattr(last_ts, 'hour'):
-            utc_hour = last_ts.hour
+            step = last_ts - df.index[-2] if len(df) >= 2 else pd.Timedelta(0)
+            if not pd.Timedelta(0) < step <= pd.Timedelta(days=1):
+                step = pd.Timedelta(0)
+            utc_hour = (last_ts + step).hour
         else:
             utc_hour = datetime.now(UTC).hour
     except Exception:
@@ -737,6 +738,20 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             signal['reasons'].append(f"✗ Taker ratio {taker.get('ratio', 0):.2f} — aggressive sellers dominant")
 
     _mark('taker')
+
+    # HTF conflict penalty (run 4, item 4). It used to be applied inside the HTF block,
+    # to whichever side led after conditions 1-6 of ~22. When the other side won on the
+    # later conditions, the signal that fired was never penalised. Now it is applied
+    # once every condition has scored, to the side that leads and would fire, so a
+    # borderline signal against the longer-term split does not fire.
+    if _htf_conflict:
+        if buy_conditions >= sell_conditions:
+            buy_conditions = max(0, buy_conditions - 1.0)
+        else:
+            sell_conditions = max(0, sell_conditions - 1.0)
+        signal['reasons'].append("⬇ HTF conflict penalty −1.0 (4H vs 1D opposing)")
+
+    _mark('htf_conflict_penalty')
 
     # Structural SL helper (audit #12): place SL beyond the most recent
     # 20-candle swing low/high with a small buffer, but cap at 2.5×ATR so risk
@@ -1019,6 +1034,10 @@ def integrate_news_with_signal(signal, news_data, htf=None):
             f"⚠️  MACRO CAUTION: HIGH impact event in <2h ({event_name}) — forced HOLD"
         )
         enhanced['type'] = 'HOLD'
+        # Like every other gate (run 4, item 6): a HOLD carries no levels or tier, or
+        # cycle_log records a HOLD with confidence NORMAL.
+        enhanced['stop_loss'] = enhanced['take_profit'] = enhanced['confidence'] = None
+        enhanced.pop('tp2', None)
 
     fng = news_data.get('fear_greed', {})
     fng_val = fng.get('value', 50)

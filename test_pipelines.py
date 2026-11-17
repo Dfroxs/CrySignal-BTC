@@ -654,7 +654,7 @@ def test_combined_telegram_returns_zero_without_credentials():
 
 # ── 10. Threshold & confidence consistency ───────────────────────────────────
 
-def _frame(close, end="2026-01-14 14:00"):
+def _frame(close, end="2026-01-14 14:00", freq="1h"):
     """Wrap a close series into an OHLCV frame carrying every indicator column
     generate_signals() needs. The index ends at 14:00 UTC so the session bump is
     the US −0.25. No network, no DB."""
@@ -672,7 +672,7 @@ def _frame(close, end="2026-01-14 14:00"):
         "low":    close - np.abs(rng.normal(70, 18, n)),
         "close":  close,
         "volume": np.abs(rng.normal(1000, 90, n)),
-    }, index=pd.date_range(end=end, periods=n, freq="1h"))
+    }, index=pd.date_range(end=end, periods=n, freq=freq))
     df['EMA_200'] = calculate_ema(df['close'], 200)
     df['RSI_14']  = calculate_rsi(df['close'])
     df['MACD'], df['MACD_Signal'], df['MACD_Histogram'] = calculate_macd(df['close'])
@@ -730,6 +730,57 @@ def test_spot_bumps_apply_in_full_too():
     expected = SPOT_THRESHOLD_MIN + sig["_regime"]["threshold_bump"] + _SESSION_BUMP
     assert abs(sig["_threshold"] - expected) < 0.011, \
         f"bumps were clipped: {sig['_threshold']} != {expected}"
+
+def test_session_bump_reads_the_hour_the_bar_closes_not_opens():
+    """Run 4, item 5: df.index is the bar's OPEN time. A 4h spot bar opened 04:00 is
+    decided at 08:01 (London, bump 0), not in the Asia session (+0.5); a 1h bar opened
+    07:00 likewise closes at 08:00."""
+    import numpy as np
+    from signals.engine import generate_signals
+    rng = np.random.default_rng(7)
+    close = 80_000 + np.arange(320) * 25 + rng.normal(0, 60, 320)
+    for end, freq in (("2026-01-14 04:00", "4h"), ("2026-01-14 07:00", "1h")):
+        sig = generate_signals(_frame(close, end=end, freq=freq), htf=None, market_structure=None,
+                               sr=None, mode="spot", threshold_override=4.0)
+        bump = sig["_threshold"] - 4.0 - sig["_regime"]["threshold_bump"]
+        assert abs(bump) < 1e-9, f"{freq} bar opened {end}: session bump {bump:+.2f}, expected 0 (closes 08:00)"
+    sig = generate_signals(_frame(close, end="2026-01-14 06:00", freq="1h"), htf=None,
+                           market_structure=None, sr=None, mode="futures", threshold_override=4.0)
+    assert abs(sig["_threshold"] - 4.0 - sig["_regime"]["threshold_bump"] - 0.5) < 1e-9, "07:00 close is still Asia"
+
+def test_htf_conflict_penalty_lands_on_the_side_that_finally_leads():
+    """Run 4, item 4: the -1.0 for a 4H-vs-1D conflict used to hit whichever side led
+    after conditions 1-6. Here BUY leads early (uptrend) but bearish market structure,
+    scored later, makes SELL lead: the penalty must land on SELL."""
+    from signals.engine import generate_signals
+    bear = {"bias": "BEARISH"}
+    ms = {"funding": {"bias": "BEARISH", "rate_pct": 0.05, "basis_bias": "BEARISH", "basis_pct": -0.1},
+          "long_short": dict(bear, ratio=2.5), "dxy": dict(bear, change_pct=0.6),
+          "sp500": dict(bear, change_pct=-1.2), "stablecoin": dict(bear, total_b=150),
+          "btc_dom": dict(bear, current=55), "open_interest": dict(bear, change_pct=-2.0),
+          "taker": dict(bear, ratio=0.8)}
+    htf = {"4h": "BULLISH", "1d": "BEARISH", "aligned": False, "4h_indicators": {}, "1d_indicators": {}}
+    sig = generate_signals(_synthetic_df(), htf=htf, market_structure=ms, sr=None,
+                           mode="futures", threshold_override=4.0)
+    pen = sig["_contributions"].get("htf_conflict_penalty")
+    assert pen == (0.0, -1.0), f"penalty must land on SELL, the final leader: {pen}"
+    assert sig["_contributions"]["htf"][0] >= 0 and any("HTF conflict penalty" in r for r in sig["reasons"])
+
+def test_macro_forced_hold_clears_levels_and_confidence():
+    """Run 4, item 6: a HOLD forced by a macro event must not carry a stop, a target
+    or a confidence tier, as every other gate already ensures."""
+    import signals.engine as eng
+    orig = eng.check_upcoming_macro_events
+    eng.check_upcoming_macro_events = lambda: (True, "CPI")
+    try:
+        out = eng.integrate_news_with_signal(
+            {"type": "BUY", "strength": 7.0, "_threshold": 4.3, "reasons": [], "confidence": "NORMAL",
+             "stop_loss": 79_000.0, "take_profit": 83_000.0, "tp2": 85_000.0},
+            {"fear_greed": {"value": 50}, "sentiment": "NEUTRAL"})
+    finally:
+        eng.check_upcoming_macro_events = orig
+    assert out["type"] == "HOLD"
+    assert (out["stop_loss"], out["take_profit"], out.get("tp2"), out["confidence"]) == (None, None, None, None), out
 
 def test_absolute_sanity_floor_holds():
     """A pathological override must not yield a zero or negative bar — below the
@@ -6743,6 +6794,9 @@ if __name__ == "__main__":
     run("H-D finds planted signal, not null",     test_hd_pooled_ic_finds_a_planted_signal_and_not_a_null_one)
     run("H-DR: unseen hours, 8 alts, BTC alone",  test_hdr_scores_only_hours_hd_never_saw_with_eight_alts_and_btc_alone)
     run("H-VG: episode effect, fail-open, power", test_veto_gate_episode_effect_follows_the_gate_and_guards_power)
+    run("run 4: session bump at bar close hour",  test_session_bump_reads_the_hour_the_bar_closes_not_opens)
+    run("run 4: HTF penalty on final leader",     test_htf_conflict_penalty_lands_on_the_side_that_finally_leads)
+    run("run 4: macro HOLD clears levels",        test_macro_forced_hold_clears_levels_and_confidence)
     run("scorers refuse before day 30",           test_scoring_scripts_refuse_before_day_30)
     run("futures hypotheses from futures restart", test_score_run3_scores_futures_hypotheses_from_the_futures_restart)
 

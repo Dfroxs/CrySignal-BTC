@@ -103,3 +103,18 @@ restart is planned for on or after 2027-02-15 (`PAPER_RUN.md`, run-4 plan).
   report already prints.
 - Scored once. It is never re-scored with a longer window or another grouping to rescue a
   result.
+
+## Amendment 2026-11-18: the window starts at the run-4 restart
+
+The owner chose to ship run 4's correctness fixes now rather than on 2026-11-15+90 days:
+futures fee 0.05%, stop before flip, the HTF conflict penalty applied last, the session hour
+taken at the bar's close, and a macro HOLD clearing its levels. Those change the bot's
+signals. Per § Window and restarts that would end H-VG's window. It is one day old and holds
+five opinions, so it is **restarted** instead. No figure was computed on those five, and
+none ever will be.
+
+- **Window:** opinions stamped from the run-4 restart (the new manifest's `started_at`) to
+  that time plus 90 days. `veto_gate_eval.FROM` and `SCORE_BY` are set to those two
+  timestamps in the deploy commit, before any window opinion exists.
+- Everything else is unchanged: the gate, the episode unit, the statistic, the criteria,
+  the power guard and the discipline.

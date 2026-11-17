@@ -156,6 +156,7 @@ CONDITION_MAX = {
     "mfi":                     (1.50, 1.50),
     "rsi_divergence":          (2.00, 2.00),
     "extreme_cluster_penalty": (0.00, 0.00),   # only ever subtracts
+    "htf_conflict_penalty":    (0.00, 0.00),   # only ever subtracts (run 4: applied last)
     "candlestick":             (1.00, 1.00),
     "cmf":                     (1.00, 1.00),
     "taker":                   (0.00, 1.00),
@@ -278,7 +279,7 @@ LEVERAGE_CONFIG = {
 
 EXECUTION_CONFIG = {
     "spot_fee_pct":       0.10,   # Binance spot taker fee (%)
-    "futures_fee_pct":    0.04,   # Binance futures taker fee (%)
+    "futures_fee_pct":    0.05,   # Binance USD-M VIP0 taker fee (%); was 0.04 until run 4
     "slippage_pct":       0.05,   # market order slippage (%)
 }
 

@@ -350,6 +350,12 @@ loudly. Keeps 30 days. Pull one to the Mac occasionally.
 
 ## Run 4 plan: one restart, everything bundled (written 2026-11-18)
 
+**Amended the same day (owner): split in two.** Waiting to 2027-02-15 would have cost three
+months of data from a more correct bot, to protect an H-VG window that was one day old. So
+**part A**, the six decided items below, ships now in one restart. H-VG restarts with it (prereg
+amendment). **Part B**, the candidates further down, still waits for its own results. The
+scoring calendar below is updated for H-VG at the restart.
+
 Every change to signals, gates, exits, costs or booking needs a bot restart, and each such
 restart cuts the windows of the hypotheses that read the bot's stream. So they ship
 **together, once**, not one by one. **Planned restart: on or after 2027-02-15**, when the
