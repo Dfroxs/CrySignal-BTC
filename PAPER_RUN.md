@@ -331,6 +331,58 @@ loudly. Keeps 30 days. Pull one to the Mac occasionally.
 
 ---
 
+## Run 4 plan: one restart, everything bundled (written 2026-11-18)
+
+Every change to signals, gates, exits, costs or booking needs a bot restart, and each such
+restart cuts the windows of the hypotheses that read the bot's stream. So they ship
+**together, once**, not one by one. **Planned restart: on or after 2027-02-15**, when the
+last result that feeds run 4's design (H-VG) is in.
+
+**Scoring calendar.** These must not be read early. Each instrument refuses to score before
+its date.
+
+| date (UTC) | test | instrument | feeds run 4? |
+|---|---|---|---|
+| ~2027-01-16 (60 paired days) | H-SC2 hybrid vs pure scanner | `scanner_eval.py --hybrid-db` | no (scanner only) |
+| 2027-02-06 | H-DR global L/S momentum, 8 alts + BTC | `hdr_eval.py` | yes: an entry condition, if both PASS |
+| ~2027-02-14 (90 days + 300 picks) | H-SC Claude scanner vs universe | `scanner_eval.py` | no (scanner only) |
+| 2027-02-15 | H-VG Claude veto gate, by episode | `veto_gate_eval.py` | yes: the gate, if PASS and the owner decides |
+
+**Already decided. These ship in run 4 whatever the results say:**
+
+1. **Futures fee 0.04% → 0.05%** (`config.py` `futures_fee_pct`). The Binance USD-M VIP0
+   taker fee is 0.05% (0.045% with the BNB discount). The live book understates each futures
+   round trip by about 0.02pp. The scanner books already use 0.05%. It changes every
+   booked futures P&L, so it is a trading-path change.
+2. **Stops checked before a flip** (`0cfcd0c`, develop). A position already through its stop
+   is booked LOSS, not FLIP. The fill price is unchanged, but it **can move signals**:
+   `market_data._get_recent_win_rate` counts only WIN/LOSS outcomes (FLIP is excluded), and
+   that rate drives the adaptive threshold.
+3. **Flip shadow** (`7dae3db`, develop: `run_bot.py` hook plus `shadow_flip_opinions`). This is
+   logging only, for H-FLP-C (20 events). It is the only item that could go earlier: it
+   changes no signal, so a plain restart for it alone would not cut H-VG's window. Earlier
+   deployment is the owner's call.
+
+`backtest.py` research knobs on develop (`be_lock_r`, `flip_at`) are off by default and do not
+change live behaviour.
+
+**Candidates. Each needs its own result or prereg before it ships:**
+
+- **Claude veto gate:** only if H-VG PASSes and the owner overrides the standing rule that an
+  LLM never gates a live trade (run-3 plan). It fails open on errors.
+- **L/S momentum entry condition:** only if H-DR1 and H-DR2 both PASS, and then after its own
+  condition-vs-random test.
+- **`rel_ic_dir` bias rule** (H-V1, run 3): needs a prereg.
+- **Neutralise the bullish basis reading** (H-F: the engine reads basis backwards): needs a
+  prereg.
+
+**On restart day:** archive the run-3 manifest and DB the way run 2's were. Then:
+- score H-VG on its window, up to the restart;
+- regenerate the manifest with `scripts/start_paper_run.py`;
+- record the trading-path diff here.
+
+The scanner arms are separate processes and keep running through it.
+
 ## Open items
 
 1. ~~Verify run 2's first cycles actually carry the fixes~~ — **done 2026-10-08.**

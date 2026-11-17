@@ -4,6 +4,36 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-18 — prereg: H-VG Claude veto gate (by episode); run-4 plan
+
+The owner asked for improvement ideas and chose two.
+
+- **H-VG** (`docs/superpowers/specs/2026-11-18-claude-veto-gate-prereg.md`,
+  `scripts/veto_gate_eval.py`).
+  - H-S passed by opinion, but its 20 AGREE opinions were four to six episodes. H-VG tests
+    the gate itself: open only when Claude's opinion is not DISAGREE, with errors failing
+    open.
+  - The unit is the episode (same mode and direction, gap < 12h). The effect per episode is
+    the gated trade minus the ungated trade, under the bot's own exits.
+  - Window: opinions from 2026-11-17 00:00 to 2027-02-15. PASS needs a mean > 0 and a 90% CI
+    above 0. It is INCONCLUSIVE below 30 episodes, below 10 episodes where the gate acted, or
+    above 20% errors.
+  - A PASS licenses only an owner decision; the run-3 rule that an LLM never gates a live
+    trade stands until then. The instrument refuses to score before 2027-02-15.
+  - It was written with 5 opinions in the window, counted only.
+- **Run-4 plan** in `PAPER_RUN.md`. All trading-path changes ship in one restart, on or after
+  2027-02-15:
+  - decided: futures fee 0.04 → 0.05 (VIP0 taker), stop-before-flip booking, flip shadow;
+  - candidates, each needing its own result or prereg: veto gate, L/S momentum, the
+    `rel_ic_dir` bias rule, neutralising the bullish basis reading.
+
+  Includes the scoring calendar. Verified while writing: the stop-before-flip fix can move
+  signals, because the adaptive threshold's win rate counts WIN/LOSS and excludes FLIP.
+
+Nothing is deployed; nothing changes on the VPS. Tests 326/326.
+
+---
+
 ## 2026-11-17 — feat(ops): data-collection safety net, random book, H-DR prereg
 
 The owner asked what to improve in the data collection. Four parts; none touches the BTC bot

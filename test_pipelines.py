@@ -4024,6 +4024,40 @@ def test_hdr_scores_only_hours_hd_never_saw_with_eight_alts_and_btc_alone():
                                             for i, s in enumerate(hdr.ALTS)}}) == "INCONCLUSIVE", \
         "a CI above 0 still needs 6 of 8 alts positive"
 
+def test_veto_gate_episode_effect_follows_the_gate_and_guards_power():
+    import inspect
+    import pandas as pd
+    import scripts.veto_gate_eval as vg
+    assert str(vg.FROM) == "2026-11-17 00:00:00" and str(vg.SCORE_BY.date()) == "2027-02-15"
+    assert "refused" in inspect.getsource(vg.main)
+    t = lambda h: pd.Timestamp("2026-11-20") + pd.Timedelta(hours=h)
+    ops = pd.DataFrame([
+        # episode A: Claude vetoes the first signal, agrees an hour later -> later trade
+        (t(0), "futures", "SELL", "DISAGREE", None, -2.0), (t(1), "futures", "SELL", "AGREE", None, 1.0),
+        # episode B: Claude agrees at once -> gate changes nothing
+        (t(30), "futures", "BUY", "AGREE", None, 3.0), (t(31), "futures", "BUY", "DISAGREE", None, -9.0),
+        # episode C: disagrees with all -> no trade
+        (t(60), "futures", "BUY", "DISAGREE", None, -1.5), (t(61), "futures", "BUY", "DISAGREE", None, -1.0),
+        # episode D: an errored opinion fails open
+        (t(90), "spot", "BUY", None, "timeout", 0.7),
+        # episode E: first trade cannot be replayed -> dropped, never filled
+        (t(120), "futures", "SELL", "AGREE", None, float("nan")),
+    ], columns=["ts", "mode", "signal_type", "verdict", "error", "pnl"])
+    eff = vg.episode_effects(ops).set_index("start")
+    assert len(eff) == 4, eff
+    assert eff.loc[t(0), "effect"] == 3.0 and eff.loc[t(0), "acted"], "-2.0 replaced by +1.0"
+    assert eff.loc[t(30), "effect"] == 0.0 and not eff.loc[t(30), "acted"]
+    assert eff.loc[t(60), "gated"] == 0.0 and eff.loc[t(60), "effect"] == 1.5
+    assert eff.loc[t(90), "effect"] == 0.0, "an error is not a veto"
+    r = vg.verdict(eff, n_boot=200)
+    assert r["verdict"] == "INCONCLUSIVE" and r["episodes"] == 4, "below 30 episodes"
+    many = pd.concat([eff] * 10, ignore_index=True)
+    assert vg.verdict(many, n_boot=500)["verdict"] == "PASS"
+    many["effect"] = -many["effect"]
+    assert vg.verdict(many, n_boot=500)["verdict"] == "FAIL"
+    few_acted = pd.concat([eff[~eff["acted"]]] * 20, ignore_index=True)
+    assert vg.verdict(few_acted, n_boot=50)["verdict"] == "INCONCLUSIVE", "the gate must act 10 times"
+
 def test_scoring_scripts_refuse_before_day_30():
     import inspect
     import scripts.hd_eval as hd, scripts.score_run3 as sr
@@ -6659,6 +6693,7 @@ if __name__ == "__main__":
     run("H-D return after stat known, BTC window", test_hd_return_starts_after_the_stat_is_known_and_btc_window_holds)
     run("H-D finds planted signal, not null",     test_hd_pooled_ic_finds_a_planted_signal_and_not_a_null_one)
     run("H-DR: unseen hours, 8 alts, BTC alone",  test_hdr_scores_only_hours_hd_never_saw_with_eight_alts_and_btc_alone)
+    run("H-VG: episode effect, fail-open, power", test_veto_gate_episode_effect_follows_the_gate_and_guards_power)
     run("scorers refuse before day 30",           test_scoring_scripts_refuse_before_day_30)
     run("futures hypotheses from futures restart", test_score_run3_scores_futures_hypotheses_from_the_futures_restart)
 
