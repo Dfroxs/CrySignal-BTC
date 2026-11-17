@@ -380,6 +380,24 @@ its date.
    changes no signal, so a plain restart for it alone would not cut H-VG's window. Earlier
    deployment is the owner's call.
 
+4. **HTF conflict penalty hits the leader at the wrong moment** (engine review 2026-11-18,
+   `signals/engine.py:301`). The −1.0 for a 4H-vs-1D conflict goes to whichever side leads
+   after conditions 1–6, about 6 of 22. When the other side wins at the end, the final signal
+   is never penalised. Fix: apply it after all conditions, to the side that would fire.
+5. **Session bump reads the bar's OPEN hour** (`signals/engine.py:575`). `df.index` is the
+   bar's open time (ccxt), so futures is shifted 1 h and spot up to 4 h. For example, the spot
+   decision at 08:01 is treated as the Asia session (+0.5). Fix: use the close hour (open +
+   timeframe), the moment the decision is made. Backtest and live agree today, so this is a
+   labelling fix, not a mismatch.
+6. **A macro-forced HOLD keeps its levels** (`integrate_news_with_signal`,
+   `signals/engine.py:1021`). `stop_loss`, `take_profit` and `confidence` stay set on a HOLD,
+   so `cycle_log` can record a HOLD with confidence NORMAL. This is cosmetic: no trade opens.
+   Fix: clear them as every other gate does.
+
+Each of 4–6 gets a failing test first, then the fix, and each changes signals. Trivial items
+from the same review, not worth their own entries: OBV slope spans 4 bars over a 5-bar volume
+denominator, and ADX is computed twice per cycle.
+
 `backtest.py` research knobs on develop (`be_lock_r`, `flip_at`) are off by default and do not
 change live behaviour.
 

@@ -4,6 +4,25 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-18 — docs(PAPER_RUN): engine review findings added to the run-4 plan
+
+The owner asked whether the engine's logic is sound. A review of `signals/engine.py` found
+these mechanics correct:
+- SL/TP geometry: TP 3.75 ATR against SL ≤ 2.5 ATR, so R:R is at least 1.5;
+- closed bars only;
+- threshold layering;
+- ablation rollback.
+
+It found three fixable defects, all signal-changing, now run-4 items 4–6:
+- the HTF conflict penalty is applied mid-scoring, to the side leading then;
+- the session bump reads the bar's open hour (spot up to 4 h off);
+- a macro-forced HOLD keeps its levels and confidence.
+
+The known backwards basis reading stays a prereg candidate. No code changed. The engine's
+problem is the lack of edge (STEP 1), not these bugs.
+
+---
+
 ## 2026-11-18 — feat(dashboard): light / dark theme toggle
 
 The owner asked to choose between light and dark. A button at the top right switches theme,
