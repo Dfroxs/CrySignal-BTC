@@ -254,8 +254,6 @@ def collect_host_facts(root, now, run=_run):
     """Services, logs and backups. Anything that cannot be read comes back 'unknown' /
     None, which the rules treat as something to look at, never as fine."""
     root = Path(root)
-    j = "journalctl --user -u nakhoda-alloc --no-pager -S '24 hours ago' 2>/dev/null"
-    num = lambda s: int(s) if s.strip().isdigit() else None
     log = root / "paper_run.log"
     errs = None
     if log.exists():
@@ -264,11 +262,8 @@ def collect_host_facts(root, now, run=_run):
     # Newest by TIME among db-YYYYMMDD.db: by name, an old 'db-26-08-30-0503.db' sorts last.
     backups = sorted((p for p in (root / "data" / "backups").glob("db-*.db")
                       if re.fullmatch(r"db-\d{8}\.db", p.name)), key=lambda p: p.stat().st_mtime)
-    return {"spot_svc": run("systemctl is-active spotsignal") or "unknown",
-            "alloc_svc": run("systemctl --user is-active nakhoda-alloc") or "unknown",
+    return {"spot_svc": run("systemctl is-active spotsignal") or "unknown",   # nakhoda-alloc removed 2026-11-11
             "spot_log_errors": errs,
-            "alloc_errors_24h": num(run(f"{j} | grep -ciE 'error|traceback|consecutive'")),
-            "alloc_decisions_24h": num(run(f"{j} | grep -cE 'Rebalance|already at target'")),
             "backup_latest": backups[-1].name if backups else None,
             "today": now.strftime("%Y%m%d"),
             "backup_due": _backup_due(now)}
@@ -288,9 +283,8 @@ def _backup_due(now):
 
 def anomalies(f):
     out = []
-    for svc, key in (("spotsignal", "spot_svc"), ("nakhoda-alloc", "alloc_svc")):
-        if f.get(key) != "active":
-            out.append(f"layanan {svc}: {f.get(key)}")
+    if f.get("spot_svc") != "active":
+        out.append(f"layanan spotsignal: {f.get('spot_svc')}")
     if not sum((f.get("cycles_24h") or {}).values()):
         out.append("tidak ada siklus dalam 24 jam — bot diam")
     age = f.get("last_cycle_age_h")
@@ -305,10 +299,6 @@ def anomalies(f):
         out.append(f"varian kosong di {share:.0%} siklus (batas {MAX_VARIANT_NULL:.0%})")
     if f.get("spot_log_errors"):
         out.append(f"{f['spot_log_errors']} baris error di paper_run.log")
-    if f.get("alloc_errors_24h"):
-        out.append(f"{f['alloc_errors_24h']} error allocbot dalam 24 jam")
-    if f.get("alloc_decisions_24h") == 0:
-        out.append("allocbot tidak membuat keputusan harian")
     due = f.get("backup_due") or f.get("today")
     if (f.get("backup_latest") or "") < f"db-{due}.db":     # YYYYMMDD sorts as a date
         out.append(f"backup {due} tidak ada (terbaru: {f.get('backup_latest') or 'tidak ada'})")

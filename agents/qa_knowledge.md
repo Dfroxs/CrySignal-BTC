@@ -117,8 +117,8 @@ Jika FAKTA dan teks ini berbeda, FAKTA yang benar.
   H-S shadow entry, H-X shadow exit) dinilai setelah hari ke-30, 2026-11-08. Pengecualian
   sejak perubahan futures 2026-10-15: H-V1, H-V2 futures, H-S dan H-X dihitung ulang dari
   tanggal deploy itu dan dinilai 30 hari setelahnya.
-- Bot kedua di VPS yang sama: `nakhoda-alloc` (proyek Nakhoda, alokasi). Statusnya ada
-  di `alloc_svc` di FAKTA.
+- Bot kedua `nakhoda-alloc` dulu ikut di VPS ini; dihapus 2026-11-11. Sekarang hanya
+  SpotSignal (plus scanner, dashboard dan bot Q&A).
 
 ## Cara membaca FAKTA
 - `recent_cycles.<mode>`: 24 siklus terakhir, urut lama → baru. `type` HOLD/BUY/SELL,
@@ -138,4 +138,4 @@ Jika FAKTA dan teks ini berbeda, FAKTA yang benar.
 - Backup database jalan tiap hari 03:00 UTC (laporan harian 03:30 UTC). Antara 00:00 dan
   03:00 UTC wajar bila backup terbaru masih bertanggal kemarin. Semua waktu di FAKTA
   adalah UTC (`now_utc`), bukan WIB; "hari ini" berarti hari UTC.
-- `spot_svc` / `alloc_svc`: status service. `last_cycle_age_h`: jam sejak siklus terakhir.
+- `spot_svc`: status service. `last_cycle_age_h`: jam sejak siklus terakhir.

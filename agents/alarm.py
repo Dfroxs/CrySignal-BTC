@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
-"""Hourly real-time alarm for both bots. No LLM: rules only, Telegram only on change.
+"""Hourly real-time alarm for the bot and its side processes. No LLM: rules only, Telegram only on change.
 
 The daily ops report (03:30 UTC) is too slow for a dead bot. This runs every hour, ten
 minutes after the bot's :01 cycle, and sends a short Telegram message the moment
 something is wrong — then stays quiet while it persists (one reminder every
 `REALERT_H` hours) and sends one "✅ pulih" when it clears. It reads health only, never
-hypothesis statistics: no forward returns, no variant or shadow performance.
+hypothesis statistics: no forward returns, no variant, shadow or scanner performance.
+Beyond the bot it watches the scanner arms, the daily backups and the derivatives archive:
+each of those fails silently, and a forward-only test cannot recover the hours it lost.
 
     python3 -m agents.alarm --dry-run      # print what would be sent; state untouched
     python3 -m agents.alarm                # send on change, update data/alarm_state.json
 
 Exit code 1 while any condition is active, so cron mail / a wrapper can see it.
 
-Cron (user crontab on the VPS). XDG_RUNTIME_DIR lets `systemctl --user` reach the user
-manager that owns nakhoda-alloc; without it the check reads 'unknown' and alarms:
+Cron (user crontab on the VPS):
     10 * * * * cd ~/playground/CrySignal-BTC && XDG_RUNTIME_DIR=/run/user/$(id -u) \
                ./venv/bin/python -m agents.alarm >> data/alarm.log 2>&1
 """
@@ -36,6 +37,11 @@ MIN_MEM_AVAILABLE_MB = 120      # host has 960 MB, ~380 MB free with both bots u
 MAX_DISK_USED_PCT = 90
 SHADOW_ERROR_RUN = 3            # this many newest opinions all errored → provider down
 REALERT_H = 6
+SCANNER_ARMS = (("murni", "scanner.db"), ("hybrid", "scanner_hybrid.db"),
+                ("acak", "scanner_random.db"))
+SCANNER_ERROR_RUN = 3           # this many newest scan cycles all errored → arm down
+MAX_FILE_AGE_H = 26             # daily jobs (backup 03:00, archive 03:40) plus slack
+BACKUPS = (("db", "signal_history.db"),) + tuple((Path(f).stem, f) for _, f in SCANNER_ARMS)
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +86,50 @@ def collect_db_facts(db_path, now):
     return f
 
 
+def collect_scanner_facts(data_dir, now):
+    """Per scanner arm: minutes since its newest stored cycle, and whether its newest
+    SCANNER_ERROR_RUN cycles all errored. An arm without a database is `missing`."""
+    out = {}
+    for arm, name in SCANNER_ARMS:
+        path = Path(data_dir) / name
+        if not path.exists():
+            out[arm] = {"missing": True}
+            continue
+        f = {"missing": False, "age_min": None, "failing": False, "db_error": None}
+        try:
+            con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            try:
+                rows = con.execute("SELECT timestamp, error FROM scan_cycles ORDER BY id DESC "
+                                   "LIMIT ?", (SCANNER_ERROR_RUN,)).fetchall()
+            finally:
+                con.close()
+        except sqlite3.Error as exc:
+            out[arm] = dict(f, db_error=str(exc))
+            continue
+        if rows:
+            last = datetime.fromisoformat(rows[0][0])
+            last = last if last.tzinfo else last.replace(tzinfo=UTC)
+            f["age_min"] = round((now - last).total_seconds() / 60, 1)
+            f["failing"] = len(rows) == SCANNER_ERROR_RUN and all(e for _, e in rows)
+        out[arm] = f
+    return out
+
+
+def collect_file_facts(data_dir, now):
+    """Hours since the newest backup of each database that exists, and since the
+    derivatives archive last wrote. None = no such file at all."""
+    data = Path(data_dir)
+
+    def age_h(paths):
+        ts = [p.stat().st_mtime for p in paths]
+        return round((now.timestamp() - max(ts)) / 3600, 1) if ts else None
+    backups = {prefix: age_h((data / "backups").glob(f"{prefix}-*.db"))
+               for prefix, src in BACKUPS if (data / src).exists()}
+    derivs = data / "derivs"
+    return {"backup_age_h": backups,
+            "derivs_age_h": age_h(derivs.glob("*.csv")) if derivs.is_dir() else None}
+
+
 def _run(cmd, timeout=20):
     try:
         return subprocess.run(cmd, shell=True, capture_output=True, text=True,
@@ -106,7 +156,6 @@ def collect_host_facts(run=_run, meminfo_path="/proc/meminfo", disk_usage=shutil
     except (OSError, ZeroDivisionError, AttributeError):
         pass
     return {"spot_svc": run("systemctl is-active spotsignal") or "unknown",
-            "alloc_svc": run("systemctl --user is-active nakhoda-alloc") or "unknown",
             "mem_available_mb": mem, "disk_used_pct": disk}
 
 
@@ -117,9 +166,8 @@ def collect_host_facts(run=_run, meminfo_path="/proc/meminfo", disk_usage=shutil
 
 def conditions(f):
     out = {}
-    for svc, key in (("spotsignal", "spot_svc"), ("nakhoda-alloc", "alloc_svc")):
-        if f.get(key) != "active":
-            out[f"svc:{svc}"] = f"layanan {svc}: {f.get(key)}"
+    if f.get("spot_svc") != "active":           # nakhoda-alloc was removed 2026-11-11
+        out["svc:spotsignal"] = f"layanan spotsignal: {f.get('spot_svc')}"
     if f.get("db_error"):
         out["db"] = f"database tidak bisa dibaca: {f['db_error']}"
     else:
@@ -133,6 +181,29 @@ def conditions(f):
         for prov in f.get("shadow_failing") or []:
             out[f"shadow:{prov}"] = (f"agent shadow {prov}: {SHADOW_ERROR_RUN} pendapat terakhir "
                                      "gagal — key/saldo?")
+    for arm, a in (f.get("scanner") or {}).items():
+        if a.get("missing"):
+            if arm == "murni":                  # the other arms may not be deployed yet
+                out[f"scanner:{arm}"] = "scanner murni: database tidak ada"
+        elif a.get("db_error"):
+            out[f"scanner:{arm}"] = f"scanner {arm}: database tidak bisa dibaca: {a['db_error']}"
+        elif a.get("age_min") is None:
+            out[f"scanner:{arm}"] = f"scanner {arm}: belum ada siklus"
+        elif a["age_min"] > MAX_CYCLE_AGE_MIN:
+            out[f"scanner:{arm}"] = (f"scanner {arm}: siklus terakhir {a['age_min']:.0f} menit lalu "
+                                     f"(batas {MAX_CYCLE_AGE_MIN})")
+        if a.get("failing"):
+            out[f"scanner_err:{arm}"] = (f"scanner {arm}: {SCANNER_ERROR_RUN} siklus terakhir error "
+                                         "— API key/saldo/Binance?")
+    for prefix, age in (f.get("backup_age_h") or {}).items():
+        if age is None or age > MAX_FILE_AGE_H:
+            when = "tidak ada" if age is None else f"terakhir {age:.0f} jam lalu"
+            out[f"backup:{prefix}"] = f"backup {prefix}: {when} (batas {MAX_FILE_AGE_H} jam)"
+    if "derivs_age_h" in f:
+        age = f["derivs_age_h"]
+        if age is None or age > MAX_FILE_AGE_H:
+            when = "tidak ada" if age is None else f"terakhir menulis {age:.0f} jam lalu"
+            out["derivs"] = f"arsip derivatives: {when} (batas {MAX_FILE_AGE_H} jam)"
     mem = f.get("mem_available_mb")
     if mem is not None and mem < MIN_MEM_AVAILABLE_MB:
         out["memory"] = f"RAM tersedia {mem:.0f} MB (batas {MIN_MEM_AVAILABLE_MB})"
@@ -177,7 +248,9 @@ def _label(key):
     kind, _, name = key.partition(":")
     return {"svc": f"layanan {name}", "shadow": f"agent shadow {name}", "db": "database",
             "cycle_stale": "siklus bot", "futures_blind": "data funding futures",
-            "memory": "RAM", "disk": "disk"}.get(kind, key)
+            "memory": "RAM", "disk": "disk", "scanner": f"scanner {name}",
+            "scanner_err": f"scanner {name}", "backup": f"backup {name}",
+            "derivs": "arsip derivatives"}.get(kind, key)
 
 
 def render(new, again, recovered, now):
@@ -239,7 +312,9 @@ def main() -> int:
     from dotenv import load_dotenv
     load_dotenv(Path(args.root) / ".env")
     now = datetime.now(UTC)
-    facts = {**collect_db_facts(args.db, now), **collect_host_facts()}
+    data = Path(args.root) / "data"
+    facts = {**collect_db_facts(args.db, now), **collect_host_facts(),
+             "scanner": collect_scanner_facts(data, now), **collect_file_facts(data, now)}
     if args.dry_run:
         print(json.dumps(facts, indent=1, default=str))
         send = lambda t: print(t) or True
