@@ -323,8 +323,10 @@ def macro_facts(root, now):
     return out[:6]
 
 
-def scanner_facts(path):
-    """The newest scan cycle and its picks, plus counts, or None without a scanner DB."""
+def scanner_facts(path, prices=None):
+    """The newest scan cycle and its picks, plus counts, or None without a scanner DB.
+    `prices` fills a held coin this arm did not price this hour (the random arm stores only
+    the coins it dealt), so its open position still shows a move."""
     if not Path(path).exists():
         return None
     con = _ro(path)
@@ -349,6 +351,9 @@ def scanner_facts(path):
         coins = (json.loads(ctx[0]).get("coins") or {}) if ctx else {}
         px = dict(con.execute("SELECT coin, close FROM scan_picks WHERE cycle_id = ?",
                               (last[0],)).fetchall()) if last else {}
+        for c, v in (prices or {}).items():
+            if px.get(c) is None:
+                px[c] = v
         pick = {c: (sd, cf, r) for c, sd, cf, r in picks}
         pos = []
         if "scan_positions" in _tables(con):
@@ -424,8 +429,10 @@ def collect(root, db, scanner_db, now=None, run=None):
     part("db", lambda: db_facts(db, now, run_start))
     part("macro", lambda: macro_facts(root, now))
     part("scanner", lambda: scanner_facts(scanner_db))
-    part("hybrid", lambda: scanner_facts(Path(scanner_db).with_name("scanner_hybrid.db")))
-    part("random", lambda: scanner_facts(Path(scanner_db).with_name("scanner_random.db")))
+    px = {c["coin"]: c["price"] for c in ((out.get("scanner") or {}).get("coins") or []) if c["price"]}
+    part("hybrid", lambda: scanner_facts(Path(scanner_db).with_name("scanner_hybrid.db"), px))
+    part("random", lambda: scanner_facts(Path(scanner_db).with_name("scanner_random.db"), px))
+    part("tests", lambda: test_progress(scanner_db, now))
     part("cost", lambda: cost_facts(db, root, now))
     return out
 
@@ -479,7 +486,7 @@ CSS = """
 /* Trading terminal, dark (owner's choice). Green = long / gain, red = short / loss. */
 :root{--paper:#0D1117;--surface:#151B23;--surface2:#1B232D;--ink:#E6EDF3;--ink2:#B7C2CD;--mute:#7D8A97;
 --rule:#262F3A;--rule2:#1F2731;--tint:#18202A;--buy:#2EBD85;--sell:#F6465D;--good:#2EBD85;--bad:#F6465D;
---warn:#F0B90B;--chip:#1F2731;--accent:#4C8DF6;color-scheme:dark}
+--warn:#F0B90B;--chip:#1F2731;--accent:#4C8DF6;--c1:#4C8DF6;--c2:#C0812A;color-scheme:dark}
 :root{--face:"Plus Jakarta Sans",system-ui,-apple-system,"Segoe UI",sans-serif}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
@@ -647,6 +654,66 @@ section h2{font:700 18px/1.2 var(--face)}
 @media (max-width:560px){main{padding:18px 16px 48px}.rails{grid-template-columns:1fr}
 .cols,.cols3{grid-template-columns:1fr}.bars{grid-template-columns:110px 1fr 34px 34px}
 td.r{min-width:180px}}
+
+/* Scoreboard: strategies are rows, the two account kinds are columns, so a row reads across
+   and the baseline (Acak) sits directly under what it judges. */
+.board{margin-top:22px;background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:6px 18px 14px}
+.ghead{display:grid;grid-template-columns:minmax(150px,1.1fr) 1fr 1fr;gap:14px;align-items:end;padding:14px 0 8px;
+border-bottom:1px solid var(--rule)}
+.ghead.two{grid-template-columns:minmax(150px,1.1fr) 2fr;margin-top:14px}
+.ghead h2{font:700 15px/1.2 var(--face);margin:0}
+.ghead span{font-size:12px;font-weight:600;color:var(--mute)}
+.brow{display:grid;grid-template-columns:minmax(150px,1.1fr) 1fr 1fr;gap:14px;align-items:center;
+padding:12px 0;border-bottom:1px solid var(--rule2)}
+.brow:last-of-type{border-bottom:0}
+.brow .wide{grid-column:span 2;max-width:340px}
+.brow .who b{display:block;font-size:15px}
+.brow .who i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:8px;vertical-align:0}
+.brow .who small{display:block;color:var(--mute);font-size:12px;margin:2px 0 0 18px}
+.brow .who b{display:inline}
+.brow.base{background:linear-gradient(90deg,transparent,rgba(125,138,151,.06))}
+.brow.base .bal{color:var(--ink2)}
+.cell{display:grid;grid-template-columns:auto 1fr;grid-template-areas:"bal spark" "chg spark" "meta meta" "vs vs";
+column-gap:12px;align-items:center}
+.cell .bal{grid-area:bal;margin:0;font:800 22px/1.1 var(--face);letter-spacing:-.02em}
+.cell .chg{grid-area:chg;margin:2px 0 0;font-size:13px;font-weight:700;color:var(--mute)}
+.cell .chg.up{color:var(--good)}.cell .chg.down{color:var(--bad)}
+.cell .spark{grid-area:spark;width:100%;max-width:160px;height:34px;margin:0;justify-self:end}
+.cell .meta{grid-area:meta;margin:6px 0 0;font-size:12px;color:var(--mute)}
+.cell .vs{grid-area:vs;margin:2px 0 0;font-size:12px;color:var(--ink2)}
+.cell .vs span{font-weight:700}
+.cell.idle .bal{color:var(--mute)}
+/* Test progress: the one bold element. A day count, never a statistic. */
+.tests ul{list-style:none;margin:0;padding:0}
+.tests li{display:grid;grid-template-columns:minmax(200px,1.3fr) 2fr minmax(150px,auto) 110px;gap:16px;align-items:center;
+padding:12px 0;border-bottom:1px solid var(--rule2)}
+.tests li:last-child{border-bottom:0}
+.tname b{display:block;font-size:15px}.tname small{color:var(--mute);font-size:12px}
+.meter{height:12px;background:var(--rule2);border-radius:6px;overflow:hidden}
+.meter span{display:block;height:100%;background:var(--ink2);border-radius:6px;min-width:3px}
+.tcount{font-size:13px;color:var(--ink2)}
+.teta{font-size:13px;font-weight:700;text-align:right}
+.teta.done{color:var(--good)}
+/* Picks matrix: coins down, accounts across. */
+table.matrix th,table.matrix td{padding:9px 14px 9px 0;border-bottom:1px solid var(--rule2);vertical-align:middle}
+table.matrix thead th{font-size:12px;color:var(--mute);font-weight:600}
+table.matrix tbody th{font-weight:700}
+table.matrix .arm{text-align:center;min-width:120px}
+table.matrix td.arm small{display:block;color:var(--mute);font-size:11px;margin-top:2px}
+table.matrix td.none{color:var(--rule);font-size:20px;line-height:1}
+h3.sub{margin-top:22px}
+.picks .who{display:inline-block;min-width:130px;color:var(--mute);font-size:13px}
+table.grid tr.grp th{padding:14px 10px 6px 0;font-size:13px;font-weight:700;color:var(--ink);text-align:left;
+border-bottom:1px solid var(--rule)}
+table.grid tr.grp th.n{text-align:right;color:var(--mute);font-weight:600}
+table.grid tbody tr.grp:first-child th{padding-top:4px}
+.tabs{margin-top:18px}
+@media (max-width:860px){.tests li{grid-template-columns:1fr auto;gap:6px 12px}.tests .meter{grid-column:1/-1;order:3}
+.tests .tcount{order:4}.tests .teta{order:2}}
+@media (max-width:560px){.ghead,.brow{grid-template-columns:1fr 1fr;gap:10px}.ghead h2,.brow .who{grid-column:1/-1}
+.ghead.two{grid-template-columns:1fr}.ghead.two span{display:none}.brow .wide{grid-column:1/-1}
+.cell{grid-template-columns:1fr;grid-template-areas:"bal" "chg" "spark" "meta" "vs"}.cell .spark{justify-self:start;margin-top:6px}
+.cell .bal{font-size:18px}.board{padding:4px 14px 12px}}
 @media (prefers-reduced-motion:reduce){.tip{transition:none}}
 """
 
@@ -656,7 +723,7 @@ JS = """
   var tabs=[].slice.call(document.querySelectorAll('.tabs button')),
       ids=tabs.map(function(b){return b.dataset.tab});
   function show(id,focus){
-    if(ids.indexOf(id)<0)id='scanner';
+    if(ids.indexOf(id)<0)id='ringkasan';
     tabs.forEach(function(b){var on=b.dataset.tab===id;b.setAttribute('aria-selected',on);
       b.tabIndex=on?0:-1;document.getElementById('tab-'+b.dataset.tab).hidden=!on;if(on&&focus)b.focus()});
     try{localStorage.setItem('dash-tab',id)}catch(e){}
@@ -672,7 +739,7 @@ JS = """
     a.addEventListener('click',function(ev){ev.preventDefault();show(a.dataset.tab);
       document.querySelector('.tabs').scrollIntoView({behavior:'smooth',block:'start'})})});
   var saved=null;try{saved=localStorage.getItem('dash-tab')}catch(e){}
-  show(location.hash.slice(1)||saved||'scanner');
+  show(location.hash.slice(1)||saved||'ringkasan');
 })();
 document.querySelectorAll('.chart[data-s]').forEach(function(c){
   var d=JSON.parse(c.dataset.s),svg=c.querySelector('svg'),tip=c.querySelector('.tip'),
@@ -908,49 +975,6 @@ def _money(v, sign=False):
     return (("+" if v >= 0 else "−") if sign else ("−" if v < 0 else "")) + "$" + s
 
 
-def _card(title, who, acct, lines, tab):
-    if not acct:
-        return (f'<div class="panel card"><h3>{title}</h3><p class="who">{who}</p>'
-                '<p class="empty">Belum berjalan.</p></div>')
-    chg = acct["equity"] - acct["start"]
-    pct = chg / acct["start"] * 100
-    cls = "pos" if chg > 0 else "neg" if chg < 0 else "mute"
-    return (f'<a class="panel card" href="#{tab}" data-tab="{tab}"><h3>{title}</h3><p class="who">{who}</p>'
-            f'<p class="money">{_money(acct["equity"])}</p>'
-            f'<p class="delta {cls}">{_money(chg, True)} ({_n(pct, 2, True)}%) dari modal {_money(acct["start"])}</p>'
-            f'<p class="line">{lines}</p></a>')
-
-
-def _events(d, s, now):
-    """Opens and closes from all books, newest first: (time, book, sentence)."""
-    ev = []
-    for p in d.get("closed_recent") or []:
-        o, c_ = _dt(p["opened_at"]), _dt(p["closed_at"])
-        if o:
-            ev.append((o, "Bot BTC", f'membuka {_side(p["type"])} BTC ({e(p["mode"])})'))
-        if c_:
-            ev.append((c_, "Bot BTC", f'menutup {_side(p["type"])} BTC: {_pnl(p["pnl_pct"], 2, "%")}, {_out(p["outcome"])}'))
-    for p in d.get("open") or []:
-        o = _dt(p["opened_at"])
-        if o:
-            ev.append((o, "Bot BTC", f'membuka {_side(p["type"])} BTC ({e(p["mode"])})'))
-    for key, name in (("book", "Claude pilih koin"), ("spot_book", "Claude pilih koin, spot")):
-        bk = (s or {}).get(key) or {}
-        for p in bk.get("closed") or []:
-            o, c_ = _dt(p["opened_bar"]), _dt(p["closed_bar"])
-            if o:
-                ev.append((o, name, f'membuka {_side(p["side"])} {e(p["coin"])}'))
-            if c_:
-                ev.append((c_, name, f'menutup {_side(p["side"])} {e(p["coin"])}: '
-                           f'{_pnl(p["pnl_usd"], 2, " $")} ({_n(p["pnl_pct"], 2, True)}%), {_out(p["outcome"])}'))
-        for p in bk.get("open") or []:
-            o = _dt(p["opened_bar"])
-            if o:
-                ev.append((o, name, f'membuka {_side(p["side"])} {e(p["coin"])} senilai {_money(p.get("size_usd"))}'))
-    ev.sort(key=lambda x: x[0], reverse=True)
-    return ev
-
-
 def _health_rows(f, now):
     h, d = f.get("host") or {}, f.get("db") or {}
     rows = []
@@ -993,132 +1017,98 @@ def _health_rows(f, now):
     return rows
 
 
-def _arms(s, hy, rnd=None):
-    """H-SC2: the pure arm beside the hybrid arm (same picks hour by hour, + engine score),
-    and the random baseline that deals the pure arm's picks to random coins."""
-    rows = []
-    for name, arm in (("Claude murni", s), ("Claude + skor engine", hy), ("Acak (pembanding)", rnd)):
-        for key, label in (("book", "futures"), ("spot_book", "spot")):
-            b = (arm or {}).get(key)
-            if not b:
-                rows.append([e(name), label, "–", "–", "–", "–"])
-                continue
-            st = b["stats"]
-            rows.append([f"<b>{e(name)}</b>", label, _money(b["equity"]),
-                         _pnl((b["equity"] / b["start"] - 1) * 100, 2, "%"), str(st["n"]),
-                         f'{st["win"]}%' if st["win"] is not None else "–"])
-    P = ['<section><h2>Claude murni, Claude + skor engine, dan acak</h2><p class="lede">Dua Claude melihat '
-         'angka yang sama pada jam yang sama; yang kedua juga diberi skor BUY/SELL dari engine '
-         'bot BTC untuk tiap koin. Apakah skor engine membantu? Hasil resmi (uji H-SC2) setelah '
-         '60 hari yang sama-sama punya pilihan.</p><p class="lede">Baris <b>Acak</b> mengambil jumlah '
-         'dan arah posisi yang sama dengan Claude murni tiap jam, tapi koinnya diundi. Kalau Claude '
-         'tidak jauh lebih baik dari baris ini, untungnya datang dari pasar, bukan dari pilihannya.</p>'
-         + _table(["lengan", "akun", "nilai", "%", "selesai", "menang"], rows, num=(2, 3, 4, 5))]
-    picks = [c for c in ((hy or {}).get("coins") or []) if c["pick"] and c["pick"][0] != "NONE"]
-    if hy:
-        bar = (hy.get("last") or [None, None])[1]
-        P.append(f'<h3 style="margin-top:18px">Pilihan Claude + engine jam ini <span class="mute" '
-                 f'style="font-weight:400">bar {_t(bar)} UTC</span></h3>')
-        if picks:
-            eng = lambda c: (c["f"] or {}).get("engine_signal") or "–"
-            P.append('<ul class="picks">' + "".join(
-                f'<li><b>{e(c["coin"])}</b> {_side(c["pick"][0])} <span class="mute">yakin {c["pick"][1]}%, '
-                f'engine: {e(eng(c))}</span><span class="why">{e(c["pick"][2] or "")}</span></li>'
-                for c in picks) + "</ul>")
-        else:
-            P.append('<p class="empty">Jam ini tidak memilih koin mana pun.</p>')
-    else:
-        P.append('<p class="empty">Lengan + engine belum berjalan di host ini.</p>')
-    P.append("</section>")
-    return "".join(P)
+ARMS = (("scanner", "Claude murni", "var(--c1)"), ("hybrid", "Claude + engine", "var(--c2)"),
+        ("random", "Acak", "var(--mute)"))
+BOOKS_LABEL = (("book", "futures"), ("spot_book", "spot"))
 
 
-def _scanner_tab(s, hy=None, rnd=None):
+def _accounts(f):
+    """Every demo account in display order: (group, name, book or None, kind)."""
+    d = f.get("db") or {}
+    out = [("btc", "Bot BTC", d.get("account"), "btc"),
+           ("btc", "BTC + saran Claude", d.get("claude_account"), "btc")]
+    for key, name, _ in ARMS:
+        for bk, label in BOOKS_LABEL:
+            out.append(("scan", f"{name} ({label})", ((f.get(key) or {}).get(bk)), label))
+    return out
+
+
+def _picks_tab(f):
+    s, hy, rnd = f.get("scanner"), f.get("hybrid"), f.get("random")
     if not s:
         return '<p class="empty">Scanner belum berjalan di host ini.</p>'
-    bk, P = s.get("book") or {}, []
-    P.append('<section><h2>Posisi yang sedang berjalan</h2>')
-    if bk.get("open"):
-        rows = [[f"<b>{e(p['coin'])}</b>", _side(p["side"]), _money(p.get("size_usd")),
-                 _pnl(p["upnl"], 2, " $"), _pnl(p["move_pct"], 2, "%"), _t(p["opened_bar"]),
-                 f'{_n(p["stop"], 4)} / {_n(p["target"], 4)}'] for p in bk["open"]]
-        P.append(_table(["koin", "arah", "modal", "untung/rugi sekarang", "%", "dibuka", "stop / target"],
-                        rows, num=(2, 3, 4)))
-        P.append('<p class="note">Posisi ditutup otomatis saat harga menyentuh stop (rugi dibatasi) '
-                 'atau target (untung diambil), paling lama 24 jam.</p>')
-    else:
-        P.append('<p class="empty">Tidak ada posisi. Posisi baru dibuka saat Claude memilih LONG atau SHORT.</p>')
-    P.append("</section>")
-    picks = [c for c in (s.get("coins") or []) if c["pick"] and c["pick"][0] != "NONE"]
+    arms = [(name, (f.get(key) or {})) for key, name, _ in ARMS]
+    by = {name: {c["coin"]: c for c in (a.get("coins") or [])} for name, a in arms}
     bar = (s.get("last") or [None, None])[1]
-    P.append(f'<section><h2>Pilihan Claude jam ini</h2><p class="lede">Bar {_t(bar)} UTC. Claude melihat '
-             'angka sembilan koin dan memilih mana yang layak, atau tidak ada sama sekali.</p>')
-    if picks:
-        P.append('<ul class="picks">' + "".join(
-            f'<li><b>{e(c["coin"])}</b> {_side(c["pick"][0])} <span class="mute">yakin {c["pick"][1]}%</span>'
-            f'<span class="why">{e(c["pick"][2] or "")}</span></li>' for c in picks) + "</ul>")
-    else:
-        P.append('<p class="empty">Jam ini Claude tidak memilih koin mana pun.</p>')
+    head = "".join(f'<th class="arm">{e(n)}</th>' for n, _ in arms)
+    rows = []
+    for c in s.get("coins") or []:
+        cells = []
+        for name, a in arms:
+            x = by[name].get(c["coin"]) or {}
+            p = x.get("pick")
+            if not a:
+                cells.append('<td class="arm mute">–</td>')
+            elif p and p[0] in ("LONG", "SHORT"):
+                conf = f'<small>{p[1]}%</small>' if p[1] is not None and name != "Acak" else ""
+                cells.append(f'<td class="arm">{_side(p[0])}{conf}</td>')
+            else:
+                cells.append('<td class="arm none">·</td>')
+        fc = c["f"] or {}
+        rows.append(f'<tr><th scope="row">{e(c["coin"])}</th><td class="n">{_pnl(fc.get("ret_24h_pct"), 2, "%")}</td>'
+                    + "".join(cells) + "</tr>")
+    P = [f'<section><h2>Pilihan jam ini</h2><p class="lede">Bar {_t(bar)} UTC. Tiga akun, sembilan koin. '
+         'Titik berarti tidak dipilih. <b>Acak</b> mendapat jumlah dan arah yang sama dengan Claude murni, '
+         'tapi koinnya diundi.</p><div class="scroll"><table class="matrix"><thead><tr><th>koin</th>'
+         f'<th class="n">24 jam</th>{head}</tr></thead><tbody>{"".join(rows)}</tbody></table></div>']
+    why = []
+    for name, a in arms[:2]:
+        for c in a.get("coins") or []:
+            p = c.get("pick")
+            if p and p[0] in ("LONG", "SHORT") and p[2]:
+                why.append(f'<li><span class="who">{e(name)}</span><b>{e(c["coin"])}</b> {_side(p[0])}'
+                           f'<span class="why">{e(p[2])}</span></li>')
+    if why:
+        P.append('<h3 class="sub">Alasan Claude</h3><ul class="picks">' + "".join(why) + "</ul>")
     P.append("</section>")
-    if bk:
-        st = bk["stats"]
-        rows = [[f"<b>{e(p['coin'])}</b>", _side(p["side"]), _t(p["closed_bar"]), _out(p["outcome"]),
-                 _pnl(p["pnl_usd"], 2, " $"), _pnl(p["pnl_pct"], 2, "%")] for p in bk["closed"]]
-        P.append('<section><h2>Hasil sejauh ini</h2>')
-        if st["n"]:
-            P.append(f'<p class="lede">{st["n"]} posisi selesai: {round(st["n"] * st["win"] / 100)} untung, '
-                     f'{st["n"] - round(st["n"] * st["win"] / 100)} rugi.</p>')
-        P.append('<div class="cols"><div><h3>Nilai akun (dolar)</h3>'
-                 + chart([{"n": "", "c": "var(--ink)", "p": bk["curve"]}], width=560, height=190,
-                         y_fmt="${:,.0f}", label="nilai akun Claude pilih koin") + "</div><div><h3>Posisi terakhir yang selesai</h3>"
-                 + (_table(["koin", "arah", "selesai", "cara selesai", "hasil", "%"], rows, num=(4, 5))
-                    if rows else '<p class="empty">Belum ada posisi yang selesai.</p>') + "</div></div></section>")
-    sb = s.get("spot_book")
-    if sb:
-        rows = [[f"<b>{e(c['coin'])}</b>", _t(c["closed_bar"]), _out(c["outcome"]),
-                 _pnl(c["pnl_usd"], 2, " $"), _pnl(c["pnl_pct"], 2, "%")] for c in sb["closed"]]
-        orows = [[f"<b>{e(p['coin'])}</b>", _money(p.get("size_usd")), _pnl(p["upnl"], 2, " $"),
-                  _pnl(p["move_pct"], 2, "%"), _t(p["opened_bar"])] for p in sb["open"]]
-        P.append('<section><h2>Akun spot</h2><p class="lede">Akun terpisah dengan modal $1.000 sendiri: '
-                 'setiap pilihan LONG Claude dibeli di spot (spot tidak bisa SHORT), biaya spot 0,30% per '
-                 'posisi (futures 0,20%), satu posisi per koin, stop dan target sama.</p>'
-                 + ('<h3>Posisi spot yang sedang berjalan</h3>' + _table(
-                     ["koin", "modal", "untung/rugi sekarang", "%", "dibuka"], orows, num=(1, 2, 3))
-                    if orows else '<p class="empty">Tidak ada posisi spot.</p>')
-                 + '<div class="cols" style="margin-top:18px"><div><h3>Nilai akun spot (dolar)</h3>'
-                 + chart([{"n": "", "c": "var(--ink)", "p": sb["curve"]}], width=560, height=190,
-                         y_fmt="${:,.0f}", label="nilai akun spot") + "</div><div><h3>Posisi spot terakhir yang selesai</h3>"
-                 + (_table(["koin", "selesai", "cara selesai", "hasil", "%"], rows, num=(3, 4)) if rows
-                    else '<p class="empty">Belum ada posisi LONG yang selesai.</p>') + "</div></div></section>")
-    P.append(_arms(s, hy, rnd))
-    coins = s.get("coins") or []
+    charts = []
+    for bk, label in BOOKS_LABEL:
+        ser = [{"n": name, "c": col, "dash": key == "random",
+                "p": (((f.get(key) or {}).get(bk) or {}).get("curve") or [])}
+               for key, name, col in ARMS]
+        charts.append(f'<div><h3>Saldo akun {label}</h3>'
+                      + chart(ser, width=560, height=190, y_fmt="${:,.0f}", label=f"saldo {label}")
+                      + '<div class="legend">' + "".join(
+                          f'<span><i style="background:{col}{";opacity:.8" if key == "random" else ""}"></i>{e(name)}</span>'
+                          for key, name, col in ARMS) + "</div></div>")
+    P.append('<section><h2>Saldo dari waktu ke waktu</h2><p class="lede">Setiap akun mulai dari $1.000. '
+             'Saldo berubah saat posisi selesai.</p><div class="cols">' + "".join(charts) + "</div></section>")
+    closed = []
+    for key, name, _ in ARMS:
+        for bk, label in BOOKS_LABEL:
+            for p in (((f.get(key) or {}).get(bk) or {}).get("closed") or []):
+                closed.append((p["closed_bar"], f"{name} ({label})", p))
+    closed.sort(key=lambda r: r[0], reverse=True)
+    rows = [[f"<b>{e(p['coin'])}</b>", _side(p["side"]), e(acct), _t(p["closed_bar"]), _out(p["outcome"]),
+             _pnl(p["pnl_usd"], 2, " $")] for _, acct, p in closed[:15]]
+    P.append('<section><h2>Posisi yang baru selesai</h2>'
+             + (_table(["koin", "arah", "akun", "selesai", "cara selesai", "hasil"], rows, num=(5,)) if rows
+                else '<p class="empty">Belum ada posisi yang selesai.</p>') + "</section>")
     det = []
-    if coins:
-        rows = []
-        for c in coins:
-            f = c["f"] or {}
-            rows.append([f"<b>{e(c['coin'])}</b>", _n(c["price"], 4 if (c["price"] or 0) < 10 else 2),
-                         _pnl(f.get("ret_1h_pct")), _pnl(f.get("ret_24h_pct")), _pnl(f.get("ret_7d_pct")),
-                         _pnl(f.get("ret_24h_vs_universe_pct")), _n(f.get("funding_pct"), 4, True),
-                         _pnl(f.get("oi_change_24h_pct")), _n(f.get("ls_ratio"))])
-        det.append('<h3>Angka sembilan koin yang dilihat Claude</h3>' + _table(
-            ["koin", "harga", "1 jam %", "24 jam %", "7 hari %", "vs rata-rata %", "funding %", "OI 24 jam %", "long/short"],
-            rows, num=(1, 2, 3, 4, 5, 6, 7, 8)))
-    if bk and bk["stats"]["n"]:
-        st = bk["stats"]
-        det.append('<h3 style="margin-top:18px">Statistik akun</h3><dl class="kv">' + "".join(
-            f"<div><dt>{k}</dt><dd>{v}</dd></div>" for k, v in [
-                ("Profit factor", _n(st.get("pf")) if st.get("pf") is not None else "–"),
-                ("Penurunan terdalam", _pnl(-st["max_dd"], 2, "%")),
-                ("Rata untung / rugi", f'{_pnl(st.get("avg_win"))} / {_pnl(st.get("avg_loss"))}'),
-                ("Kas bebas", _money(bk["cash"]))]) + "</dl>")
-    lastc = s["last"]
-    det.append('<h3 style="margin-top:18px">Uji statistik H-SC</h3><p class="note">Apakah koin pilihan Claude '
-               'lebih baik dari koin acak. Hasil resmi baru keluar setelah 90 hari dan 300 pilihan.</p><dl class="kv">'
-               f'<div><dt>Pilihan</dt><dd>{s["n_picks"]}<small>dari 300</small></dd></div>'
-               f'<div><dt>Hari</dt><dd>{s["days"]}<small>dari 90</small></dd></div>'
-               f'<div><dt>Panggilan Claude</dt><dd>{s["cycles"]}<small>{s["errors"]} gagal</small></dd></div>'
-               f'<div><dt>Biaya</dt><dd>${s["usd"]:.2f}</dd></div></dl>')
+    rows = []
+    for c in s.get("coins") or []:
+        fc = c["f"] or {}
+        rows.append([f"<b>{e(c['coin'])}</b>", _n(c["price"], 4 if (c["price"] or 0) < 10 else 2),
+                     _pnl(fc.get("ret_1h_pct")), _pnl(fc.get("ret_24h_pct")), _pnl(fc.get("ret_7d_pct")),
+                     _pnl(fc.get("ret_24h_vs_universe_pct")), _n(fc.get("funding_pct"), 4, True),
+                     _pnl(fc.get("oi_change_24h_pct")), _n(fc.get("ls_ratio"))])
+    det.append('<h3>Angka yang dilihat Claude jam ini</h3>' + _table(
+        ["koin", "harga", "1 jam %", "24 jam %", "7 hari %", "vs rata-rata %", "funding %", "OI 24 jam %", "long/short"],
+        rows, num=(1, 2, 3, 4, 5, 6, 7, 8)))
+    det.append('<p class="note">Aturan semua akun pilih koin: tiap posisi 10% saldo, satu posisi per koin, stop '
+               '1,5×ATR, target 3×ATR, ditutup paling lama 24 jam. Biaya futures 0,20%, spot 0,30%. Akun spot '
+               'hanya mengambil LONG.</p>')
+    det.append(f'<p class="note">Panggilan Claude murni: {s["cycles"]}, gagal {s["errors"]}, biaya ${s["usd"]:.2f}.</p>')
     P.append('<details class="tech"><summary>Detail teknis</summary>' + "".join(det) + "</details>")
     return "".join(P)
 
@@ -1271,49 +1261,159 @@ def _spark(curve, equity, start, w=220, h=44):
             f'<polyline points="{line}" fill="none" stroke="{col}" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>')
 
 
-def _cards(rows):
-    out = ['<section class="cards" aria-label="Akun demo">']
-    for name, who, acct, line, tab in rows:
-        if not acct:
-            out.append(f'<div class="acard idle"><p class="aname">{e(name)}</p><p class="abal">–</p>'
-                       f'<p class="aline">belum berjalan</p></div>')
+def _cell(acct, base=None, base_name=""):
+    """One account on the scoreboard: balance, change, sparkline, and the gap to its baseline."""
+    if not acct:
+        return '<div class="cell idle"><p class="bal">–</p><p class="meta">belum berjalan</p></div>'
+    chg = acct["equity"] - acct["start"]
+    pct = chg / acct["start"] * 100
+    cls = "up" if chg > 0 else "down" if chg < 0 else "flat"
+    arrow = "▲ " if chg > 0 else "▼ " if chg < 0 else ""
+    if "stats" in acct:
+        n_open, n_done = len(acct.get("open") or []), acct["stats"]["n"]
+    else:                                               # a translated BTC book: count its entries
+        ens = acct.get("entries") or []
+        n_done = sum(1 for x in ens if not x["open"])
+        n_open = sum(1 for x in ens if x["open"]) - n_done
+    vs = ""
+    if base:
+        gap = acct["equity"] - base["equity"]
+        vs = (f'<p class="vs">vs {e(base_name)} <span class="{"pos" if gap > 0 else "neg" if gap < 0 else "mute"}">'
+              f'{_money(gap, True)}</span></p>')
+    return (f'<div class="cell"><p class="bal">{_money(acct["equity"])}</p>'
+            f'<p class="chg {cls}">{arrow}{_n(abs(pct), 2)}%</p>'
+            f'{_spark(acct.get("curve") or [], acct["equity"], acct["start"], w=160, h=34)}'
+            f'<p class="meta">{n_open} terbuka, {n_done} selesai</p>{vs}</div>')
+
+
+def _board(f):
+    d = f.get("db") or {}
+    rnd = f.get("random") or {}
+    rows = []
+    for key, name, col in ARMS:
+        a = f.get(key) or {}
+        base = rnd if key != "random" else {}
+        cells = "".join(_cell(a.get(bk), base.get(bk), "acak") for bk, _ in BOOKS_LABEL)
+        cls = " base" if key == "random" else ""
+        hint = "patokan: koin diundi" if key == "random" else (
+            "Claude memilih sendiri" if key == "scanner" else "Claude + skor engine bot BTC")
+        rows.append(f'<div class="brow{cls}"><div class="who"><i style="background:{col}"></i><b>{e(name)}</b>'
+                    f'<small>{e(hint)}</small></div>{cells}</div>')
+    ac, ca = d.get("account"), d.get("claude_account")
+    btc = (f'<div class="brow"><div class="who"><i style="background:var(--ink2)"></i><b>Bot BTC</b>'
+           f'<small>aturan bot sendiri</small></div><div class="wide">{_cell(ac)}</div></div>'
+           f'<div class="brow"><div class="who"><i style="background:var(--c1)"></i><b>BTC + saran Claude</b>'
+           f'<small>posisi yang ditolak Claude dilewati</small></div><div class="wide">{_cell(ca, ac, "bot")}</div></div>')
+    return ('<section class="board" aria-label="Papan skor akun demo">'
+            '<div class="ghead"><h2>Claude memilih dari 9 koin</h2><span>futures</span><span>spot</span></div>'
+            + "".join(rows)
+            + '<div class="ghead two"><h2>Bot BTC</h2><span>futures + spot</span></div>' + btc
+            + '<p class="note">Semua uang demo, modal $1.000 per akun. "vs acak" adalah selisih dengan akun Acak '
+              'di kolom yang sama: angka inilah yang menunjukkan apakah pilihan Claude lebih baik dari undian.</p>'
+              '</section>')
+
+
+# Tests whose dates are fixed in their preregistrations (counted in days, nothing scored).
+FIXED_TESTS = (("Data long/short memprediksi harga", "8 altcoin + BTC",
+                datetime(2026, 11, 8, tzinfo=UTC), datetime(2027, 2, 6, tzinfo=UTC)),
+               ("Veto Claude untuk bot BTC", "per kejadian sinyal",
+                datetime(2026, 11, 17, tzinfo=UTC), datetime(2027, 2, 15, tzinfo=UTC)))
+
+
+def _v2_days(path):
+    """UTC days with a LONG/SHORT pick from an error-free cycle of the current prompt, the
+    pick count, and that prompt's first cycle. Counts only: no return is read."""
+    from agents.scanner import PROMPT_VERSION
+    if not Path(path).exists():
+        return None
+    con = _ro(path)
+    try:
+        if "scan_cycles" not in _tables(con):
+            return None
+        tag = f'%"prompt": "{PROMPT_VERSION}"%'
+        first = con.execute("SELECT MIN(bar_close) FROM scan_cycles WHERE context LIKE ?", (tag,)).fetchone()[0]
+        rows = con.execute("SELECT substr(c.bar_close, 1, 10) FROM scan_picks p JOIN scan_cycles c ON c.id = p.cycle_id "
+                           "WHERE c.error IS NULL AND p.side IN ('LONG', 'SHORT') AND c.context LIKE ?", (tag,)).fetchall()
+    finally:
+        con.close()
+    return {"first": _dt(first), "days": {r[0] for r in rows}, "picks": len(rows)}
+
+
+def test_progress(scanner_db, now):
+    """How far each running test is from its scoring point: days and picks collected."""
+    pure = _v2_days(scanner_db)
+    hyb = _v2_days(Path(scanner_db).with_name("scanner_hybrid.db"))
+    out = []
+    if pure is not None:
+        out.append({"name": "Claude murni vs rata-rata 9 koin", "detail": "pilihan Claude lebih baik dari koin acak?",
+                    "have": len(pure["days"]), "need": 90, "unit": "hari", "picks": (pure["picks"], 300),
+                    "eta": pure["first"] + timedelta(days=90) if pure["first"] else None})
+    if pure is not None and hyb is not None:
+        firsts = [x for x in (pure["first"], hyb["first"]) if x]
+        out.append({"name": "Claude + engine vs Claude murni", "detail": "skor engine membantu Claude?",
+                    "have": len(pure["days"] & hyb["days"]), "need": 60, "unit": "hari berpasangan",
+                    "eta": max(firsts) + timedelta(days=60) if len(firsts) == 2 else None})
+    for name, detail, start, end in FIXED_TESTS:
+        total = (end - start).days
+        out.append({"name": name, "detail": detail, "have": max(0, min(total, (now - start).days)),
+                    "need": total, "unit": "hari", "eta": end})
+    return out
+
+
+def _progress(tests, now):
+    if not tests:
+        return ""
+    rows = []
+    for t in tests:
+        frac = min(1.0, t["have"] / t["need"]) if t["need"] else 0
+        done = frac >= 1
+        extra = f', {t["picks"][0]} dari {t["picks"][1]} pilihan' if t.get("picks") else ""
+        when = ("siap dinilai" if done else f'{t["eta"]:%d %b %Y}' if t.get("eta") else "menunggu prompt baru")
+        rows.append(f'<li><div class="tname"><b>{e(t["name"])}</b><small>{e(t["detail"])}</small></div>'
+                    f'<div class="meter" role="meter" aria-valuemin="0" aria-valuemax="{t["need"]}" '
+                    f'aria-valuenow="{t["have"]}" aria-label="{e(t["name"])}"><span style="width:{frac * 100:.1f}%"></span></div>'
+                    f'<div class="tcount">{t["have"]} dari {t["need"]} {e(t["unit"])}{e(extra)}</div>'
+                    f'<div class="teta{" done" if done else ""}">{e(when)}</div></li>')
+    return ('<section class="tests"><h2>Kapan hasilnya bisa dipercaya?</h2><p class="lede">Saldo di atas baru '
+            'gambaran. Jawaban resmi tiap pertanyaan keluar saat garisnya penuh, dan dihitung sekali saja.</p>'
+            f'<ul>{"".join(rows)}</ul></section>')
+
+
+def _positions(f):
+    d = f.get("db") or {}
+    groups = []
+    btc = [("BTC", p["type"], _dt(p["opened_at"]), None, p.get("move_pct"), None) for p in d.get("open") or []]
+    groups.append(("Bot BTC", btc))
+    for key, name, _ in ARMS:
+        for bk, label in BOOKS_LABEL:
+            ps = (((f.get(key) or {}).get(bk)) or {}).get("open") or []
+            groups.append((f"{name} ({label})", [(p["coin"], p["side"], _dt(p["opened_bar"]), p.get("size_usd"),
+                                                  p.get("move_pct"), p.get("upnl")) for p in ps]))
+    now = f["now"]
+    body = []
+    for name, rows in groups:
+        if not rows:
             continue
-        chg = acct["equity"] - acct["start"]
-        pct = chg / acct["start"] * 100
-        cls = "up" if chg > 0 else "down" if chg < 0 else "flat"
-        arrow = "▲" if chg > 0 else "▼" if chg < 0 else ""
-        out.append(f'<a class="acard" href="#{tab}" data-tab="{tab}" title="{e(who)}">'
-                   f'<p class="aname">{e(name)}</p>'
-                   f'<p class="abal">{_money(acct["equity"])}</p>'
-                   f'<p class="achg {cls}"><span>{(arrow + " ") if arrow else ""}{_n(abs(pct), 2)}%</span> {_money(chg, True)}</p>'
-                   f'{_spark(acct.get("curve") or [], acct["equity"], acct["start"])}'
-                   f'<p class="aline">{e(line)}</p></a>')
-    out.append("</section>")
-    return "".join(out)
-
-
-def _open_all(d, s, hy):
-    rows = []
-    for p in d.get("open") or []:
-        rows.append(("Bot BTC", "BTC", p["type"], None, p.get("move_pct"), None))
-    for key, name, src in (("book", "Claude", s), ("spot_book", "Claude spot", s), ("book", "Claude + engine", hy)):
-        for p in ((src or {}).get(key) or {}).get("open") or []:
-            rows.append((name, p["coin"], p["side"], p.get("size_usd"), p.get("move_pct"), p.get("upnl")))
+        tot = sum(u or 0 for *_, u in rows)
+        body.append(f'<tr class="grp"><th colspan="4">{e(name)}</th><th class="n" colspan="2">'
+                    f'{len(rows)} posisi, {_pnl(tot, 2, " $") if any(r[5] is not None for r in rows) else "–"}</th></tr>')
+        body += [f'<tr><td><b>{e(c)}</b></td><td>{_side(sd)}</td><td class="mute">{_ago(now, o)}</td>'
+                 f'<td class="n">{_money(sz) if sz else "–"}</td><td class="n">{_pnl(mv, 2, "%")}</td>'
+                 f'<td class="n">{_pnl(u, 2) if u is not None else "–"}</td></tr>' for c, sd, o, sz, mv, u in rows]
     head = '<div class="pane"><h2>Posisi berjalan</h2>'
-    if not rows:
+    if not body:
         return head + '<p class="empty">Tidak ada posisi terbuka.</p></div>'
-    body = "".join(f'<tr><td><b>{e(c)}</b></td><td>{_side(sd)}</td><td class="mute">{e(n)}</td>'
-                   f'<td class="n">{_money(sz) if sz else "–"}</td><td class="n">{_pnl(mv, 2, "%")}</td>'
-                   f'<td class="n">{_pnl(u, 2) if u is not None else "–"}</td></tr>' for n, c, sd, sz, mv, u in rows)
-    return (head + '<div class="scroll"><table class="grid"><thead><tr><th>koin</th><th>arah</th><th>akun</th><th class="n">modal</th>'
-            f'<th class="n">P&amp;L %</th><th class="n">P&amp;L $</th></tr></thead><tbody>{body}</tbody></table></div></div>')
+    return (head + '<div class="scroll"><table class="grid"><thead><tr><th>koin</th><th>arah</th><th>dibuka</th>'
+            '<th class="n">modal</th><th class="n">%</th><th class="n">untung/rugi</th></tr></thead>'
+            f'<tbody>{"".join(body)}</tbody></table></div></div>')
 
 
-def _activity(d, s, now, limit=10):
-    books = [("Bot BTC", d.get("account")), ("Claude", (s or {}).get("book")),
-             ("Claude spot", (s or {}).get("spot_book"))]
+def _activity(f, limit=12):
+    now = f["now"]
     rows = []
-    for name, acct in books:
+    for group, name, acct, _ in _accounts(f):
+        if name == "BTC + saran Claude":
+            continue                                    # same trades as Bot BTC, not separate events
         for en in (acct or {}).get("entries") or []:
             if not en["t"]:
                 continue
@@ -1327,7 +1427,7 @@ def _activity(d, s, now, limit=10):
                        if usd is not None else "")
                 rows.append((en["t"], name, f'Tutup {_side(side)} <b>{e(coin)}</b> <span class="mute">{_out(p.get("outcome"))}</span>', amt))
     rows.sort(key=lambda r: r[0], reverse=True)
-    head = '<div class="pane"><h2>Aktivitas</h2>'
+    head = '<div class="pane"><h2>Aktivitas terbaru</h2>'
     if not rows:
         return head + '<p class="empty">Belum ada aktivitas.</p></div>'
     return head + '<ul class="feed">' + "".join(
@@ -1335,9 +1435,11 @@ def _activity(d, s, now, limit=10):
         f'<small>{e(n)}</small></span><span class="amt">{amt}</span></li>' for t, n, txt, amt in rows[:limit]) + "</ul></div>"
 
 
+TABS = (("ringkasan", "Ringkasan"), ("koin", "Pilih koin"), ("btc", "Bot BTC"), ("sistem", "Sistem"))
+
+
 def render(f):
     now = f["now"]
-    d, s = f.get("db") or {}, f.get("scanner")
     probs = issues(f)
     P = [f"<!doctype html><html lang=id><head><meta charset=utf-8>"
          f"<meta name=viewport content='width=device-width,initial-scale=1'>"
@@ -1353,36 +1455,21 @@ def render(f):
         P.append(f'<p class="alert">{e("; ".join(probs))}.</p>')
     for err in f["errors"]:
         P.append(f'<div class="err">Bagian tidak terbaca: {e(err)}</div>')
-    ac, ca, bk = d.get("account"), d.get("claude_account"), (s or {}).get("book")
-    sb, hy = (s or {}).get("spot_book"), f.get("hybrid") or {}
-    tot = d.get("totals") or {}
-    n_btc = sum((t or {}).get("n", 0) for t in tot.values())
-    rows = [("Bot BTC", "robot BTC dengan aturannya sendiri", ac, f'{len(d.get("open") or [])} terbuka · {n_btc} selesai', "btc"),
-            ("BTC + saran Claude", "posisi yang ditolak Claude dilewati", ca,
-             f'{ca["kept"]} diambil · {ca["vetoed"]} dilewati' if ca else "", "btc"),
-            ("Claude futures", "Claude memilih dari 9 koin, LONG dan SHORT", bk,
-             f'{len(bk["open"])} terbuka · {bk["stats"]["n"]} selesai' if bk else "", "scanner"),
-            ("Claude spot", "pilihan yang sama, hanya LONG", sb,
-             f'{len(sb["open"])} terbuka · {sb["stats"]["n"]} selesai' if sb else "", "scanner")]
-    if hy.get("book"):
-        hb = hy["book"]
-        rows.append(("Claude + engine", "uji pembanding", hb, f'{len(hb["open"])} terbuka · {hb["stats"]["n"]} selesai', "scanner"))
-    P.append(_cards(rows))
-    P.append('<section class="duo">' + _open_all(d, s, hy) + _activity(d, s, now) + "</section>")
-    P.append('<nav class="tabs" role="tablist" aria-label="Bagian dashboard">'
-             '<button role="tab" id="t-scanner" aria-controls="tab-scanner" data-tab="scanner">Claude pilih koin</button>'
-             '<button role="tab" id="t-btc" aria-controls="tab-btc" data-tab="btc">Bot BTC</button>'
-             '<button role="tab" id="t-sistem" aria-controls="tab-sistem" data-tab="sistem">Sistem</button></nav>')
-    P.append('<div class="tabpanel" role="tabpanel" id="tab-scanner" aria-labelledby="t-scanner">' + _scanner_tab(s, f.get("hybrid"), f.get("random")) + "</div>")
-    P.append('<div class="tabpanel" role="tabpanel" id="tab-btc" aria-labelledby="t-btc">' + _btc_tab(f, now) + "</div>")
-    P.append('<div class="tabpanel" role="tabpanel" id="tab-sistem" aria-labelledby="t-sistem">' + _system_tab(f, now) + "</div>")
+    P.append('<nav class="tabs" role="tablist" aria-label="Bagian dashboard">' + "".join(
+        f'<button role="tab" id="t-{k}" aria-controls="tab-{k}" data-tab="{k}">{e(n)}</button>' for k, n in TABS) + "</nav>")
+    panels = {"ringkasan": _board(f) + _progress(f.get("tests"), now)
+              + '<section class="duo">' + _positions(f) + _activity(f) + "</section>",
+              "koin": _picks_tab(f), "btc": _btc_tab(f, now), "sistem": _system_tab(f, now)}
+    for k, _ in TABS:
+        P.append(f'<div class="tabpanel" role="tabpanel" id="tab-{k}" aria-labelledby="t-{k}">{panels[k]}</div>')
     P.append('<details class="glossary"><summary>Arti istilah</summary><dl>'
              '<dt>LONG ↑</dt><dd>bertaruh harga naik; untung kalau harga naik.</dd>'
              '<dt>SHORT ↓</dt><dd>bertaruh harga turun; untung kalau harga turun.</dd>'
              '<dt>Stop</dt><dd>harga batas rugi; posisi ditutup otomatis di sana.</dd>'
              '<dt>Target</dt><dd>harga ambil untung.</dd>'
-             '<dt>Untung/rugi sekarang</dt><dd>hasil kalau posisi ditutup saat ini; belum final.</dd>'
+             '<dt>Untung/rugi</dt><dd>hasil kalau posisi ditutup saat ini; belum final.</dd>'
              '<dt>Spot / futures</dt><dd>spot hanya bisa LONG; futures bisa LONG dan SHORT.</dd>'
+             '<dt>Acak</dt><dd>akun patokan: jumlah dan arah sama dengan Claude murni, koinnya diundi.</dd>'
              '<dt>Uang demo</dt><dd>semua akun di halaman ini fiktif, untuk mengumpulkan data.</dd></dl></details>')
     P.append(f"</main><script>{JS}</script></body></html>")
     return "".join(P)
