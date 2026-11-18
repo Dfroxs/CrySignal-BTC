@@ -252,6 +252,18 @@ def _run(cmd, timeout=20):
         return ""
 
 
+# A real failure in paper_run.log (the bot's stdout): a logged ERROR/CRITICAL (the console
+# handler prints "LEVEL name — msg"), a traceback, or a phase run_bot's _err() marks failed
+# ("  ✗  Phase …", two spaces after ✗; the engine's bearish reasons print "  ✗ Price …", one).
+# Not any line containing "error": a retried news fetch logs "WARNING urllib3 … ReadTimeoutError"
+# and recovers, and counting it raised a false "1 baris error" in the 2026-11-18 report.
+LOG_ERROR = re.compile(r"^(ERROR|CRITICAL) |Traceback \(most recent call last\)|^\s*✗  \S")
+
+
+def count_log_errors(lines):
+    return sum(bool(LOG_ERROR.search(ln)) for ln in lines)
+
+
 def collect_host_facts(root, now, run=_run):
     """Services, logs and backups. Anything that cannot be read comes back 'unknown' /
     None, which the rules treat as something to look at, never as fine."""
@@ -260,7 +272,7 @@ def collect_host_facts(root, now, run=_run):
     errs = None
     if log.exists():
         tail = log.read_text(errors="replace").splitlines()[-400:]
-        errs = sum(bool(re.search(r"error|traceback|exception", ln, re.I)) for ln in tail)
+        errs = count_log_errors(tail)
     # Newest by TIME among db-YYYYMMDD.db: by name, an old 'db-26-08-30-0503.db' sorts last.
     backups = sorted((p for p in (root / "data" / "backups").glob("db-*.db")
                       if re.fullmatch(r"db-\d{8}\.db", p.name)), key=lambda p: p.stat().st_mtime)

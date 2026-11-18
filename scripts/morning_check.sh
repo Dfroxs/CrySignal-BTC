@@ -34,7 +34,8 @@ echo "lastcycle|$(sqlite3 "$DB" "SELECT MAX(timestamp) FROM cycle_log;")"
 echo "openpos|$(sqlite3 "$DB" "SELECT COUNT(*) FROM paper_positions WHERE closed_at IS NULL;")"
 echo "newpos|$(sqlite3 "$DB" "SELECT COUNT(*) FROM paper_positions WHERE opened_at >= datetime('now','-24 hours');")"
 echo "blindfut|$(sqlite3 "$DB" "SELECT COUNT(*) FROM cycle_log WHERE mode='futures' AND funding_rate=0;")"
-echo "spoterr|$(grep -ciE 'error|traceback|exception' <(tail -400 paper_run.log))"
+# Same rule as agents/ops_report.LOG_ERROR: a WARNING that mentions "...Error" is not a failure.
+echo "spoterr|$(grep -cE '^(ERROR|CRITICAL) |Traceback \(most recent call last\)|^\s*✗  \S' <(tail -400 paper_run.log))"
 echo "backup|$(ls -1t data/backups/db-2026*.db 2>/dev/null | head -1 | xargs -r basename)"
 REMOTE
 ) || { echo "  TIDAK BISA SSH KE $HOST"; exit 1; }

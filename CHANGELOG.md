@@ -4,6 +4,27 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-18 — fix(ops): only real failures count as log errors
+
+The 2026-11-18 daily report flagged "1 baris error di paper_run.log". It was this warning:
+`WARNING urllib3 … ReadTimeoutError(…financialjuice…)`. A news feed timed out, the retry
+recovered, and Phase 1 completed. The check matched "error" anywhere in a line, case-blind.
+
+`agents/ops_report.LOG_ERROR` now counts only real failures:
+- a logged `ERROR`/`CRITICAL` (the console handler prints `LEVEL name — msg`);
+- a `Traceback (most recent call last)`;
+- a phase `run_bot._err()` marks failed: `  ✗  Phase …`, with two spaces after ✗.
+
+The engine's bearish reasons print `  ✗ Price …` with one space and do not count. A first
+looser pattern matched 27 of them in the last 400 lines; that was caught on the live log
+before shipping. The daily report, the dashboard's Sistem tab (`count_log_errors`) and
+`scripts/morning_check.sh` share the rule.
+
+On the live log: 0 in the last 400 lines and 0 in all 243k. The bot has never logged a
+real failure. A test covers both the false positives and the real ones. Tests 334/334.
+
+---
+
 ## 2026-11-18 — feat(telegram): every message reformatted; hourly scanner digest added
 
 The owner found the Telegram messages hard to read and BTC-only. They approved a mockup for

@@ -3306,6 +3306,23 @@ def test_ops_anomalies_are_decided_by_rules_not_by_the_model():
     for needle in ("spotsignal", "futures", "7 hari", "varian", "backup", "siklus terakhir"):
         assert needle in msgs, f"missing {needle!r}: {msgs}"
 
+def test_log_error_count_ignores_a_retried_warning_and_counts_real_failures():
+    """2026-11-18 report: '1 baris error' was a WARNING about a news-feed ReadTimeoutError
+    that the retry recovered from. Only real failures count."""
+    from agents.ops_report import count_log_errors
+    lines = ["WARNING urllib3.connectionpool — Retrying (...) after connection broken by 'ReadTimeoutError(...)'",
+             "WARNING news_scraper — Bitcoinist fetch failed: HTTPSConnectionPool(...)",
+             "  ✓  Phase 1  News & macro synced  (71.0s)",
+             "│  ❄️ SPOT 4H  HOLD  5.50/22.50  news downgrade → HOLD │",
+             "  ✓  Phase 4  Telegram sent  (1 message)",
+             "  ✗ Price below EMA 200 (falling ✓)", "  ✗ S&P500 FALLING (-1.03%) — risk-off"]
+    assert count_log_errors(lines) == 0, "a recovered WARNING or a bearish engine reason is not an error"
+    bad = lines + ["ERROR signals.futures — futures analysis failed: KeyError('close')",
+                   "Traceback (most recent call last):",
+                   "  ✗  Phase 2  SPOT failed  (KeyError: 'close')",
+                   "CRITICAL root — out of memory"]
+    assert count_log_errors(bad) == 4, count_log_errors(bad)
+
 def test_ops_render_escapes_the_model_and_survives_without_it():
     from agents.ops_report import render
     out = render(_clean_facts(), [], summary="harga <b>naik</b> & turun")
@@ -6731,6 +6748,7 @@ if __name__ == "__main__":
     print("\n── 33. agents/ops_report.py — daily operations agent ──")
     run("collects the last day from the DB",      test_ops_collects_the_last_day_from_the_database)
     run("anomalies come from rules",              test_ops_anomalies_are_decided_by_rules_not_by_the_model)
+    run("log errors: retried WARNING not counted", test_log_error_count_ignores_a_retried_warning_and_counts_real_failures)
     run("render escapes model, survives w/o it",  test_ops_render_escapes_the_model_and_survives_without_it)
     run("report sends when the LLM fails",        test_ops_report_still_sends_when_the_llm_fails)
     run("ops flags an always-failing agent",      test_ops_reports_shadow_agents_and_flags_a_provider_that_always_fails)
