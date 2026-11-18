@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Off-site copy: pull the VPS's daily backups, the derivatives and news archives, the run
-# manifests, the scoring-day outputs and the Claude cost ledger to this Mac.
+# Off-site copy: pull everything the VPS produces that is not code (audit 2026-11-19): daily
+# database backups, the derivatives and news archives, run manifests, scoring-day outputs,
+# the Claude cost ledger, the bot's state files and every log. Only .env stays behind.
 #
 # The VPS's own backups (deploy/backup_db.sh, 03:00 UTC) live on the same disk as the data.
 # A dead disk or a lost host would take both, and the scanner's and Claude's forward-only
@@ -20,7 +21,8 @@ KEEP_DAYS=90                       # dated copies older than this go, except eac
 SSH="ssh -o BatchMode=yes -o ConnectTimeout=20"
 log() { echo "$(date -u '+%Y-%m-%d %H:%M:%S') UTC  $*"; }
 
-mkdir -p "$DEST/backups" "$DEST/derivs" "$DEST/scoring" "$DEST/manifests" "$DEST/news" "$DEST/ledger"
+mkdir -p "$DEST/backups" "$DEST/derivs" "$DEST/scoring" "$DEST/manifests" "$DEST/news" "$DEST/ledger" \
+         "$DEST/state" "$DEST/logs"
 log "pull from $HOST"
 FAIL=0
 pull() {                           # $1 remote path, $2 local dir, rest: rsync filters
@@ -34,6 +36,16 @@ pull "scoring/" "$DEST/scoring"
 pull "paper_run_manifest*.json" "$DEST/manifests"
 pull "news/" "$DEST/news"                       # headlines + macro calendar (scripts/archive_news.py)
 pull "llm_usage.jsonl" "$DEST/ledger"           # Claude cost ledger, append-only
+# Audit 2026-11-19, so nothing that changes on the host is left uncopied:
+# - state: the adaptive thresholds' rolling logs, alarm/Q&A state, caches (a rebuilt host
+#   resumes from them instead of from zero);
+# - logs: the bot's stdout and INFO log, scanner, alarm, report, scoring, archive logs.
+# .env is deliberately NOT copied: it holds secrets; the owner keeps it.
+pull "*.json" "$DEST/state" --exclude="paper_run_manifest*.json"
+pull "*.log" "$DEST/logs"
+pull "signal_history.csv" "$DEST/state"
+rsync -a --timeout=120 -e "$SSH" "$HOST:playground/CrySignal-BTC/paper_run.log" \
+      "$HOST:playground/CrySignal-BTC/spotsignal.log" "$DEST/logs/" || { log "FAILED rsync bot logs"; FAIL=1; }
 
 # Verify the newest copy of every database before calling the pull good.
 for prefix in db scanner scanner_hybrid scanner_random; do
