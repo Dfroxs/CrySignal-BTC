@@ -390,7 +390,9 @@ Anything above zero means those cycles are contaminated. It was **0** across all
   `launchctl kickstart gui/$(id -u)/com.spotsignal.pullbackups`.
 - First pull 2026-11-18 22:24 UTC: 165 MB, all four databases ok.
 - **2026-11-19:** `data/news/` (the headline and macro-calendar archive) and
-  `llm_usage.jsonl` (the Claude cost ledger) are added to the pull.
+  `llm_usage.jsonl` (the Claude cost ledger) are added to the pull. After the owner's "nothing missed again" audit, it also takes `data/*.json` (bot state and
+  caches), every log (`paper_run.log`, `spotsignal.log`, `data/*.log`) and
+  `signal_history.csv`. Only `.env` stays behind: it holds secrets, and the owner keeps it.
 
 **News archive (2026-11-19).** `news_scraper.py` overwrites `crypto_news_sentiment.csv`
 (about 50 headlines) and `macro_events.csv` every cycle; `cycle_log` keeps only the label and
