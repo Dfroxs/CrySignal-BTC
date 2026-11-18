@@ -32,6 +32,8 @@ Bot restarted by killing the MainPID; systemd respawned it, pid 383220, active 1
 - **2026-11-17 21:48 UTC:** pulled `dfba14f` (PR #51, every Telegram message reformatted
   and the hourly scanner digest added). Bot restarted, pid 386025. No position was open,
   and no signal changes.
+- **2026-11-18:** pulled `375cbf7` (PR #52, only real failures count as log errors; the
+  report's "1 baris error" was a recovered news-feed WARNING). Dashboard restart only.
 
 **Run 3 started 2026-10-09 05:41:31 UTC at `c0e8764`** (manifest on the host; run 2's
 is archived as `paper_run_manifest.run2.json`, its final DB as
