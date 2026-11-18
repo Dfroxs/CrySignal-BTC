@@ -4,6 +4,28 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-19 — feat(ops): off-site backup to the Mac, watched from the VPS
+
+The owner chose the Mac as the off-site copy. Until now the VPS's backups shared a disk
+with the data they protect.
+
+- **`scripts/pull_backups.sh`:**
+  - rsyncs `data/backups/`, `data/derivs/`, `data/scoring/` and the run manifests into
+    `~/Backups/SpotSignal/`, without `--delete`;
+  - runs `integrity_check` on the newest copy of every database;
+  - prunes dated copies after 90 days, keeping each month's 1st;
+  - stamps `data/backups/.offsite_ok` on the VPS. A failure leaves no stamp and exits 1.
+- **Scheduling:** `deploy/com.spotsignal.pullbackups.plist` and
+  `scripts/install_pull_backups.sh` run it from launchd at 11:00 and 20:00 Mac time. A run
+  missed while the Mac sleeps happens at wake.
+- **Watch:** the alarm (`offsite`) and the dashboard's Sistem tab ("Backup ke Mac") flag a
+  stamp older than 72 h, or none. A weekend off is not an alarm.
+- **First pull:** 15 s, 165 MB, all four databases `ok`; the launchd run exited 0.
+
+Tests 336/336.
+
+---
+
 ## 2026-11-18 — feat: sizing and reasons on Telegram; dashboard adds market, position detail, stats, run history
 
 The owner asked for leverage back in the messages, with more information there and on the

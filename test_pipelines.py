@@ -5026,6 +5026,14 @@ def test_alarm_watches_scanner_arms_backups_and_the_derivs_archive():
     path = os.path.join(d, "derivs", "BTCUSDT_oi.csv"); open(path, "w").close()
     t = now.timestamp() - 30 * 3600; os.utime(path, (t, t))
     f = collect_file_facts(d, now)
+    assert f["offsite_age_h"] is None, "no stamp yet"
+    assert conditions(dict(_alarm_clean(), offsite_age_h=None))["offsite"].startswith("backup ke Mac belum pernah")
+    assert "offsite" not in conditions(dict(_alarm_clean(), offsite_age_h=71.0)), "a weekend off is fine"
+    assert "Mac mati?" in conditions(dict(_alarm_clean(), offsite_age_h=80.0))["offsite"]
+    stamp = os.path.join(d, "backups", ".offsite_ok"); open(stamp, "w").close()
+    t = now.timestamp() - 5 * 3600; os.utime(stamp, (t, t))
+    assert collect_file_facts(d, now)["offsite_age_h"] == 5.0
+    f = collect_file_facts(d, now); f.pop("offsite_age_h")
     assert f["backup_age_h"] == {"db": 13.0, "scanner": 61.0, "scanner_hybrid": None}, \
         "newest copy per prefix; scanner- never reads scanner_hybrid-; no source db, no check"
     assert f["derivs_age_h"] == 30.0
