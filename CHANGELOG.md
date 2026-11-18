@@ -4,6 +4,51 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-19 — feat(ops): archive the news the bot reads; Mac pull takes it and the cost ledger
+
+The owner asked whether news was backed up. It was not, and worse, it was not kept at all:
+`news_scraper.py` overwrites `crypto_news_sentiment.csv` (about 50 headlines) and
+`macro_events.csv` every cycle, and `cycle_log` stores only the resulting label and Fear &
+Greed. Testing the news overlay later needs the headlines, and they cannot be fetched again.
+
+- **`scripts/archive_news.py`** runs from cron at `3 * * * *`, two minutes after the bot
+  writes. It appends new headlines to `data/news/news-YYYY-MM.csv`, unique on link + title
+  (CoinGecko's trending row keeps its link and changes its title). It appends calendar rows to
+  `macro-YYYY-MM.csv`, unique on the whole row, so a filled-in `actual` is kept again. Every
+  row is stamped `archived_at`, and keys are checked against the previous month too. It never
+  writes the files the bot reads, and needs no restart.
+- **Alarm and Sistem tab:** "Arsip berita" flags an archive that has not grown in 26 h, which
+  means a dead news feed.
+- **`scripts/pull_backups.sh`** also pulls `data/news/` and `llm_usage.jsonl`.
+- **Tried on copies of the live files:** 51 headlines and 8 events archived; the second run
+  added 0.
+
+Tests 337/337.
+
+---
+
+## 2026-11-19 — feat(ops): off-site backup to the Mac, watched from the VPS
+
+The owner chose the Mac as the off-site copy. Until now the VPS's backups shared a disk
+with the data they protect.
+
+- **`scripts/pull_backups.sh`:**
+  - rsyncs `data/backups/`, `data/derivs/`, `data/scoring/` and the run manifests into
+    `~/Backups/SpotSignal/`, without `--delete`;
+  - runs `integrity_check` on the newest copy of every database;
+  - prunes dated copies after 90 days, keeping each month's 1st;
+  - stamps `data/backups/.offsite_ok` on the VPS. A failure leaves no stamp and exits 1.
+- **Scheduling:** `deploy/com.spotsignal.pullbackups.plist` and
+  `scripts/install_pull_backups.sh` run it from launchd at 11:00 and 20:00 Mac time. A run
+  missed while the Mac sleeps happens at wake.
+- **Watch:** the alarm (`offsite`) and the dashboard's Sistem tab ("Backup ke Mac") flag a
+  stamp older than 72 h, or none. A weekend off is not an alarm.
+- **First pull:** 15 s, 165 MB, all four databases `ok`; the launchd run exited 0.
+
+Tests 336/336.
+
+---
+
 ## 2026-11-18 — feat: sizing and reasons on Telegram; dashboard adds market, position detail, stats, run history
 
 The owner asked for leverage back in the messages, with more information there and on the

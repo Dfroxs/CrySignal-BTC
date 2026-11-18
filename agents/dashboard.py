@@ -95,7 +95,8 @@ def host_facts(root, now, run=None):
             "backup_latest": backups[-1].stem.removeprefix("db-") if backups else None,
             "backup_age_h": b_age, "log_errors": log_errors, "git_head": head or None,
             "scanner_arms": collect_scanner_facts(root / "data", now),
-            "backup_age_h_by": files["backup_age_h"], "derivs_age_h": files["derivs_age_h"]}
+            "backup_age_h_by": files["backup_age_h"], "derivs_age_h": files["derivs_age_h"],
+            "offsite_age_h": files["offsite_age_h"], "news_age_h": files["news_age_h"]}
 
 
 def manifest_facts(root):
@@ -486,8 +487,10 @@ def _side_conditions(h):
     if "scanner_arms" not in h:
         return {}
     c = conditions({"spot_svc": "active", "last_cycle_age_min": 0, "scanner": h["scanner_arms"],
-                    "backup_age_h": h.get("backup_age_h_by") or {}, "derivs_age_h": h.get("derivs_age_h")})
-    return {k: v for k, v in c.items() if k.split(":")[0] in ("scanner", "scanner_err", "backup", "derivs")}
+                    "backup_age_h": h.get("backup_age_h_by") or {}, "derivs_age_h": h.get("derivs_age_h"),
+                    **{k: h[k] for k in ("offsite_age_h", "news_age_h") if k in h}})
+    return {k: v for k, v in c.items()
+            if k.split(":")[0] in ("scanner", "scanner_err", "backup", "derivs", "offsite", "news")}
 
 
 def issues(f):
@@ -1075,6 +1078,14 @@ def _health_rows(f, now):
         age = h["derivs_age_h"]
         add("derivs" not in bad, "Arsip data L/S, OI, taker", f"{age:.0f} jam lalu" if age is not None else "tidak ada",
             "harian jam 03:40 UTC; Binance hanya menyimpan 30 hari, jadi yang hilang tak bisa diambil lagi")
+    if "news_age_h" in h:
+        age = h["news_age_h"]
+        add("news" not in bad, "Arsip berita", f"{age:.0f} jam lalu" if age is not None else "tidak ada",
+            "headline dan kalender ekonomi disimpan tiap jam; file aslinya ditimpa tiap siklus")
+    if "offsite_age_h" in h:
+        age = h["offsite_age_h"]
+        add("offsite" not in bad, "Backup ke Mac", f"{age:.0f} jam lalu" if age is not None else "belum pernah",
+            "Mac menarik salinan 2x sehari; merah kalau lebih dari 72 jam")
     le = h.get("log_errors")
     add(not le, "Error di log", "tidak ada" if le == 0 else f"{le} baris" if le else "–", "400 baris terakhir paper_run.log")
     return rows

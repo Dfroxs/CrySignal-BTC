@@ -341,6 +341,28 @@ sqlite3 data/signal_history.db \
 
 Anything above zero means those cycles are contaminated. It was **0** across all of run 1.
 
+**Off-site copy on the Mac (2026-11-19).** `scripts/pull_backups.sh` runs from launchd
+(`com.spotsignal.pullbackups`, 11:00 and 20:00 Mac time; a missed run happens at wake).
+- It pulls `data/backups/`, `data/derivs/`, `data/scoring/` and the run manifests into
+  `~/Backups/SpotSignal/`, without `--delete`. Dated copies are kept 90 days, plus the 1st of
+  every month for good.
+- It checks the newest copy of every database with `integrity_check`, then stamps
+  `data/backups/.offsite_ok` on the VPS.
+- The hourly alarm and the dashboard's Sistem tab flag a stamp older than 72 h, or none.
+- Reinstall with `bash scripts/install_pull_backups.sh`; run it now with
+  `launchctl kickstart gui/$(id -u)/com.spotsignal.pullbackups`.
+- First pull 2026-11-18 22:24 UTC: 165 MB, all four databases ok.
+- **2026-11-19:** `data/news/` (the headline and macro-calendar archive) and
+  `llm_usage.jsonl` (the Claude cost ledger) are added to the pull.
+
+**News archive (2026-11-19).** `news_scraper.py` overwrites `crypto_news_sentiment.csv`
+(about 50 headlines) and `macro_events.csv` every cycle; `cycle_log` keeps only the label and
+Fear & Greed. `scripts/archive_news.py` runs from cron at `3 * * * *`, after the bot's :01. It
+appends new rows to `data/news/news-YYYY-MM.csv` (unique on link + title) and
+`macro-YYYY-MM.csv` (unique on the whole row), each stamped `archived_at`. The alarm and the
+Sistem tab flag an archive that has not grown in 26 h. Headlines from before 2026-11-19 are
+lost.
+
 **Backups run daily at 03:00 UTC** via `deploy/backup_db.sh` (cron, no sudo). It uses
 `sqlite3 .backup`, not `cp` — the bot writes hourly and `cp` of a live SQLite file can
 capture a torn write that restores corrupt. The script runs `integrity_check` and fails
