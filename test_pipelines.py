@@ -4223,6 +4223,60 @@ def test_scoring_day_runs_each_test_once_when_due_and_never_early():
     finally:
         _restore_history_db(h, saved, path)
 
+def test_macro_rule_times_window_replay_and_verdict():
+    import pandas as pd
+    import scripts.macro_rule_ic as mc
+    # Official New York times, DST applied: NFP 08:30 ET = 13:30 UTC in winter, 12:30 in summer.
+    assert mc.EVENT_TIME["Non-Farm Employment Change"].hour == 8 and "Fed Chair Powell Speaks" not in mc.EVENT_TIME
+    times = sorted([pd.Timestamp("2024-01-05 13:30"), pd.Timestamp("2024-07-05 12:30")])
+    names = [(times[0], "Non-Farm Employment Change"), (times[1], "FOMC Statement")]
+    assert mc.event_ahead(times, pd.Timestamp("2024-01-05 11:30")) == times[0], "exactly 2 h ahead counts"
+    assert mc.event_ahead(times, pd.Timestamp("2024-01-05 11:29")) is None
+    assert mc.event_ahead(times, pd.Timestamp("2024-01-05 13:31")) is None, "an event already past does not"
+    assert mc.family("Core CPI m/m") == "inflation" and mc.family("FOMC Statement") == "fomc"
+    idx = pd.date_range("2024-01-05 00:00", periods=60, freq="h")
+    df = pd.DataFrame({"close": 100.0}, index=idx)
+    def sim(d, i, s, h, ep=None):
+        if ep:                                       # forced close at bar j: +0.5 instead of -1.0
+            return {"outcome": "FLIP", "pnl_pct": 0.5, "candles_held": ep["flip_at"] - i}
+        return {"outcome": "LOSS", "pnl_pct": -1.0, "candles_held": 20}
+    calls = [(10, {"type": "BUY"}, None),            # bar 10 closes 11:00, open to 30: closed at bar 11
+             (11, {"type": "BUY"}, None),            # bar 11 closes 12:00: inside the window, suppressed
+             (30, {"type": "SELL"}, None)]           # no event in its life: unaffected
+    rows = mc.replay(df, calls, times, names, sim, 72)
+    assert [r["acted"] for r in rows] == ["closed", "suppressed", None], rows
+    assert rows[0]["rule"] == 0.5 and rows[1]["rule"] == 0.0 and rows[2]["rule"] == rows[2]["base"]
+    many = [dict(r, t=r["t"] + pd.Timedelta(days=k)) for k in range(40) for r in rows[:2]]
+    v = mc.verdict(many, n_boot=200)
+    assert v["affected"] == 80 and v["verdict"] == "HELPS", v
+    v = mc.verdict([dict(r, rule=r["base"] - 1) for r in many], n_boot=200)
+    assert v["verdict"] == "HURTS", v
+    assert mc.verdict(rows, n_boot=50)["verdict"] == "INCONCLUSIVE", "power guard"
+    ep = mc.episodes([(pd.Timestamp("2024-01-01 00:00"), "BUY"), (pd.Timestamp("2024-01-01 05:00"), "BUY"),
+                      (pd.Timestamp("2024-01-01 06:00"), "SELL"), (pd.Timestamp("2024-01-02 00:00"), "SELL")])
+    assert ep == [0, 0, 1, 2], ep
+
+def test_fng_frame_alignment_and_two_halves_rule():
+    import numpy as np
+    import pandas as pd
+    import scripts.fng_ic as fg
+    days = pd.date_range("2018-02-01", "2026-11-15", freq="D")
+    rng = np.random.default_rng(1)
+    px = pd.DataFrame({"open": 100.0, "close": 100.0}, index=days)
+    fng = pd.Series(rng.integers(5, 95, len(days)), index=days)
+    f = fg.frame(fng, px.assign(close=[100.0 + (i % 3) for i in range(len(days))]))
+    d0 = days[0]
+    assert abs(f.loc[d0, "fwd"] - ((100.0 + 2) / 100.0 - 1) * 100) < 1e-9, "D's open to D+2's close"
+    # Plant the contrarian effect: low F&G -> +1% forward, high -> -1%
+    fwd = np.where(fng <= 20, 1.0, np.where(fng >= 70, -1.0, 0.0))
+    df = pd.DataFrame({"fng": fng, "fwd": fwd}, index=days)
+    r = fg.score(df)
+    assert r["H-FG1"]["verdict"] == "PASS" and r["H-FG2"]["verdict"] == "PASS", r
+    r = fg.score(df.assign(fwd=-df["fwd"]))
+    assert r["H-FG1"]["verdict"] == "FAIL" and r["H-FG2"]["verdict"] == "FAIL", r
+    flip = df.copy(); flip.loc[flip.index >= fg.HALF, "fwd"] *= -1
+    assert fg.score(flip)["H-FG1"]["verdict"] != "PASS", "both halves must agree"
+
 def test_scoring_scripts_refuse_before_day_30():
     import inspect
     import scripts.hd_eval as hd, scripts.score_run3 as sr
@@ -6983,6 +7037,8 @@ if __name__ == "__main__":
     run("run 4: HTF penalty on final leader",     test_htf_conflict_penalty_lands_on_the_side_that_finally_leads)
     run("run 4: macro HOLD clears levels",        test_macro_forced_hold_clears_levels_and_confidence)
     run("H-VR/H-BS: window, two-part + 2-sided",  test_run4b_window_and_verdicts_follow_the_prereg)
+    run("H-MC: times, window, replay, verdict",    test_macro_rule_times_window_replay_and_verdict)
+    run("H-FG: alignment, two-halves rule",       test_fng_frame_alignment_and_two_halves_rule)
     run("scoring day: once, when due, never early", test_scoring_day_runs_each_test_once_when_due_and_never_early)
     run("news archive: new rows only, per month",  test_news_archive_appends_only_new_rows_per_month)
     run("live TP2 pays 2 sides, records its price", test_a_live_tp2_exit_pays_a_full_round_trip_and_records_its_price)
