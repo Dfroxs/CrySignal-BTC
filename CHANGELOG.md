@@ -4,6 +4,24 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-19 — fix(ops): the Mac pull takes everything that changes on the host
+
+The owner: "jangan ada yg terlewat lagi". I audited every non-code file that changes on the
+VPS (`git status --ignored`) and classified each one:
+- **Already copied:** the databases, derivs, news, scoring, manifests and ledger.
+- **Recoverable without a copy:** the caches' values are in `cycle_log`, and prices and
+  funding can be fetched again.
+- **Missing:** the bot's state (`threshold_state.json` and the spot one, alarm and Q&A state)
+  and every log (`paper_run.log`, `spotsignal.log`, scanner, alarm, report).
+
+`scripts/pull_backups.sh` now also pulls `data/*.json` into `state/`, `data/*.log` and the
+two bot logs into `logs/`, and `signal_history.csv`. `.env` is deliberately left behind: it
+holds secrets and the owner keeps it.
+
+Ran on the Mac: 180 MB, all databases `ok`.
+
+---
+
 ## 2026-11-19 — feat(ops): archive the news the bot reads; Mac pull takes it and the cost ledger
 
 The owner asked whether news was backed up. It was not, and worse, it was not kept at all:
