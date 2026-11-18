@@ -86,7 +86,8 @@ def host_facts(root, now, run=None):
     log_errors = None
     if log.exists():
         tail = log.read_text(errors="replace").splitlines()[-400:]
-        log_errors = sum(bool(re.search(r"error|traceback|exception", ln, re.I)) for ln in tail)
+        from agents.ops_report import count_log_errors
+        log_errors = count_log_errors(tail)
     head = run(f"git -C '{root}' rev-parse --short HEAD")
     files = collect_file_facts(root / "data", now)
     return {"services": svc, "mem_available_mb": h["mem_available_mb"],
