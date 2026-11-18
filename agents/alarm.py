@@ -41,6 +41,7 @@ SCANNER_ARMS = (("murni", "scanner.db"), ("hybrid", "scanner_hybrid.db"),
                 ("acak", "scanner_random.db"))
 SCANNER_ERROR_RUN = 3           # this many newest scan cycles all errored → arm down
 MAX_FILE_AGE_H = 26             # daily jobs (backup 03:00, archive 03:40) plus slack
+MAX_OFFSITE_AGE_H = 72          # the Mac pulls twice a day; a weekend off is not an alarm
 BACKUPS = (("db", "signal_history.db"),) + tuple((Path(f).stem, f) for _, f in SCANNER_ARMS)
 
 
@@ -126,8 +127,10 @@ def collect_file_facts(data_dir, now):
     backups = {prefix: age_h((data / "backups").glob(f"{prefix}-*.db"))
                for prefix, src in BACKUPS if (data / src).exists()}
     derivs = data / "derivs"
+    stamp = data / "backups" / ".offsite_ok"      # written by the Mac after a verified pull
     return {"backup_age_h": backups,
-            "derivs_age_h": age_h(derivs.glob("*.csv")) if derivs.is_dir() else None}
+            "derivs_age_h": age_h(derivs.glob("*.csv")) if derivs.is_dir() else None,
+            "offsite_age_h": age_h([stamp] if stamp.exists() else [])}
 
 
 def _run(cmd, timeout=20):
@@ -204,6 +207,11 @@ def conditions(f):
         if age is None or age > MAX_FILE_AGE_H:
             when = "tidak ada" if age is None else f"terakhir menulis {age:.0f} jam lalu"
             out["derivs"] = f"arsip derivatives: {when} (batas {MAX_FILE_AGE_H} jam)"
+    if "offsite_age_h" in f:
+        age = f["offsite_age_h"]
+        if age is None or age > MAX_OFFSITE_AGE_H:
+            when = "belum pernah jalan" if age is None else f"terakhir {age:.0f} jam lalu (Mac mati?)"
+            out["offsite"] = f"backup ke Mac {when} (batas {MAX_OFFSITE_AGE_H} jam)"
     mem = f.get("mem_available_mb")
     if mem is not None and mem < MIN_MEM_AVAILABLE_MB:
         out["memory"] = f"RAM tersedia {mem:.0f} MB (batas {MIN_MEM_AVAILABLE_MB})"
@@ -250,7 +258,7 @@ def _label(key):
             "cycle_stale": "siklus bot", "futures_blind": "data funding futures",
             "memory": "RAM", "disk": "disk", "scanner": f"scanner {name}",
             "scanner_err": f"scanner {name}", "backup": f"backup {name}",
-            "derivs": "arsip derivatives"}.get(kind, key)
+            "derivs": "arsip derivatives", "offsite": "backup ke Mac"}.get(kind, key)
 
 
 def render(new, again, recovered, now):

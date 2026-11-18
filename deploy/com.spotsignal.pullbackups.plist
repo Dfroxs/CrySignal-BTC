@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Off-site backup: this Mac pulls the VPS's backups twice a day (scripts/pull_backups.sh).
+     Installed by scripts/install_pull_backups.sh, which fills in __REPO__ and __LOG__.
+     A run missed while the Mac sleeps is done at wake (launchd StartCalendarInterval). -->
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>com.spotsignal.pullbackups</string>
+    <key>ProgramArguments</key>
+    <array><string>/bin/bash</string><string>__REPO__/scripts/pull_backups.sh</string></array>
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Hour</key><integer>11</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Hour</key><integer>20</integer><key>Minute</key><integer>0</integer></dict>
+    </array>
+    <key>StandardOutPath</key><string>__LOG__</string>
+    <key>StandardErrorPath</key><string>__LOG__</string>
+    <key>RunAtLoad</key><false/>
+</dict>
+</plist>

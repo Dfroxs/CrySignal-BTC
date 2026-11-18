@@ -378,6 +378,18 @@ sqlite3 data/signal_history.db \
 
 Anything above zero means those cycles are contaminated. It was **0** across all of run 1.
 
+**Off-site copy on the Mac (2026-11-19).** `scripts/pull_backups.sh` runs from launchd
+(`com.spotsignal.pullbackups`, 11:00 and 20:00 Mac time; a missed run happens at wake).
+- It pulls `data/backups/`, `data/derivs/`, `data/scoring/` and the run manifests into
+  `~/Backups/SpotSignal/`, without `--delete`. Dated copies are kept 90 days, plus the 1st of
+  every month for good.
+- It checks the newest copy of every database with `integrity_check`, then stamps
+  `data/backups/.offsite_ok` on the VPS.
+- The hourly alarm and the dashboard's Sistem tab flag a stamp older than 72 h, or none.
+- Reinstall with `bash scripts/install_pull_backups.sh`; run it now with
+  `launchctl kickstart gui/$(id -u)/com.spotsignal.pullbackups`.
+- First pull 2026-11-18 22:24 UTC: 165 MB, all four databases ok.
+
 **Backups run daily at 03:00 UTC** via `deploy/backup_db.sh` (cron, no sudo). It uses
 `sqlite3 .backup`, not `cp` — the bot writes hourly and `cp` of a live SQLite file can
 capture a torn write that restores corrupt. The script runs `integrity_check` and fails
