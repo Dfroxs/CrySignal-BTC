@@ -34,6 +34,10 @@ Bot restarted by killing the MainPID; systemd respawned it, pid 383220, active 1
   and no signal changes.
 - **2026-11-18:** pulled `375cbf7` (PR #52, only real failures count as log errors; the
   report's "1 baris error" was a recovered news-feed WARNING). Dashboard restart only.
+- **2026-11-18 14:06 UTC:** pulled `66bb998` (PR #53). The Telegram cards gain sizing
+  (leverage, margin, liquidation, loss at the stop) and the top 3 reasons. The dashboard gains
+  the market strip, position detail, account statistics and run history. Bot restarted, pid
+  392860; dashboard restarted. No position was open, and no signal changes.
 
 **Run 3 started 2026-10-09 05:41:31 UTC at `c0e8764`** (manifest on the host; run 2's
 is archived as `paper_run_manifest.run2.json`, its final DB as
