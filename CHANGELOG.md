@@ -4,6 +4,31 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-19 — results: H-MC INCONCLUSIVE, H-FG1 INCONCLUSIVE, H-FG2 FAIL
+
+The owner asked whether the backtest accounts for macro events and news. It does not, so the
+two live behaviours with history available were pre-registered and scored. The prereg was
+committed at `ac3b7c0`, before either test ran.
+
+- **H-MC, the macro rule** (hold and force-close 0–2 h before a High USD event): INCONCLUSIVE.
+  - Replayed on 521 BTC futures signals, 2022-01 to 2025-03 (run-4 engine).
+  - Mean +0.221 pp per affected signal, 90% CI [−0.066, +0.500], 268 signals and 243 episodes.
+  - The rule acts on 51% of signals.
+  - It stays.
+- **Event times:** the ForexFactory archive (HF `Tropstan/Forex_Factory_Calendar`, MIT, to
+  2025-04-04) lost its times after 2012. Each event takes the archive's date and the official
+  New York release time, with DST applied.
+- **H-FG2, greed before falls:** FAIL. F&G ≥ 70 days came before +0.69 pp *better* 72 h
+  returns, CI [+0.07, +1.32], both halves positive. The overlay's −0.5 BUY penalty bets the
+  wrong way. Removing it is licensed for run 4 part B.
+- **H-FG1, fear before rises:** INCONCLUSIVE, +0.20 pp, CI across 0. The fear leg is an owner
+  decision.
+- `scripts/macro_rule_ic.py` and `scripts/fng_ic.py`, with tests. Results in
+  `2026-11-19-macro-fng-results.md`. Data under `data/macro_hist/` (not committed). Tests
+  339/339.
+
+---
+
 ## 2026-11-19 — fix(ops): the Mac pull takes everything that changes on the host
 
 The owner: "jangan ada yg terlewat lagi". I audited every non-code file that changes on the
