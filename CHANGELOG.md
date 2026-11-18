@@ -4,6 +4,38 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-18 — feat: sizing and reasons on Telegram; dashboard adds market, position detail, stats, run history
+
+The owner asked for leverage back in the messages, with more information there and on the
+dashboard. They chose all four dashboard additions and 3 reasons per signal.
+
+- **Telegram, for a signal that can open (hourly card and open card):**
+  - Futures: "Leverage Nx · margin M% modal" and "Likuidasi $X · rugi maks R% modal kalau kena
+    stop", from `signals/sizing.py` on the levels the position opens with.
+  - Spot: "Ukuran M% modal" and the loss at the stop.
+  - Margin and risk are in % of the account, because the sizing balances ($500 futures,
+    $1,000 spot) are examples, not the demo accounts.
+  - The 3 strongest engine reasons on the signal's own side (✓ for BUY, ✗ for SELL), markers
+    stripped, escaped.
+  - A HOLD or an unopenable signal shows neither.
+- **Dashboard, Ringkasan:**
+  - **Market strip:** BTC price, 4h and daily trend, funding, long/short, Fear & Greed, and
+    the next high-impact event with a countdown.
+  - **Running positions:** full width, adding stop, target (T2 after TP1) and time left before
+    the automatic close, plus a detail row with leverage, margin and liquidation for BTC
+    futures. A note explains which stops trail and that leverage is an estimate.
+  - **Account statistics:** per account (BTC futures and spot, the six scanner books): closed,
+    win %, average win and loss, profit factor, drawdown, total, in % per position.
+- **Dashboard, Bot BTC tab: run history.** Every archived run (`paper_run_manifest.runN.json`)
+  and the current one, each with the $1,000 account over the positions opened in its window:
+  run 1 3 positions +0.37%, run 2 none, run 3 16 positions +0.18%, run 4 running. The
+  scoreboard's Bot BTC row reads "run 4 sejak 17 Nov; run 3 berakhir $1.001,81", so the
+  restarted $1,000 has context.
+- Checked by screenshot (desktop, 390 px) on the VPS's live data. Tests 336/336 (new: sizing
+  and reasons on the card; runs, market, position detail and stats).
+
+---
+
 ## 2026-11-18 — fix(ops): only real failures count as log errors
 
 The 2026-11-18 daily report flagged "1 baris error di paper_run.log". It was this warning:

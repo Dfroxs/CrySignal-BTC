@@ -4725,6 +4725,27 @@ def test_tg_an_openable_buy_shows_its_setup():
     assert len(out) <= 600, (len(out), out)
     _assert_html_safe(out)
 
+def test_tg_an_openable_signal_shows_sizing_and_its_top_reasons():
+    """Owner, 2026-11-18: leverage, margin, liquidation and the loss at the stop back on the
+    card for a signal that can open, in % of the account, plus the 3 strongest reasons on
+    the signal's own side. A HOLD or an unopenable signal shows neither."""
+    from notifier.telegram import _format_consolidated_telegram, _format_open_notification
+    with _tg_db():
+        fut = _format_consolidated_telegram(None, make_signal("SELL", "futures", confidence="STRONG"))
+        spot = _format_consolidated_telegram(make_signal("BUY", "spot", confidence="NORMAL"), None)
+        weak = _format_consolidated_telegram(make_signal("BUY", "spot", confidence="WEAK"), _hold_f())
+    assert "Leverage " in fut and "x · margin " in fut and "Likuidasi $" in fut and "% modal kalau kena stop" in fut, fut
+    assert "Ukuran " in spot and "Rugi maks 2,0% modal kalau kena stop" in spot, spot
+    assert "Alasan:\n• Price above EMA 200" in spot and "✓" not in spot.split("Alasan:")[1], spot
+    reasons = [l for l in spot.splitlines() if l.startswith("• ")]
+    assert 1 <= len(reasons) <= 3, reasons
+    assert "Leverage" not in weak and "Alasan:" not in weak and "Ukuran" not in weak, weak
+    opened = _format_open_notification(make_signal("SELL", "futures"), 7, "futures")
+    assert "Leverage " in opened and "Likuidasi $" in opened, opened
+    for out in (fut, spot, opened):
+        _assert_html_safe(out)
+        assert max(len(l) for l in out.splitlines()) <= 75, "lines fit a phone"
+
 def test_tg_a_futures_sell_shows_leverage_and_liquidation():
     """A futures SELL shows the levels it OPENS with (widened by the exit geometry)."""
     from notifier.common import _usd
@@ -5055,6 +5076,54 @@ def test_ops_report_and_dashboard_show_scanner_arms_backups_and_archive():
     assert "Backup Claude murni" in names and "Backup bot BTC" not in names, names
     bad = dsh.issues({"host": h, "db": None, "errors": []})
     assert any("backup scanner: tidak ada" in b for b in bad), "the dashboard uses the alarm's rules"
+
+
+def test_dashboard_runs_market_position_detail_and_stats():
+    """Owner, 2026-11-18: run history (each run's $1,000 account), the market now, stop /
+    target / time left (and leverage for BTC futures) per position, statistics per account."""
+    import json, os, tempfile
+    from datetime import UTC, datetime
+    from pathlib import Path
+    from agents import dashboard as dsh
+    h, saved, path = _temp_history_db()
+    try:
+        con = h._conn()
+        for i, (opened, pnl) in enumerate((("2026-09-01 01:01:00", 2.0), ("2026-10-10 01:01:00", -1.0),
+                                           ("2026-10-11 01:01:00", 3.0), ("2026-11-18 01:01:00", 1.0)), 1):
+            con.execute("INSERT INTO paper_positions (id, type, entry_price, stop_loss, take_profit, opened_at, "
+                        "closed_at, outcome, pnl_pct, mode) VALUES (?, 'BUY', 100, 95, 110, ?, ?, 'WIN', ?, 'futures')",
+                        (i, opened, opened.replace(" 01:", " 05:"), pnl))
+        con.commit()
+        root = Path(tempfile.mkdtemp()); (root / "data").mkdir()
+        for name, start in (("paper_run_manifest.run1.json", "2026-08-30T00:00:00+00:00"),
+                            ("paper_run_manifest.run2.json", "2026-10-09T00:00:00+00:00"),
+                            ("paper_run_manifest.json", "2026-11-17T18:44:50+00:00"),
+                            ("paper_run_manifest.run3-0541.json", "2026-10-09T05:41:00+00:00")):
+            json.dump({"started_at": start}, open(root / "data" / name, "w"))
+        runs = dsh.run_history(path, root)
+        assert [(r["run"], r["n"], r["current"]) for r in runs] == [(1, 1, False), (2, 2, False), (3, 1, True)], runs
+        # run 2: -1% on $100 (10% of $1,000), then +3% on $99.90 (10% of $999)
+        assert abs(runs[1]["balance"] - (1000 - 1 + 99.9 * 0.03)) < 0.01 and runs[1]["win"] == 50, runs[1]
+        now = datetime(2026, 11, 18, 12, 0, tzinfo=UTC)
+        f = {"now": now, "runs": runs, "macro": [{"t": datetime(2026, 11, 18, 19, 0, tzinfo=UTC), "event": "FOMC <x>"}],
+             "db": {"last": {"futures": {"price": 64000.0, "htf": {"4h": "BEARISH", "1d": "BULLISH"},
+                                         "funding": 0.0029, "ls": 3.08, "fng": 12}},
+                    "open": [{"id": 9, "mode": "futures", "type": "SELL", "entry_price": 64000.0, "stop_loss": 66000.0,
+                              "take_profit": 60000.0, "tp2": 56000.0, "partial_closed": 0, "opened_at": "2026-11-18 06:01:00",
+                              "move_pct": 0.5, "stop": 66000.0, "hours": 6.0}],
+                    "totals": {"futures": dsh._book([(None, None, 2.0, "WIN"), (None, None, -1.0, "LOSS")]), "spot": {"n": 0}}}}
+        mk = dsh._market(f)
+        assert "turun" in mk and "naik" in mk and "+0,0029%" in mk and "FOMC &lt;x&gt;" in mk and "7 j" in mk, mk
+        pos = dsh._positions(f)
+        assert "66.000,00" in pos and "60.000,00" in pos and "66 j" in pos, "stop, target, 72 h cap minus 6 h"
+        assert "leverage " in pos and "likuidasi" in pos, "BTC futures gets its sizing detail row"
+        st = dsh._stats(f)
+        assert "Bot BTC (futures)" in st and "50%" in st and "2,00" in st and "Acak (spot)" in st, st
+        assert "run 3 sejak 17 Nov; run 2 berakhir" in dsh._run_hint(f)
+        rt = dsh._runs(f)
+        assert "Run 3" in rt and "berjalan" in rt and rt.index("Run 3") < rt.index("Run 1"), "newest first"
+    finally:
+        _restore_history_db(h, saved, path)
 
 
 def test_alarm_alerts_once_re_alerts_after_six_hours_and_recovers_once():
@@ -6812,6 +6881,7 @@ if __name__ == "__main__":
     run("state saved only after send; exit 1",    test_alarm_run_saves_state_only_after_a_send_and_exits_nonzero_while_active)
     run("alarm: scanner arms, backups, archive",  test_alarm_watches_scanner_arms_backups_and_the_derivs_archive)
     run("ops report + dashboard: scanner, backups", test_ops_report_and_dashboard_show_scanner_arms_backups_and_archive)
+    run("dashboard: runs, market, detail, stats",  test_dashboard_runs_market_position_detail_and_stats)
 
     print("\n── 36. Ops report: activity, agent health, LLM cost ──")
     run("ops lists opens/closes with side+entry", test_ops_lists_positions_opened_and_closed_with_side_and_entry)
@@ -6874,6 +6944,7 @@ if __name__ == "__main__":
     run("H-VR/H-BS: window, two-part + 2-sided",  test_run4b_window_and_verdicts_follow_the_prereg)
     run("scoring day: once, when due, never early", test_scoring_day_runs_each_test_once_when_due_and_never_early)
     run("live TP2 pays 2 sides, records its price", test_a_live_tp2_exit_pays_a_full_round_trip_and_records_its_price)
+    run("tg: sizing + top reasons when openable",  test_tg_an_openable_signal_shows_sizing_and_its_top_reasons)
     run("scorers refuse before day 30",           test_scoring_scripts_refuse_before_day_30)
     run("futures hypotheses from futures restart", test_score_run3_scores_futures_hypotheses_from_the_futures_restart)
 
