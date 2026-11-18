@@ -4,6 +4,29 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-19 — feat(ops): archive the news the bot reads; Mac pull takes it and the cost ledger
+
+The owner asked whether news was backed up. It was not, and worse, it was not kept at all:
+`news_scraper.py` overwrites `crypto_news_sentiment.csv` (about 50 headlines) and
+`macro_events.csv` every cycle, and `cycle_log` stores only the resulting label and Fear &
+Greed. Testing the news overlay later needs the headlines, and they cannot be fetched again.
+
+- **`scripts/archive_news.py`** runs from cron at `3 * * * *`, two minutes after the bot
+  writes. It appends new headlines to `data/news/news-YYYY-MM.csv`, unique on link + title
+  (CoinGecko's trending row keeps its link and changes its title). It appends calendar rows to
+  `macro-YYYY-MM.csv`, unique on the whole row, so a filled-in `actual` is kept again. Every
+  row is stamped `archived_at`, and keys are checked against the previous month too. It never
+  writes the files the bot reads, and needs no restart.
+- **Alarm and Sistem tab:** "Arsip berita" flags an archive that has not grown in 26 h, which
+  means a dead news feed.
+- **`scripts/pull_backups.sh`** also pulls `data/news/` and `llm_usage.jsonl`.
+- **Tried on copies of the live files:** 51 headlines and 8 events archived; the second run
+  added 0.
+
+Tests 337/337.
+
+---
+
 ## 2026-11-19 — feat(ops): off-site backup to the Mac, watched from the VPS
 
 The owner chose the Mac as the off-site copy. Until now the VPS's backups shared a disk

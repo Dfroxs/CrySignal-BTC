@@ -130,7 +130,8 @@ def collect_file_facts(data_dir, now):
     stamp = data / "backups" / ".offsite_ok"      # written by the Mac after a verified pull
     return {"backup_age_h": backups,
             "derivs_age_h": age_h(derivs.glob("*.csv")) if derivs.is_dir() else None,
-            "offsite_age_h": age_h([stamp] if stamp.exists() else [])}
+            "offsite_age_h": age_h([stamp] if stamp.exists() else []),
+            "news_age_h": age_h((data / "news").glob("*.csv")) if (data / "news").is_dir() else None}
 
 
 def _run(cmd, timeout=20):
@@ -207,6 +208,11 @@ def conditions(f):
         if age is None or age > MAX_FILE_AGE_H:
             when = "tidak ada" if age is None else f"terakhir menulis {age:.0f} jam lalu"
             out["derivs"] = f"arsip derivatives: {when} (batas {MAX_FILE_AGE_H} jam)"
+    if "news_age_h" in f:
+        age = f["news_age_h"]
+        if age is None or age > MAX_FILE_AGE_H:
+            when = "tidak ada" if age is None else f"tidak bertambah {age:.0f} jam (feed berita mati?)"
+            out["news"] = f"arsip berita: {when} (batas {MAX_FILE_AGE_H} jam)"
     if "offsite_age_h" in f:
         age = f["offsite_age_h"]
         if age is None or age > MAX_OFFSITE_AGE_H:
@@ -258,7 +264,7 @@ def _label(key):
             "cycle_stale": "siklus bot", "futures_blind": "data funding futures",
             "memory": "RAM", "disk": "disk", "scanner": f"scanner {name}",
             "scanner_err": f"scanner {name}", "backup": f"backup {name}",
-            "derivs": "arsip derivatives", "offsite": "backup ke Mac"}.get(kind, key)
+            "derivs": "arsip derivatives", "offsite": "backup ke Mac", "news": "arsip berita"}.get(kind, key)
 
 
 def render(new, again, recovered, now):

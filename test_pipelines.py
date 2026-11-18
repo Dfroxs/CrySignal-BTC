@@ -4145,6 +4145,37 @@ def test_run4b_window_and_verdicts_follow_the_prereg():
     assert r.verdict_bs(-0.15, -0.26, -0.04, 1200) == "BEARISH"
     assert r.verdict_bs(0.05, -0.06, 0.16, 1200) == "INCONCLUSIVE"
 
+def test_news_archive_appends_only_new_rows_per_month():
+    import csv, os, tempfile
+    from datetime import UTC, datetime
+    from pathlib import Path
+    from scripts.archive_news import archive
+    d = Path(tempfile.mkdtemp())
+    hdr = ["timestamp", "source", "title", "link", "sentiment_label", "sentiment_score", "category"]
+    def write_news(rows):
+        with open(d / "crypto_news_sentiment.csv", "w", newline="") as fh:
+            w = csv.writer(fh); w.writerow(hdr); w.writerows(rows)
+    def write_macro(actual):
+        with open(d / "macro_events.csv", "w", newline="") as fh:
+            w = csv.writer(fh); w.writerow(["timestamp", "event", "impact", "actual", "forecast", "previous"])
+            w.writerow(["11-19-2026 1:30pm", "CPI m/m", "High", actual, "0.3%", "0.2%"])
+    a1 = ["t1", "Bitcoinist", "BTC up", "https://x/1", "BULLISH", "0.5", "crypto"]
+    trend = lambda n: ["t", "CoinGecko", f"BTC ranked #{n} on CoinGecko trending", "https://cg/trending", "BULLISH", "1.0", "crypto"]
+    write_news([a1, trend(7)]); write_macro("N/A")
+    now = datetime(2026, 11, 19, 10, 3, tzinfo=UTC)
+    assert archive(d, now) == {"news": 2, "macro": 1}
+    write_news([a1, trend(7), trend(5)])
+    assert archive(d, now) == {"news": 1, "macro": 0}, "same link, new title is new; an old row is not"
+    write_macro("0.4%")
+    assert archive(d, now)["macro"] == 1, "a filled-in actual is kept again"
+    rows = list(csv.DictReader(open(d / "news" / "news-2026-11.csv")))
+    assert len(rows) == 3 and all(r["archived_at"].startswith("2026-11-19") for r in rows)
+    dec = datetime(2026, 12, 1, 0, 3, tzinfo=UTC)
+    assert archive(d, dec)["news"] == 0, "a headline seen last month is not archived again"
+    os.remove(d / "macro_events.csv")
+    assert archive(d, dec)["macro"] is None, "a missing source is reported, not an error"
+
+
 def test_scoring_day_runs_each_test_once_when_due_and_never_early():
     import json, os, tempfile
     from datetime import UTC, datetime
@@ -5033,7 +5064,9 @@ def test_alarm_watches_scanner_arms_backups_and_the_derivs_archive():
     stamp = os.path.join(d, "backups", ".offsite_ok"); open(stamp, "w").close()
     t = now.timestamp() - 5 * 3600; os.utime(stamp, (t, t))
     assert collect_file_facts(d, now)["offsite_age_h"] == 5.0
-    f = collect_file_facts(d, now); f.pop("offsite_age_h")
+    assert collect_file_facts(d, now)["news_age_h"] is None and "news" in conditions(dict(_alarm_clean(), news_age_h=None))
+    assert "news" not in conditions(dict(_alarm_clean(), news_age_h=2.0))
+    f = collect_file_facts(d, now); f.pop("offsite_age_h"); f.pop("news_age_h")
     assert f["backup_age_h"] == {"db": 13.0, "scanner": 61.0, "scanner_hybrid": None}, \
         "newest copy per prefix; scanner- never reads scanner_hybrid-; no source db, no check"
     assert f["derivs_age_h"] == 30.0
@@ -6951,6 +6984,7 @@ if __name__ == "__main__":
     run("run 4: macro HOLD clears levels",        test_macro_forced_hold_clears_levels_and_confidence)
     run("H-VR/H-BS: window, two-part + 2-sided",  test_run4b_window_and_verdicts_follow_the_prereg)
     run("scoring day: once, when due, never early", test_scoring_day_runs_each_test_once_when_due_and_never_early)
+    run("news archive: new rows only, per month",  test_news_archive_appends_only_new_rows_per_month)
     run("live TP2 pays 2 sides, records its price", test_a_live_tp2_exit_pays_a_full_round_trip_and_records_its_price)
     run("tg: sizing + top reasons when openable",  test_tg_an_openable_signal_shows_sizing_and_its_top_reasons)
     run("scorers refuse before day 30",           test_scoring_scripts_refuse_before_day_30)
