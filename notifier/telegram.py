@@ -86,6 +86,43 @@ def _levels_lines(stype, entry, sl, tp1, tp2=None):
     return lines
 
 
+def _sizing_lines(sig):
+    """Leverage, margin, liquidation and the loss at the stop, as the sizing module would
+    open it. Margin and risk in % of the account: the sizing balances are examples, and the
+    owner's demo accounts are $1,000. Display only; the paper book records unlevered moves."""
+    try:
+        from signals.sizing import calculate_futures_position, calculate_position_size
+        if sig.get("mode") == "spot":
+            pos = calculate_position_size(sig)
+            if not pos.get("usdt_amount"):
+                return None
+            from config import RISK_CONFIG
+            risk = RISK_CONFIG["risk_per_trade"] * 100
+            return [f"Ukuran {_idn(pos['position_ratio'], 0)}% modal",
+                    f"Rugi maks {_idn(risk, 1)}% modal kalau kena stop"]
+        fut = calculate_futures_position(sig)
+        if not fut:
+            return None
+        liq = fut["liquidation_price"]
+        risk = f"rugi maks {_idn(fut['_eff_risk'], 1)}% modal kalau kena stop"
+        second = f"Likuidasi {_usd(liq, 0)} · {risk}" if 0 < liq < float("inf") else risk[0].upper() + risk[1:]
+        return [f"Leverage {fut['leverage']}x · margin {_idn(fut['margin_pct'], 0)}% modal", second]
+    except Exception as e:  # noqa: BLE001 — sizing must never cost the alert
+        logger.debug("sizing line skipped: %s", e)
+        return None
+
+
+_REASONS = 3
+
+
+def _reason_lines(sig):
+    """The engine's strongest reasons on the signal's side (✓ bullish / ✗ bearish), plain."""
+    mark = "✓" if sig.get("type") == "BUY" else "✗"
+    picked = [str(r).strip().lstrip("✓✗").strip() for r in (sig.get("reasons") or [])
+              if str(r).strip().startswith(mark)][:_REASONS]
+    return (["Alasan:"] + [f"• {_esc(r[:70])}" for r in picked]) if picked else []
+
+
 def _openable(sig):
     # Imported here, as before: signals.market_data pulls in the exchange client.
     from signals.market_data import will_open
@@ -155,6 +192,8 @@ def _verdict_block(sig):
                 from trading.paper import apply_futures_exit_geometry
                 lv = apply_futures_exit_geometry(sig)
             lines += _levels_lines(stype, lv["entry_price"], lv["stop_loss"], lv["take_profit"], lv.get("tp2"))
+            lines += _sizing_lines(lv) or []
+        lines += _reason_lines(sig)
         return lines, True
     return [f"<b>{name}: tahan</b>"] + _hold_lines(sig), False
 
@@ -271,8 +310,9 @@ def _format_open_notification(signal, pos_id, mode, pyramid_entry=None):
     what = f"{_side(stype)} {_mode_name(mode)} #{pos_id}"
     header = (f"🧩 <b>Bot BTC tambah posisi (pyramid {pyramid_entry}): {what}</b>" if pyramid_entry
               else f"🚀 <b>Bot BTC buka {what}</b>")
-    return "\n".join([header] + _levels_lines(stype, signal["entry_price"], signal["stop_loss"],
-                                              signal["take_profit"], signal.get("tp2")))
+    lines = [header] + _levels_lines(stype, signal["entry_price"], signal["stop_loss"],
+                                     signal["take_profit"], signal.get("tp2"))
+    return "\n".join(lines + (_sizing_lines(dict(signal, mode=mode)) or []))
 
 
 def _send_combined_telegram(spot_signal, futures_signal, symbol):
