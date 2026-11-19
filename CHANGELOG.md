@@ -4,6 +4,23 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-19 — feat(engine): no Fear & Greed penalty on a BUY in greed (H-FG2 FAIL)
+
+The owner chose to ship the licensed change now, rather than bundle it with run 4 part B.
+`integrate_news_with_signal` no longer subtracts 0.5 from a BUY when F&G ≥ 70. In
+2018–2026, greed days came before +0.69 pp better 72 h returns (CI above 0, both halves), so
+the penalty bet the wrong way and could drop a BUY just over the bar.
+
+- **The fear leg stays** (H-FG1 INCONCLUSIVE; owner kept it): +1.5 on a BUY at ≤ 20, −0.5 on a
+  SELL at ≤ 30, and +1.5 on a SELL at ≥ 80.
+- **Consequence:** a BUY in greed now gets the news-sentiment adjustment (+0.5 BULLISH /
+  −0.35 BEARISH) like any other F&G day, because that path runs only when F&G did not act.
+- **Signal change:** it needs a bot restart. H-VG and H-VR/H-BS, both about 1.5 days old,
+  restart their windows at that moment (prereg amendments in the deploy commit).
+- A failing test came first. Tests 340/340.
+
+---
+
 ## 2026-11-19 — results: H-MC INCONCLUSIVE, H-FG1 INCONCLUSIVE, H-FG2 FAIL
 
 The owner asked whether the backtest accounts for macro events and news. It does not, so the
