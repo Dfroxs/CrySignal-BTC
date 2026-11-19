@@ -459,6 +459,14 @@ change live behaviour.
   and H-L1 (run 3 live, bullish) conflict.
 - H-VR and H-BS: `2026-11-18-run4b-prereg.md`, `scripts/run4b_eval.py`, scored on or after
   **2027-01-16 18:44:50 UTC**, on run 4's first 60 days.
+- **Fear & Greed overlay** (H-FG, `2026-11-19-macro-fng-results.md`):
+  - **Licensed:** remove the −0.5 BUY penalty at F&G ≥ 70. H-FG2 FAILed: greed comes before
+    +0.69 pp better 72 h returns, CI above 0.
+  - **Candidate, owner decision:** the fear leg (+1.5 BUY at ≤ 20, −0.5 SELL at ≤ 30). H-FG1
+    was INCONCLUSIVE, so the leg is unsupported.
+  - It changes signals, so it ships with a restart.
+- **Macro-event rule** (H-MC): INCONCLUSIVE, +0.22 pp, CI [−0.07, +0.50]. It stays. It acts
+  on 51% of futures signals.
 
 **On restart day:** archive the run-3 manifest and DB the way run 2's were. Then:
 - score H-VG on its window, up to the restart;
