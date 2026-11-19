@@ -187,3 +187,15 @@ within hours, so the books measured a few hours' path of picks made for 24h. Ove
 descriptive. **H-SC's and H-SC2's statistic, criteria and dates are unchanged:** they score
 `scan_picks` on the close-to-close 24h return, which never read the books.
 
+## Addendum 2026-11-19 (2): a companion diagnosis, H-SCD (no change here)
+
+`2026-11-19-scanner-diagnosis-prereg.md` will diagnose this window on this test's scoring
+date, after this test is scored:
+- path anatomy (entry wrong or exit wrong);
+- conditions, split into discovery and confirmation halves;
+- two momentum mimics as baselines;
+- episodes and execution gaps.
+
+**Nothing here changes:** H-SC's statistic, criteria, window and date are as above, and no
+figure on the window is computed before that date.
+
