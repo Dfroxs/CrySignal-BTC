@@ -57,6 +57,19 @@ def tests(facts):
                          f'{f["pure_days"]} dari 90 hari, {f["pure_picks"]} dari 300 pilihan'),
          [[PY, "scripts/scanner_eval.py", "--db", "data/scanner.db", "--only", "hsc",
            "--out", f"{out}/H-SC.json"]]),
+        # H-SCD (2026-11-19-scanner-diagnosis-prereg.md): discovery right after H-SC is scored;
+        # its SHA-256 goes out in that message. Confirmation runs no sooner than 20 h later,
+        # against the hash file written at discovery.
+        ("H-SCD-1", "Diagnosis scanner: jalur, kondisi, mimic momentum (tahap penemuan)",
+         lambda f, now: ("H-SC" in f.get("scored", ()), "setelah H-SC dinilai"),
+         [[PY, "scripts/scanner_diag.py", "--phase", "discovery", "--discovery",
+           f"{out}/H-SCD-discovery.json", "--out", f"{out}/H-SCD-1.json"]]),
+        ("H-SCD-2", "Diagnosis scanner: konfirmasi kondisi di paruh kedua",
+         lambda f, now: ("H-SCD-1" in f.get("scored", ()) and (f.get("hscd_disc_age_h") or 0) >= 20,
+                         f'penemuan {f.get("hscd_disc_age_h") or 0:.0f} dari 20 jam lalu'),
+         [[PY, "scripts/scanner_diag.py", "--phase", "confirm", "--discovery",
+           f"{out}/H-SCD-discovery.json", "--sha-file", f"{out}/H-SCD-discovery.sha256",
+           "--out", f"{out}/H-SCD-2.json"]]),
         ("H-VR/H-BS", "Perbaikan engine: aturan varian dan arah basis", on(run4b),
          [[PY, "scripts/run4b_eval.py", "--db", "data/signal_history.db", "--out", f"{out}/H-VR-H-BS.json"]]),
         ("H-DR", "Data long/short memprediksi harga", on(hdr),
@@ -78,7 +91,10 @@ def collect_facts(root=ROOT):
     pure, hyb = _v2_days(data / "scanner.db"), _v2_days(data / "scanner_hybrid.db")
     f = {"pure_days": len(pure["days"]) if pure else 0, "pure_picks": pure["picks"] if pure else 0,
          "paired_days": len(pure["days"] & hyb["days"]) if pure and hyb else 0,
-         "flip_events": 0, "run_start": None}
+         "flip_events": 0, "run_start": None, "hscd_disc_age_h": None}
+    sha = data / "scoring" / "H-SCD-discovery.sha256"
+    if sha.exists():
+        f["hscd_disc_age_h"] = (datetime.now(UTC).timestamp() - sha.stat().st_mtime) / 3600
     try:
         f["run_start"] = json.loads((data / "paper_run_manifest.json").read_text())["started_at"]
     except (OSError, ValueError, KeyError):
@@ -127,6 +143,7 @@ def run_due(now, facts, state_path, root=ROOT, run=_run, send=None, dry=False):
         send = lambda t: _send_telegram_message(t, "scoring")
     state = _load(state_path)
     done = []
+    facts = dict(facts, scored=set(state))      # a test may wait on another being scored
     out_dir = Path(root) / "data" / "scoring"
     for key, name, due, cmds in tests(facts):
         if key in state:
@@ -151,6 +168,7 @@ def run_due(now, facts, state_path, root=ROOT, run=_run, send=None, dry=False):
         if ok and sent:
             state[key] = {"scored_at": now.isoformat(), "why": why}
             done.append(key)
+            facts["scored"].add(key)
             p = Path(state_path)
             tmp = p.with_suffix(".tmp")
             tmp.write_text(json.dumps(state, indent=1))

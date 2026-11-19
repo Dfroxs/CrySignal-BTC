@@ -4,6 +4,37 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-19 — H-SCD instrument built and wired; finding: live stops fill past their level
+
+1. **`scripts/scanner_diag.py`** (H-SCD).
+   - **Phases:** discovery gives Parts A, C, D, E, F and Part B's candidates; confirm checks
+     the candidates on the second half.
+   - **Locks:** the discovery file is SHA-256 locked, discovery runs once, and confirm is
+     refused on a missing file, a hash mismatch or a different split.
+   - **Wired into `agents/scoring_day.py`:**
+     - H-SCD-1 runs right after H-SC is scored and sent (`run_due` now passes the set of
+       scored tests);
+     - H-SCD-2 waits at least 20 h after discovery.
+   - **Prereg amendment:** the Telegram result message is the hash record.
+   - **Test:** synthetic 80 days with a planted funding effect, which discovery finds and
+     confirmation confirms. Mutation-checked: breaking the day minimum or the A1 threshold
+     fails the test.
+   - **Never run on real data.** Dry run: H-SCD-1 and H-SCD-2 listed as "not yet".
+2. **Finding, no change: live stops fill past the stop; every replay fills at it.**
+   - **Live:** checks at :01 and :31 and closes at the price then.
+   - **Replay:** `backtest._simulate_forward` fills a trailing stop exactly at `trail`.
+   - **Measured:** over the 8 trailing-stop closes of runs 1–3, the fill was 0.05–0.65%
+     past the stop, mean ~0.28%. #10's trail was above entry and still closed at −0.54%.
+   - **Consequence:** the exit tests (09-21, H-TPF, H-TRL) priced stops better than live.
+   - **Remedies** are in `run4-backlog.md`, each needing its own prereg or design decision.
+   - **Scanner books:** fill at the level exactly and are equally idealised. Their stop
+     losses come from geometry (1.5 × ATR(1h) + 0.2pp on 1h-scale levels), already
+     changed for new positions.
+
+Tests 343/343.
+
+---
+
 ## 2026-11-19 — prereg H-SCD (why the scanner's picks win or lose); Mac pull runs at boot
 
 1. **H-SCD prereg** (`docs/superpowers/specs/2026-11-19-scanner-diagnosis-prereg.md`). Owner:

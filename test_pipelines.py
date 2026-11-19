@@ -4263,17 +4263,26 @@ def test_scoring_day_runs_each_test_once_when_due_and_never_early():
     run = lambda cmd, cwd: (ran.append(cmd) or 0, "H-SC verdict <PASS> & more")
     send = lambda t: sent.append(t) or True
     jan = datetime(2027, 1, 10, tzinfo=UTC)
-    assert sd.run_due(jan, facts, state, root, run=run, send=send) == ["H-SC"], \
-        "only H-SC is due: 59 paired days, dates not reached, 3 flips"
-    assert all("--only" in c and "hsc" in c for c in ran) and "&lt;PASS&gt; &amp;" in sent[0]
+    assert sd.run_due(jan, facts, state, root, run=run, send=send) == ["H-SC", "H-SCD-1"], \
+        "only H-SC is due (59 paired days, dates not reached, 3 flips), then H-SCD's discovery"
+    assert "--only" in ran[0] and "hsc" in ran[0] and "&lt;PASS&gt; &amp;" in sent[0]
+    assert "discovery" in ran[1] and "scripts/scanner_diag.py" in ran[1]
     assert sd.run_due(jan, facts, state, root, run=run, send=send) == [], "scored once, never again"
     assert os.listdir(os.path.join(root, "data", "scoring")), "full output kept"
     late = datetime(2027, 2, 18, tzinfo=UTC)          # after every dated test, H-VG's 02-17 included
     fail = lambda cmd, cwd: (1, "Traceback: boom")
     assert sd.run_due(late, dict(facts, paired_days=60), state, root, run=fail, send=send) == []
-    assert "gagal" in sent[-1] and set(json.load(open(state))) == {"H-SC"}, "a failed run is not marked scored"
+    assert "gagal" in sent[-1] and set(json.load(open(state))) == {"H-SC", "H-SCD-1"}, \
+        "a failed run is not marked scored"
     done = sd.run_due(late, dict(facts, paired_days=60, flip_events=20), state, root, run=run, send=send)
-    assert set(done) == {"H-SC2", "H-VR/H-BS", "H-DR", "H-VG", "H-FLP-C"}, done
+    assert set(done) == {"H-SC2", "H-VR/H-BS", "H-DR", "H-VG", "H-FLP-C"}, \
+        f"{done}: H-SCD-2 waits 20 h after discovery"
+    assert sd.run_due(late, dict(facts, hscd_disc_age_h=19.5), state, root, run=run, send=send) == []
+    assert sd.run_due(late, dict(facts, hscd_disc_age_h=20.5), state, root, run=run, send=send) == ["H-SCD-2"]
+    assert "--sha-file" in ran[-1] and "confirm" in ran[-1]
+    fresh = os.path.join(root, "fresh.json")
+    assert "H-SCD-1" not in sd.run_due(late, dict(facts, pure_days=10), fresh, root, run=run, send=send), \
+        "no discovery before H-SC is scored"
     hdr = [c for c in ran if "scripts/hdr_eval.py" in c]
     assert hdr[0][-1] == "--fetch-klines" and "--out" in hdr[1], "klines first, then score"
     nosend = lambda t: False
@@ -6654,6 +6663,115 @@ def test_scanner_eval_excess_day_unit_verdict_and_leakage():
     assert len(e.load(db, prompt=None)[0]) == 4
 
 
+def test_scanner_diag_parts_on_synthetic_data_follow_the_prereg():
+    """H-SCD on synthetic data only (the prereg forbids any run on the real window before
+    H-SC's date). 80 daily cycles, 3 coins. Claude goes LONG one coin a day, which moves
+    +3% when its funding is high and -3% when it is low: discovery must find that cell,
+    confirmation must confirm it, and every refusal must hold."""
+    import json
+    import os
+    import tempfile
+    import numpy as np
+    import pandas as pd
+    import scripts.scanner_diag as d
+    from agents.scanner import connect
+    assert d.path_class(0.2) == "A1_never_right" and d.path_class(0.5) == "A2_right_then_reversed"
+    assert d.path_class(0.3) == "A3_chop"
+    assert d.holm([0.01, 0.04, 0.03], 0.05) == [True, False, False]
+    assert d.holm([0.01, 0.02], 0.05) == [True, True]
+    coins = ("BTC", "ETH", "SOL")
+    t0 = pd.Timestamp("2027-01-01 10:00")
+    n_days = 80
+    anchors = {c: [100.0] for c in coins}
+    plan = []
+    for k in range(n_days):
+        pick = coins[k % 3]
+        high = k % 2 == 0
+        plan.append((pick, high))
+        for c in coins:
+            g = (0.03 if high else -0.03) if c == pick else 0.0
+            anchors[c].append(anchors[c][-1] * (1 + g))
+    times = [t0 + pd.Timedelta(days=k) for k in range(n_days + 1)]
+    def price(c, ts):
+        x = (ts - t0) / pd.Timedelta(days=1)
+        k = int(np.clip(np.floor(x), 0, n_days - 1))
+        a, b = anchors[c][k], anchors[c][k + 1]
+        return a + (b - a) * min(max(x - k, 0.0), 1.0)
+    def fetch(symbol, tf, since=None, until=None):
+        c = symbol.split("/")[0]
+        step = pd.Timedelta(hours=1) if tf == "1h" else pd.Timedelta(minutes=5)
+        idx = pd.date_range(t0 - pd.Timedelta(hours=30), t0 + pd.Timedelta(days=n_days + 4), freq=step)
+        o = np.array([price(c, ts) for ts in idx])
+        cl = np.array([price(c, ts + step) for ts in idx])
+        return pd.DataFrame({"open": o, "high": np.maximum(o, cl), "low": np.minimum(o, cl),
+                             "close": cl, "volume": 1.0}, index=idx)
+    tmp = tempfile.mkdtemp()
+    db = os.path.join(tmp, "s.db")
+    con = connect(db)
+    base = {"ret_1h_pct": 0.0, "ret_4h_pct": 0.0, "ret_24h_pct": 0.0, "ret_7d_pct": 0.0,
+            "atr_pct": 1.0, "vol_ratio": 1.0, "close_vs_ema50_pct": 0.0, "close_vs_ema200_pct": 0.0,
+            "range_pos_24h": 0.5, "basis_pct": 0.0, "oi_change_24h_pct": 0.0, "ls_ratio": 1.0,
+            "taker_ratio": 1.0}
+    for k, (pick, high) in enumerate(plan):
+        t = times[k]
+        ctx = {"bar_closed_utc": t.strftime("%Y-%m-%d %H:%M"), "prompt": "v2", "coins": {}}
+        for c in coins:
+            f = 0.05 if (c == pick and high) else (-0.05 if c == pick else 0.0)
+            ctx["coins"][c] = {**base, "funding_pct": f,
+                               "ret_24h_vs_universe_pct": 1.0 if c == pick else -0.5}
+        cid = con.execute("INSERT INTO scan_cycles (timestamp, bar_close, model, error, context) "
+                          "VALUES (?,?,?,?,?)", ((t + pd.Timedelta(minutes=6)).isoformat() + "+00:00",
+                                                  t.isoformat() + "+00:00", "m", None,
+                                                  json.dumps(ctx))).lastrowid
+        for c in coins:
+            con.execute("INSERT INTO scan_picks (cycle_id, coin, side, confidence, reason, close) "
+                        "VALUES (?,?,?,?,?,?)", (cid, c, "LONG" if c == pick else "NONE", 50, "", price(c, t)))
+    con.commit()
+    con.close()
+    # mimic: Claude's LONG is the top ret_24h_vs_universe coin every day, so M24 agrees fully
+    cyc_all, cyc, picks, model = d.window(db)
+    assert model == "m" and len(cyc) == n_days
+    m24 = d.mimic_picks(cyc, picks, "ret_24h_vs_universe_pct")
+    assert len(m24) == n_days and set(m24.side) == {"LONG"}
+    ties = d.mimic_picks(cyc, picks, "ret_7d_pct")
+    assert set(ties.coin) == {"BTC"}, "ties break by UNIVERSE order"
+    # episodes: same coin + side within 24h joins, a longer gap splits
+    ep = d.episodes(pd.DataFrame({"coin": ["SOL"] * 3 + ["ETH"], "side": ["LONG"] * 4,
+                                  "bar_close": pd.to_datetime(["2027-01-01 00:00", "2027-01-01 20:00",
+                                                               "2027-01-03 00:00", "2027-01-01 00:00"])}))
+    assert ep.groupby(["coin"]).episode.nunique().to_dict() == {"ETH": 1, "SOL": 2}
+    disc = os.path.join(tmp, "disc.json")
+    res = d.run("discovery", {"pure": db, "random": db}, fetch=fetch, discovery_path=disc)
+    assert "error" not in res, res
+    assert res["days"] == {"discovery": 40, "confirmation": 40}
+    cands = res["part_b_discovery"]["candidates"]
+    assert [(c["feature"], c["side"], c["sign"]) for c in cands] == [("funding_pct", "LONG", 1)], cands
+    a = res["part_a"]["pure"]
+    assert a["losers"]["n"] == 40 and a["winners"]["n"] == 40
+    assert a["losers"]["shares"]["A1_never_right"] == 1.0, "a straight fall never goes the pick's way"
+    assert a["winners"]["shares"]["A2_right_then_reversed"] == 1.0
+    assert res["part_c"]["M24"]["agreement"] == 1.0
+    assert res["part_c"]["M24"]["reading"] == "Claude ≈ momentum rule"
+    assert res["part_d"]["pure"]["episodes"] == n_days, "a coin returns every 3 days: gaps > 24h"
+    e = res["part_e"]["pure"]
+    assert e["five_minute_fill_pp"]["n"] == n_days and e["perp_minus_spot_pp"]["mean_abs"] < 1e-9
+    assert res["part_f"]["excluded_picks"] == 0 and res["healthy"]
+    assert "random" in res["part_a"] and "hybrid" not in res["part_a"], "a missing arm is skipped"
+    sha = res["discovery_sha256"]
+    assert sha == d.sha256(disc) and json.loads(open(disc).read())["candidates"] == cands
+    assert d.main(["--phase", "discovery", "--db", db, "--discovery", disc]) == 3, "discovery runs once"
+    bad = d.run("confirm", {"pure": db}, fetch=fetch, discovery_path=disc, sha="0" * 64)
+    assert "refused" in bad["error"]
+    assert "refused" in d.run("confirm", {"pure": db}, fetch=fetch,
+                              discovery_path=disc + ".missing", sha=sha)["error"]
+    ok = d.run("confirm", {"pure": db}, fetch=fetch, discovery_path=disc, sha=sha)
+    assert [x["verdict"] for x in ok["part_b_confirm"]] == ["CONFIRMED"], ok
+    with open(disc, "a") as fh:
+        fh.write(" ")
+    assert "refused" in d.run("confirm", {"pure": db}, fetch=fetch, discovery_path=disc, sha=sha)["error"], \
+        "an edited discovery file is refused"
+
+
 def test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel():
     import os
     import sqlite3
@@ -7202,6 +7320,7 @@ if __name__ == "__main__":
     run("H-SC2 hybrid arm: engine fields, own db",  test_scanner_hybrid_arm_adds_engine_fields_only_to_its_own_prompt_and_db)
     run("random arm: count-matched, seeded, no model", test_scanner_random_arm_deals_pure_picks_count_matched_and_mirrors_failures)
     run("scanner digest: per arm, silent when quiet", test_scanner_digest_lists_opens_and_closes_per_arm_and_is_silent_when_quiet)
+    run("H-SCD diag: parts, split, hash lock",      test_scanner_diag_parts_on_synthetic_data_follow_the_prereg)
     run("dashboard: read-only, local, no blank",    test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel)
     run("basis own checkpoint, no stale reason", test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason)
 
