@@ -4168,8 +4168,8 @@ def test_veto_gate_episode_effect_follows_the_gate_and_guards_power():
     import inspect
     import pandas as pd
     import scripts.veto_gate_eval as vg
-    assert str(vg.FROM) == "2026-11-19 01:13:53" and str(vg.SCORE_BY) == "2027-02-17 01:13:53", \
-        "the window starts at the F&G-greed restart (2nd amendment)"
+    assert str(vg.FROM) == "2026-11-19 16:34:53" and str(vg.SCORE_BY) == "2027-02-17 16:34:53", \
+        "the window starts at the re-entry run-anchor restart (3rd amendment)"
     assert "refused" in inspect.getsource(vg.main)
     t = lambda h: pd.Timestamp("2026-11-20") + pd.Timedelta(hours=h)
     ops = pd.DataFrame([
