@@ -4,6 +4,19 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-19 — H-VG window restarts at the re-entry run-anchor restart
+
+The bot restarted at 2026-11-19 16:34:53 UTC (`8ca245a`, PR #61, pid 406603) with no
+position open. The re-entry gate change ends H-VG's window under its prereg (§ Window and
+restarts), so the window restarts: 2026-11-19 16:34:53 to 2027-02-17 16:34:53.
+- **Where:** `scripts/veto_gate_eval.FROM`, the dashboard's board and prereg amendment 2.
+- **Not changed:** H-VR/H-BS, whose signals are the same.
+- **Nothing lost:** the old window was about 15 hours old, with nothing computed.
+
+Tests 342/342.
+
+---
+
 ## 2026-11-19 — fix: re-entry anchor from the current run only; scanner book levels on the 24h scale
 
 Two design decisions (owner, 2026-11-19), for data yield and for a book that measures what

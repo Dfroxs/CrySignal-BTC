@@ -20,6 +20,16 @@ Bot restarted by killing the MainPID; systemd respawned it, pid 383220, active 1
   H-SC2 and H-DR are unaffected (separate processes and data).
 - **Part B** of the run-4 plan (veto gate, L/S, `rel_ic_dir`, basis) waits for its own
   results.
+- **2026-11-19 16:34:53 UTC: bot restarted at `8ca245a`** (PR #61), pid 406603. No position
+  was open. The re-entry gate now ignores anchors opened before the manifest's `started_at`.
+  Run 3's SHORT WIN at $68,900 had blocked 26 futures SHORTs. Spot is covered too; that has
+  no effect today. Design decision for data yield.
+  - **Window change:** H-VG runs 2026-11-19 16:34:53 to 2027-02-17 16:34:53 (prereg
+    amendment 2).
+  - **Unchanged:** H-VR/H-BS (signals unchanged), the manifest, H-SC, H-SC2, H-DR and
+    H-FLP-C.
+  - **Scanner books:** levels on the 24h scale (ATR(1h) × √24) from the next scanner run.
+    No restart; the H-SC windows are unchanged.
 - **2026-11-19 01:13:53 UTC: bot restarted at `9a3d271`** (PRs #57 + #58), pid 398486. No
   position was open. The −0.5 BUY penalty at F&G ≥ 70 is gone (H-FG2 FAIL, owner: now). The
   fear leg stays.
