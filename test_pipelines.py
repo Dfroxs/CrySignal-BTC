@@ -5051,6 +5051,25 @@ def test_alarm_db_facts_flag_a_blind_latest_futures_cycle_and_tolerate_no_shadow
     f = collect_db_facts("/nonexistent/dir/none.db", now)
     assert f["db_error"], "an unreadable database is reported, never raised"
 
+def test_alarm_db_facts_watch_exit_and_flip_opinions_too():
+    import os, sqlite3
+    from datetime import UTC, datetime
+    from agents.alarm import collect_db_facts
+    path = _alarm_db([("2026-11-19 01:01:00", "futures", 0.0003)], shadow=[("t", "anthropic", None)])
+    con = sqlite3.connect(path)
+    for table in ("shadow_exit_opinions", "shadow_flip_opinions"):
+        con.execute(f"CREATE TABLE {table} (id INTEGER PRIMARY KEY AUTOINCREMENT, provider TEXT, error TEXT)")
+    con.executemany("INSERT INTO shadow_flip_opinions (provider, error) VALUES (?, ?)",
+                    [("anthropic", "timeout")] * 3)
+    con.executemany("INSERT INTO shadow_exit_opinions (provider, error) VALUES (?, ?)",
+                    [("anthropic", "timeout"), ("anthropic", None), ("anthropic", "timeout")])
+    con.commit(); con.close()
+    try:
+        f = collect_db_facts(path, datetime(2026, 11, 19, 1, 10, tzinfo=UTC))
+        assert f["shadow_failing"] == ["anthropic (flip)"], f["shadow_failing"]
+    finally:
+        os.unlink(path)
+
 def test_alarm_host_facts_read_services_memory_and_disk_through_injected_sources():
     import os, tempfile
     from collections import namedtuple
@@ -5082,6 +5101,8 @@ def test_alarm_rules_name_each_condition_by_a_stable_key():
     bad = dict(_alarm_clean(), spot_svc="failed", last_cycle_age_min=130.0,
                futures_funding_zero=True, mem_available_mb=90.0, disk_used_pct=95.0,
                shadow_failing=["deepseek"])
+    assert "shadow:anthropic (flip)" in conditions(dict(_alarm_clean(), shadow_failing=["anthropic (flip)"])), \
+        "exit and flip opinions are watched too"
     c = conditions(bad)
     assert set(c) == {"svc:spotsignal", "cycle_stale", "futures_blind",
                       "memory", "disk", "shadow:deepseek"}, set(c)
@@ -5138,7 +5159,15 @@ def test_alarm_watches_scanner_arms_backups_and_the_derivs_archive():
     assert collect_file_facts(d, now)["offsite_age_h"] == 5.0
     assert collect_file_facts(d, now)["news_age_h"] is None and "news" in conditions(dict(_alarm_clean(), news_age_h=None))
     assert "news" not in conditions(dict(_alarm_clean(), news_age_h=2.0))
-    f = collect_file_facts(d, now); f.pop("offsite_age_h"); f.pop("news_age_h")
+    f = collect_file_facts(d, now)
+    assert (f["report_age_h"], f["scoring_age_h"], f["macro_age_h"]) == (None, None, None)
+    c = conditions(dict(_alarm_clean(), report_age_h=None, scoring_age_h=27.0, macro_age_h=7.0))
+    assert c["report"].startswith("laporan harian tidak terkirim (belum pernah") and "27 jam" in c["scoring"], c
+    assert "proteksi berita makro mati" in c["macro"], "a stale calendar means the macro rule is blind"
+    ok = conditions(dict(_alarm_clean(), report_age_h=25.0, scoring_age_h=25.0, macro_age_h=5.0))
+    assert not {"report", "scoring", "macro"} & set(ok), ok
+    for k in ("offsite_age_h", "news_age_h", "report_age_h", "scoring_age_h", "macro_age_h"):
+        f.pop(k)
     assert f["backup_age_h"] == {"db": 13.0, "scanner": 61.0, "scanner_hybrid": None}, \
         "newest copy per prefix; scanner- never reads scanner_hybrid-; no source db, no check"
     assert f["derivs_age_h"] == 30.0
@@ -6993,6 +7022,7 @@ if __name__ == "__main__":
     run("message short, escaped, Indonesian",     test_alarm_message_is_short_escaped_and_indonesian)
     run("state saved only after send; exit 1",    test_alarm_run_saves_state_only_after_a_send_and_exits_nonzero_while_active)
     run("alarm: scanner arms, backups, archive",  test_alarm_watches_scanner_arms_backups_and_the_derivs_archive)
+    run("alarm: exit and flip opinions watched",  test_alarm_db_facts_watch_exit_and_flip_opinions_too)
     run("ops report + dashboard: scanner, backups", test_ops_report_and_dashboard_show_scanner_arms_backups_and_archive)
     run("dashboard: runs, market, detail, stats",  test_dashboard_runs_market_position_detail_and_stats)
 

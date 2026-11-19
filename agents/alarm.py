@@ -42,6 +42,7 @@ SCANNER_ARMS = (("murni", "scanner.db"), ("hybrid", "scanner_hybrid.db"),
 SCANNER_ERROR_RUN = 3           # this many newest scan cycles all errored → arm down
 MAX_FILE_AGE_H = 26             # daily jobs (backup 03:00, archive 03:40) plus slack
 MAX_OFFSITE_AGE_H = 72          # the Mac pulls twice a day; a weekend off is not an alarm
+MAX_MACRO_AGE_H = 6             # the bot rewrites the calendar every cycle; stale = macro rule blind
 BACKUPS = (("db", "signal_history.db"),) + tuple((Path(f).stem, f) for _, f in SCANNER_ARMS)
 
 
@@ -74,12 +75,17 @@ def collect_db_facts(db_path, now):
                 f"ORDER BY {_ts('timestamp')} DESC, id DESC LIMIT 1")
         f["futures_funding_zero"] = bool(row) and row[0][0] == 0
         tables = {r[0] for r in q("SELECT name FROM sqlite_master WHERE type='table'")}
-        if "shadow_opinions" in tables:
-            for (prov,) in q("SELECT DISTINCT provider FROM shadow_opinions ORDER BY provider"):
-                errs = [e for (e,) in q("SELECT error FROM shadow_opinions WHERE provider=? "
+        # Entry opinions (H-S/H-VG), and since 2026-11-19 exit and flip opinions too: the flip
+        # shadow feeds H-FLP-C and could fail every time with nothing saying so.
+        for table, label in (("shadow_opinions", ""), ("shadow_exit_opinions", " (exit)"),
+                             ("shadow_flip_opinions", " (flip)")):
+            if table not in tables:
+                continue
+            for (prov,) in q(f"SELECT DISTINCT provider FROM {table} ORDER BY provider"):
+                errs = [e for (e,) in q(f"SELECT error FROM {table} WHERE provider=? "
                                         "ORDER BY id DESC LIMIT ?", prov, SHADOW_ERROR_RUN)]
                 if len(errs) == SHADOW_ERROR_RUN and all(e is not None for e in errs):
-                    f["shadow_failing"].append(prov)
+                    f["shadow_failing"].append(prov + label)
     except sqlite3.Error as exc:
         f["db_error"] = str(exc)
     finally:
@@ -131,7 +137,11 @@ def collect_file_facts(data_dir, now):
     return {"backup_age_h": backups,
             "derivs_age_h": age_h(derivs.glob("*.csv")) if derivs.is_dir() else None,
             "offsite_age_h": age_h([stamp] if stamp.exists() else []),
-            "news_age_h": age_h((data / "news").glob("*.csv")) if (data / "news").is_dir() else None}
+            "news_age_h": age_h((data / "news").glob("*.csv")) if (data / "news").is_dir() else None,
+            # Daily jobs that otherwise fail in silence (2026-11-19 audit):
+            "report_age_h": age_h([p for p in [data / "ops_report.ok"] if p.exists()]),
+            "scoring_age_h": age_h([p for p in [data / "scoring" / "scoring_day.log"] if p.exists()]),
+            "macro_age_h": age_h([p for p in [data / "macro_events.csv"] if p.exists()])}
 
 
 def _run(cmd, timeout=20):
@@ -213,6 +223,16 @@ def conditions(f):
         if age is None or age > MAX_FILE_AGE_H:
             when = "tidak ada" if age is None else f"tidak bertambah {age:.0f} jam (feed berita mati?)"
             out["news"] = f"arsip berita: {when} (batas {MAX_FILE_AGE_H} jam)"
+    for key, limit, what, why in (
+            ("report_age_h", MAX_FILE_AGE_H, "laporan harian", "tidak terkirim"),
+            ("scoring_age_h", MAX_FILE_AGE_H, "penilaian otomatis", "tidak jalan"),
+            ("macro_age_h", MAX_MACRO_AGE_H, "kalender ekonomi",
+             "tidak diperbarui, proteksi berita makro mati")):
+        if key in f:
+            age = f[key]
+            if age is None or age > limit:
+                when = "belum pernah" if age is None else f"{age:.0f} jam"
+                out[key.removesuffix("_age_h")] = f"{what} {why} ({when}; batas {limit} jam)"
     if "offsite_age_h" in f:
         age = f["offsite_age_h"]
         if age is None or age > MAX_OFFSITE_AGE_H:
@@ -264,7 +284,9 @@ def _label(key):
             "cycle_stale": "siklus bot", "futures_blind": "data funding futures",
             "memory": "RAM", "disk": "disk", "scanner": f"scanner {name}",
             "scanner_err": f"scanner {name}", "backup": f"backup {name}",
-            "derivs": "arsip derivatives", "offsite": "backup ke Mac", "news": "arsip berita"}.get(kind, key)
+            "derivs": "arsip derivatives", "offsite": "backup ke Mac", "news": "arsip berita",
+            "report": "laporan harian", "scoring": "penilaian otomatis",
+            "macro": "kalender ekonomi"}.get(kind, key)
 
 
 def render(new, again, recovered, now):
@@ -335,7 +357,10 @@ def main() -> int:
         send = lambda t: print(t) or True
     else:
         send = None
-    return run_alarm(facts, args.state, now, send_fn=send, save=not args.dry_run)
+    code = run_alarm(facts, args.state, now, send_fn=send, save=not args.dry_run)
+    if not args.dry_run:                  # the Mac's watchdog reads this: is the alarm itself alive?
+        (Path(args.root) / "data" / "alarm.ok").write_text(now.isoformat())
+    return code
 
 
 if __name__ == "__main__":
