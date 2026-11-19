@@ -2,6 +2,50 @@
 
 **Rewritten 2026-10-09, when run 3 started. Read this first when you come back.**
 
+**Run 4 started 2026-11-17 18:44:50 UTC at `3377027`** (PR #46, run-4 part A). Owner's go.
+Bot restarted by killing the MainPID; systemd respawned it, pid 383220, active 18:44:35.
+- **No position was open at the restart.**
+- **Run 3 archived:** `data/paper_run_manifest.run3.json`, plus
+  `data/backups/FINAL-run3-20261117-1844-signal_history.db` (integrity ok).
+- **New manifest** made with `start_paper_run.py --force`. It freezes `futures_fee_pct`
+  0.05; thresholds are spot 4.3 / futures 4.91. 19 earlier positions stay in the DB.
+- **What changed (trading path):**
+  - HTF conflict penalty applied last;
+  - session bump at the bar's close hour;
+  - a macro-forced HOLD clears its levels;
+  - futures fee 0.05%;
+  - stop checked before flip;
+  - flip shadow (H-FLP-C, `shadow_flip_opinions`).
+- **H-VG** window: 2026-11-17 18:44:50 to 2027-02-15 18:44:50 UTC (PR #47, `030af16`). H-SC,
+  H-SC2 and H-DR are unaffected (separate processes and data).
+- **Part B** of the run-4 plan (veto gate, L/S, `rel_ic_dir`, basis) waits for its own
+  results.
+- **2026-11-19 01:13:53 UTC: bot restarted at `9a3d271`** (PRs #57 + #58), pid 398486. No
+  position was open. The −0.5 BUY penalty at F&G ≥ 70 is gone (H-FG2 FAIL, owner: now). The
+  fear leg stays.
+  - **Signal change:** H-VG now runs to 2027-02-17 01:13:53, and H-VR/H-BS to 2027-01-18
+    01:13:53 (prereg amendments).
+  - **Unchanged:** the manifest (run 4's `started_at`), and the H-SC, H-SC2, H-DR and
+    H-FLP-C windows.
+- **2026-11-18:** pulled `9c6ed5d` (PR #48, H-VR / H-BS prereg and its instrument) and
+  restarted `spotsignal-dash` only. Those tests are scored on or after 2027-01-16 18:44:50
+  UTC.
+- **2026-11-17 20:56 UTC:** pulled `b82fc22` (PRs #49 + #50). Bot restarted by MainPID, new
+  pid 385048, active 20:56:22. No position was open.
+  - **#50:** a live TP2 exit pays 2 cost sides and records its exit price. Booking only, so
+    no signal changes and no test window is cut.
+  - **#49:** scoring day. Cron `20 4 * * *` runs `agents.scoring_day`, logging to
+    `data/scoring/scoring_day.log`. Dry run: every test "not yet".
+- **2026-11-17 21:48 UTC:** pulled `dfba14f` (PR #51, every Telegram message reformatted
+  and the hourly scanner digest added). Bot restarted, pid 386025. No position was open,
+  and no signal changes.
+- **2026-11-18:** pulled `375cbf7` (PR #52, only real failures count as log errors; the
+  report's "1 baris error" was a recovered news-feed WARNING). Dashboard restart only.
+- **2026-11-18 14:06 UTC:** pulled `66bb998` (PR #53). The Telegram cards gain sizing
+  (leverage, margin, liquidation, loss at the stop) and the top 3 reasons. The dashboard gains
+  the market strip, position detail, account statistics and run history. Bot restarted, pid
+  392860; dashboard restarted. No position was open, and no signal changes.
+
 **Run 3 started 2026-10-09 05:41:31 UTC at `c0e8764`** (manifest on the host; run 2's
 is archived as `paper_run_manifest.run2.json`, its final DB as
 `data/backups/FINAL-run2-20261009-signal_history.db`, integrity ok, also on the Mac).

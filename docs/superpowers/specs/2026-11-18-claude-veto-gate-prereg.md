@@ -120,3 +120,12 @@ none ever will be.
   2027-02-15 18:44:50 UTC.**
 - Everything else is unchanged: the gate, the episode unit, the statistic, the criteria,
   the power guard and the discipline.
+
+## Amendment 2026-11-19: the window restarts at the F&G-greed restart
+
+`integrate_news_with_signal` lost its −0.5 BUY penalty at F&G ≥ 70 (H-FG2 FAIL, owner:
+ship now). That changes signals, so per § Window and restarts the window restarts. It was
+about 1.5 days old and nothing in it was computed.
+
+**New window:** 2026-11-19 01:13:53 UTC (the bot's restart at `9a3d271`) to 2027-02-17
+01:13:53 UTC. Everything else is unchanged.

@@ -4111,8 +4111,8 @@ def test_veto_gate_episode_effect_follows_the_gate_and_guards_power():
     import inspect
     import pandas as pd
     import scripts.veto_gate_eval as vg
-    assert str(vg.FROM) == "2026-11-17 18:44:50" and str(vg.SCORE_BY) == "2027-02-15 18:44:50", \
-        "the window starts at the run-4 restart (amendment)"
+    assert str(vg.FROM) == "2026-11-19 01:13:53" and str(vg.SCORE_BY) == "2027-02-17 01:13:53", \
+        "the window starts at the F&G-greed restart (2nd amendment)"
     assert "refused" in inspect.getsource(vg.main)
     t = lambda h: pd.Timestamp("2026-11-20") + pd.Timedelta(hours=h)
     ops = pd.DataFrame([
@@ -4147,12 +4147,12 @@ def test_run4b_window_and_verdicts_follow_the_prereg():
     import numpy as np
     import pandas as pd
     import scripts.run4b_eval as r
-    assert str(r.FROM) == "2026-11-17 18:44:50" and str(r.END) == "2027-01-16 18:44:50"
+    assert str(r.FROM) == "2026-11-19 01:13:53" and str(r.END) == "2027-01-18 01:13:53"
     assert "refused" in inspect.getsource(r.main)
-    idx = pd.date_range("2026-11-17 17:00", "2027-01-17 00:00", freq="h")
+    idx = pd.date_range("2026-11-19 00:00", "2027-01-19 00:00", freq="h")
     w = r.window(pd.DataFrame({"x": np.arange(len(idx))}, index=idx))
-    assert w.index.min() == pd.Timestamp("2026-11-17 19:00"), "first full hour of run 4"
-    assert (w.index + pd.Timedelta(hours=24) <= r.END).all() and w.index.max() == pd.Timestamp("2027-01-15 18:00")
+    assert w.index.min() == pd.Timestamp("2026-11-19 02:00"), "first full hour after the restart"
+    assert (w.index + pd.Timedelta(hours=24) <= r.END).all() and w.index.max() == pd.Timestamp("2027-01-17 01:00")
     # H-VR needs BOTH a positive gap to base and a positive own IC
     assert r.verdict_vr((0.12, 0.05, 0.2), (0.08, 0.02, 0.15), 1200) == "PASS"
     assert r.verdict_vr((0.12, 0.05, 0.2), (0.02, -0.1, 0.13), 1200) == "INCONCLUSIVE", "less wrong than base is not enough"
@@ -4211,7 +4211,7 @@ def test_scoring_day_runs_each_test_once_when_due_and_never_early():
     assert all("--only" in c and "hsc" in c for c in ran) and "&lt;PASS&gt; &amp;" in sent[0]
     assert sd.run_due(jan, facts, state, root, run=run, send=send) == [], "scored once, never again"
     assert os.listdir(os.path.join(root, "data", "scoring")), "full output kept"
-    late = datetime(2027, 2, 16, tzinfo=UTC)
+    late = datetime(2027, 2, 18, tzinfo=UTC)          # after every dated test, H-VG's 02-17 included
     fail = lambda cmd, cwd: (1, "Traceback: boom")
     assert sd.run_due(late, dict(facts, paired_days=60), state, root, run=fail, send=send) == []
     assert "gagal" in sent[-1] and set(json.load(open(state))) == {"H-SC"}, "a failed run is not marked scored"

@@ -85,3 +85,11 @@ H-V1's CIs were about 0.17 wide on 697 cycles. On about 1,400 cycles, expect rou
 - A run-4 restart that changes signals before then ends the window early. It is then scored
   under the same power guard.
 - Scored once. It is never re-scored on a longer window to rescue a result.
+
+## Amendment 2026-11-19: the window restarts at the F&G-greed restart
+
+The engine lost its −0.5 BUY penalty at F&G ≥ 70 (H-FG2 FAIL). The window was about 1.5 days
+old and nothing in it was computed.
+
+**New window:** cycles from 2026-11-19 01:13:53 UTC (`9a3d271`) whose 24h return completes
+by 2027-01-18 01:13:53 UTC. Everything else is unchanged.
