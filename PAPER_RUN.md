@@ -385,6 +385,16 @@ sqlite3 data/signal_history.db \
 
 Anything above zero means those cycles are contaminated. It was **0** across all of run 1.
 
+**Watching the watchers (2026-11-19).**
+- **The Mac's pull is also a watchdog.** It flags a VPS that does not answer, a bot with no
+  cycle in 3 h, or an alarm with no heartbeat (`data/alarm.ok`) in 3 h, through a macOS
+  notification and Telegram sent from the Mac.
+- **The VPS alarm flags:**
+  - the daily report not sent in 26 h (`data/ops_report.ok`);
+  - scoring day not run in 26 h;
+  - `macro_events.csv` older than 6 h (the macro rule is blind);
+  - exit/flip opinion providers whose last 3 all failed.
+
 **Off-site copy on the Mac (2026-11-19).** `scripts/pull_backups.sh` runs from launchd
 (`com.spotsignal.pullbackups`, 11:00 and 20:00 Mac time; a missed run happens at wake).
 - It pulls `data/backups/`, `data/derivs/`, `data/scoring/` and the run manifests into

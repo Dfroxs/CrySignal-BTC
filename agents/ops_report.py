@@ -600,9 +600,17 @@ def main() -> int:
         facts["btc_account"] = _account_line()
     except Exception:  # noqa: BLE001 - the account line never costs the report
         pass
-    send = (lambda t: print(t) or True) if args.dry_run else None
-    return run_report(facts, send_fn=send, provider=args.provider, use_llm=not args.no_llm,
+    sent = []
+    if args.dry_run:
+        send = lambda t: print(t) or True
+    else:
+        from notifier.common import _send_telegram_message
+        send = lambda t: sent.append(_send_telegram_message(t, "ops-report")) or sent[-1]
+    code = run_report(facts, send_fn=send, provider=args.provider, use_llm=not args.no_llm,
                       usage_path=usage)
+    if sent and sent[-1]:                 # heartbeat: the alarm flags a report not sent in 26 h
+        (Path(args.root) / "data" / "ops_report.ok").write_text(now.isoformat())
+    return code
 
 
 if __name__ == "__main__":
