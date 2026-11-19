@@ -96,7 +96,9 @@ def host_facts(root, now, run=None):
             "backup_age_h": b_age, "log_errors": log_errors, "git_head": head or None,
             "scanner_arms": collect_scanner_facts(root / "data", now),
             "backup_age_h_by": files["backup_age_h"], "derivs_age_h": files["derivs_age_h"],
-            "offsite_age_h": files["offsite_age_h"], "news_age_h": files["news_age_h"]}
+            "offsite_age_h": files["offsite_age_h"], "news_age_h": files["news_age_h"],
+            "report_age_h": files["report_age_h"], "scoring_age_h": files["scoring_age_h"],
+            "macro_age_h": files["macro_age_h"]}
 
 
 def manifest_facts(root):
@@ -480,6 +482,9 @@ BACKUP_LABEL = {"db": "bot BTC", "scanner": "Claude murni", "scanner_hybrid": "C
                 "scanner_random": "acak"}
 
 
+_WATCHED = ("offsite_age_h", "news_age_h", "report_age_h", "scoring_age_h", "macro_age_h")
+
+
 def _side_conditions(h):
     """The alarm's own rules for the scanner arms, backups and derivatives archive, so the
     page and the Telegram alarm can never disagree on what is wrong."""
@@ -488,9 +493,10 @@ def _side_conditions(h):
         return {}
     c = conditions({"spot_svc": "active", "last_cycle_age_min": 0, "scanner": h["scanner_arms"],
                     "backup_age_h": h.get("backup_age_h_by") or {}, "derivs_age_h": h.get("derivs_age_h"),
-                    **{k: h[k] for k in ("offsite_age_h", "news_age_h") if k in h}})
+                    **{k: h[k] for k in _WATCHED if k in h}})
     return {k: v for k, v in c.items()
-            if k.split(":")[0] in ("scanner", "scanner_err", "backup", "derivs", "offsite", "news")}
+            if k.split(":")[0] in ("scanner", "scanner_err", "backup", "derivs", "offsite", "news",
+                                   "report", "scoring", "macro")}
 
 
 def issues(f):
@@ -1082,6 +1088,13 @@ def _health_rows(f, now):
         age = h["news_age_h"]
         add("news" not in bad, "Arsip berita", f"{age:.0f} jam lalu" if age is not None else "tidak ada",
             "headline dan kalender ekonomi disimpan tiap jam; file aslinya ditimpa tiap siklus")
+    for key, name, why in (("macro_age_h", "Kalender ekonomi", "dibaca bot tiap jam; basi = proteksi berita mati"),
+                           ("report_age_h", "Laporan harian", "terkirim tiap 03:30 UTC"),
+                           ("scoring_age_h", "Penilaian otomatis", "jalan tiap 04:20 UTC")):
+        if key in h:
+            age = h[key]
+            add(key.removesuffix("_age_h") not in bad, name,
+                f"{age:.0f} jam lalu" if age is not None else "belum pernah", why)
     if "offsite_age_h" in h:
         age = h["offsite_age_h"]
         add("offsite" not in bad, "Backup ke Mac", f"{age:.0f} jam lalu" if age is not None else "belum pernah",

@@ -4,6 +4,32 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-19 — feat(ops): watch the watchers (Mac watchdog, daily-job heartbeats, macro calendar, exit/flip opinions)
+
+The owner asked what else could be missed "like before". These were the places that could
+fail in silence, found by checking the host. Restarts, services enabled with linger, and NTP
+sync were already fine.
+
+1. **The VPS dying took the alarm with it.** `scripts/pull_backups.sh` (launchd, twice a day)
+   is now also a watchdog. It checks that the VPS answers, that the bot ran a cycle in the
+   last 3 h, and that the alarm wrote its new heartbeat (`data/alarm.ok`, every run) in the
+   last 3 h. On a failure, or on a failed pull, it raises a macOS notification and sends
+   Telegram from the Mac, with the token read from the repo's `.env` and never printed. A
+   labelled test message was sent.
+2. **Daily jobs had no watch.** `ops_report` now writes `data/ops_report.ok` after a sent
+   report. The alarm flags a report not sent, or scoring day not run (its log), in 26 h. A
+   dead scoring day would have meant January's and February's verdicts never arrive.
+3. **The macro calendar could go stale with only a WARNING in the log,** which leaves the
+   macro rule (51% of futures signals) blind. The alarm now flags `macro_events.csv` older
+   than 6 h.
+5. **Exit and flip opinions** (H-FLP-C's data) are now watched like entry opinions: the alarm
+   fires when a provider's last 3 all errored.
+
+All three new checks also have rows on the dashboard's Sistem tab. Item 4 (an LLM budget) was
+not chosen. Tests 341/341.
+
+---
+
 ## 2026-11-19 — H-VG and H-VR/H-BS windows restart at the F&G-greed restart
 
 The bot restarted at 2026-11-19 01:13:53 UTC (`9a3d271`, PRs #57 + #58) without the greed BUY
