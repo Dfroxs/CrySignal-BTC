@@ -30,6 +30,8 @@ Bot restarted by killing the MainPID; systemd respawned it, pid 383220, active 1
     H-FLP-C.
   - **Scanner books:** levels on the 24h scale (ATR(1h) × √24) from the next scanner run.
     No restart; the H-SC windows are unchanged.
+  - **PR #62 (H-VG amendment)** pulled 2026-11-19 at `0f4eca9`; dashboard restart only. Its
+    trading-path diff is empty, and the bot stayed at pid 406603.
 - **2026-11-19 01:13:53 UTC: bot restarted at `9a3d271`** (PRs #57 + #58), pid 398486. No
   position was open. The −0.5 BUY penalty at F&G ≥ 70 is gone (H-FG2 FAIL, owner: now). The
   fear leg stays.
