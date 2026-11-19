@@ -176,3 +176,14 @@ from the first v2 cycle on the VPS. `scanner_eval.load` keeps only cycles whose 
 demo books are not reset; their figures are descriptive and cross the switch. The random arm
 follows the pure arm's picks, whichever prompt made them. Nothing else in the criteria
 changes.
+
+## Addendum 2026-11-19: book levels on the 24h scale (design decision, not a criterion)
+
+Owner's go. The paper books' stop and target are now 1.5 × and 3 × ATR(1h) × √24
+(`BOOK_ATR_SCALE`), for picks opened from the deploy on. Positions opened before keep their
+levels. Why: on the 1h scale, one day's noise (about 4.9 × ATR(1h)) took out most stops
+within hours, so the books measured a few hours' path of picks made for 24h. Over
+2026-11-16..19, 30 of 32 closed positions hit a level before 24h. The books stay
+descriptive. **H-SC's and H-SC2's statistic, criteria and dates are unchanged:** they score
+`scan_picks` on the close-to-close 24h return, which never read the books.
+

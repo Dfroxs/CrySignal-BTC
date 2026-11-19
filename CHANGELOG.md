@@ -4,6 +4,53 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-19 — fix: re-entry anchor from the current run only; scanner book levels on the 24h scale
+
+Two design decisions (owner, 2026-11-19), for data yield and for a book that measures what
+was asked. Neither is a test result, and neither licenses a profit claim.
+
+1. **Re-entry anchor from the current run** (`run_bot._check_reentry_quality`).
+   - **The case:** run 3's SHORT WIN at $68,900 (#19, strength 6.5) blocked every futures
+     SHORT from 2026-11-16 23:01 on: 25 in all, 18 of them inside run 4. BTC was at ~$63k.
+     A SHORT passes only at a higher price, a tier upgrade, or +0.3 strength, and the best
+     was 6.5. In a falling market a winning short locks out its own trend until the
+     168 h age limit (here 2026-11-22 03:06).
+   - **The change:** an anchor opened before the manifest's `started_at` is ignored.
+     `run_start=None` keeps the old behaviour. A missing manifest means no boundary.
+   - **Spot too:** the same function gates spot first entries, so spot anchors reset per
+     run as well. No effect today: the last spot anchor (#9, BUY at $82,716) is above
+     price, so a spot BUY already passes on price. It is still a spot trading-path change.
+   - **Replay (descriptive):** the 26 blocked SHORTs through the later gates
+     (`backtest._failing_gates`, same 1H bars, closes equal live's entries): 15 pass,
+     11 stay blocked (fakeout + trend_confluence 7, sr_first 3, psy_sl_first 1). The
+     first run-4 pass, 11-17 19:01 at $63,775, would still be open (~+1%) as of
+     11-19 16:00. The fakeout check is the backtest's own formula, so 15/26 is approximate.
+   - **Backtest:** unchanged. Its anchors come from its own replay, which has no run
+     boundary.
+   - **Deploy:** a gate change. Per `2026-11-18-claude-veto-gate-prereg.md` § Window and
+     restarts, the bot restart that ships it ends H-VG's window. Record the amendment at
+     deploy. H-VR/H-BS read the signal stream, which this does not change.
+2. **Scanner paper book levels on the 24h scale** (`agents/scanner.book_levels`).
+   - **The problem:** stop 1.5 × ATR(1h) and target 3 × ATR(1h) sat inside one day's
+     noise. One day is about √24 ≈ 4.9 × ATR(1h). Over 2026-11-16..19, stops closed
+     positions after 6–10 h on average, and only 2 of 32 reached the 24h exit.
+   - **What that meant:** a pick made for 24h was booked on a few hours' path. With
+     random-walk odds of 1.5/4.5 = 33% against a breakeven of ~37% after costs, the book
+     lost by construction.
+   - **The change:** the ATR is scaled by `BOOK_ATR_SCALE = √24`. Open positions keep the
+     levels they were opened with.
+   - **Tests:** H-SC and H-SC2 score `scan_picks` on close-to-close 24h returns, never the
+     book, so no window changes. Addendum in `2026-11-17-claude-scanner-prereg.md`.
+
+Not changed: entry at the decision bar's close with exits walked from that bar. It was named
+as a "5-minute" bug in the session that found the above. It is not one: the entry price and
+the exit window both start at the bar close, which the existing test pins. The scanner runs
+5 minutes later, so the fill is idealised by 5 minutes, but no information leaks.
+
+Tests 342/342.
+
+---
+
 ## 2026-11-19 — feat(ops): watch the watchers (Mac watchdog, daily-job heartbeats, macro calendar, exit/flip opinions)
 
 The owner asked what else could be missed "like before". These were the places that could
