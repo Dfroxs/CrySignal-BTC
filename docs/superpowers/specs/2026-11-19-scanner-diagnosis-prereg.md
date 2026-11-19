@@ -224,3 +224,23 @@ This says how much H-SC's 300 picks are really worth. It changes no H-SC verdict
 The BTC bot's own losses are out of scope: they come from a different engine, exits and
 data. Its trade-level post-mortem is `scripts/loss_forensics.py`. A pre-registered
 diagnosis of the bot's run-4 positions is a separate document if wanted.
+
+## Amendment 2026-11-19 (before any figure): instrument and hash record
+
+The instrument is built: `scripts/scanner_diag.py`, test
+`test_scanner_diag_parts_on_synthetic_data_follow_the_prereg` (synthetic data only, with a
+planted effect that discovery must find and confirmation must confirm), wired into
+`agents/scoring_day.py`. Because scoring day runs unattended, the hash record works like
+this:
+- **H-SCD-1 (discovery)** runs on the day H-SC is scored and sent. It writes
+  `data/scoring/H-SCD-discovery.json` and its `.sha256`.
+- **The external record** is the Telegram result message: it ends with the SHA-256. The
+  same day's backup and Mac pull carry the file off-site.
+- **H-SCD-2 (confirmation)** runs no sooner than 20 h later. It refuses unless the file's
+  SHA-256 equals the recorded one and its split is the same.
+- **Run once:** a second discovery run is refused while the file exists.
+
+This replaces "committed, with its hash in the results doc": the Telegram message is the
+tamper-evident record made before confirmation. The results doc quotes it afterwards.
+Nothing else changes.
+
