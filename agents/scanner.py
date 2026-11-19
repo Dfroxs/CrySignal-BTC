@@ -379,7 +379,9 @@ def connect(path=DB_PATH):
 # Design decision for data yield (owner 2026-11-16), fixed before any result: every
 # LONG/SHORT pick opens one position per coin at the bar close; stop 1.5 x ATR(1h), target
 # 3 x ATR, closed at the close of the bar 24h after entry; a bar touching both levels counts
-# as the stop. A 1,000 USD demo account: each position is 10% of realised equity (it
+# as the stop. Amended 2026-11-19 (owner): the ATR is ATR(1h) scaled to the 24h hold
+# (x sqrt 24), since a 1.5 x ATR(1h) stop sat inside one day's noise and closed most
+# positions within hours of a pick made for 24h. Positions opened before keep their levels. A 1,000 USD demo account: each position is 10% of realised equity (it
 # compounds), opened only if the cash not already in positions covers it. The model never
 # sees these books, so H-SC's picks are unaffected by them.
 # Two independent books on the same picks: futures takes LONG and SHORT; spot (owner, same
@@ -387,6 +389,7 @@ def connect(path=DB_PATH):
 # its own one-position-per-coin slots and its own exits.
 
 BOOK_STOP_ATR, BOOK_TARGET_ATR, BOOK_HOLD_H = 1.5, 3.0, 24
+BOOK_ATR_SCALE = BOOK_HOLD_H ** 0.5    # ATR(1h) -> the hold horizon (random-walk scaling)
 BOOK_START_USD = 1000.0              # owner, 2026-11-16, per book
 BOOK_FRACTION = 0.10                 # of realised equity per position; 9 coins fit in 90%
 BOOKS = {   # round trip in pp: (fee + 0.05% slippage) x 2; sides the book can take
@@ -407,7 +410,7 @@ def book_account(con, book="futures"):
 
 def book_levels(side, entry, atr_pct):
     d = 1 if side == "LONG" else -1
-    a = entry * atr_pct / 100
+    a = entry * atr_pct / 100 * BOOK_ATR_SCALE
     return entry - d * BOOK_STOP_ATR * a, entry + d * BOOK_TARGET_ATR * a
 
 
