@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.live_ic import HORIZON, block_ic, health, load_cycles, paired_ic_diff  # noqa: E402
 
-FROM = pd.Timestamp("2026-11-17 18:44:50")          # run 4's started_at
+FROM = pd.Timestamp("2026-11-19 01:13:53")          # F&G-greed restart (amendment); was run 4's start
 END = FROM + pd.Timedelta(days=60)                   # window end and earliest scoring date
 MIN_N = 1000                                          # cycles with every input present
 
