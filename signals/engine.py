@@ -1057,10 +1057,10 @@ def integrate_news_with_signal(signal, news_data, htf=None):
         enhanced['strength'] += 1.5
         enhanced['reasons'].append(f"🟢 EXTREME GREED ({fng_val}) — contrarian SELL confirmed")
         fng_applied = True
-    elif fng_val >= 70 and stype == 'BUY':
-        enhanced['strength'] = max(0, enhanced['strength'] - 0.5)
-        enhanced['reasons'].append(f"⚠️  F&G GREED ({fng_val}) contradicts BUY — chasing risk")
-        fng_applied = True
+    # No penalty on a BUY in greed (F&G >= 70) since 2026-11-19: H-FG2 FAILed, greed days
+    # came before +0.69 pp BETTER 72 h returns (CI above 0, both halves), so the -0.5 bet the
+    # wrong way (2026-11-19-macro-fng-results.md). The fear leg stays: H-FG1 was
+    # INCONCLUSIVE and the owner kept it.
     elif fng_val <= 30 and stype == 'SELL':
         enhanced['strength'] = max(0, enhanced['strength'] - 0.5)
         enhanced['reasons'].append(f"⚠️  F&G FEAR ({fng_val}) contradicts SELL — panic risk")

@@ -734,6 +734,24 @@ def test_htf_conflict_penalty_lands_on_the_side_that_finally_leads():
     assert pen == (0.0, -1.0), f"penalty must land on SELL, the final leader: {pen}"
     assert sig["_contributions"]["htf"][0] >= 0 and any("HTF conflict penalty" in r for r in sig["reasons"])
 
+def test_greed_no_longer_penalises_a_buy_but_the_fear_leg_stays():
+    """H-FG2 FAILed (2026-11-19): F&G >= 70 came before BETTER 72 h returns, so the -0.5 BUY
+    penalty was removed (owner). The fear leg (H-FG1 INCONCLUSIVE) stays, by owner decision."""
+    import signals.engine as eng
+    orig = eng.check_upcoming_macro_events
+    eng.check_upcoming_macro_events = lambda: (False, None)
+    try:
+        sig = lambda t, s=7.0: {"type": t, "strength": s, "_threshold": 6.8, "reasons": [], "confidence": "NORMAL"}
+        news = lambda v: {"fear_greed": {"value": v}, "sentiment": "NEUTRAL", "confidence": 0}
+        greedy = eng.integrate_news_with_signal(sig("BUY"), news(75))
+        assert greedy["strength"] == 7.0 and greedy["type"] == "BUY", "greed must not drop a BUY just over the bar"
+        assert not any("GREED" in r for r in greedy["reasons"]), greedy["reasons"]
+        assert eng.integrate_news_with_signal(sig("BUY"), news(15))["strength"] == 8.5, "fear bonus stays"
+        assert eng.integrate_news_with_signal(sig("SELL"), news(25))["strength"] == 6.5, "fear SELL penalty stays"
+        assert eng.integrate_news_with_signal(sig("SELL"), news(85))["strength"] == 8.5, "extreme-greed SELL bonus stays"
+    finally:
+        eng.check_upcoming_macro_events = orig
+
 def test_macro_forced_hold_clears_levels_and_confidence():
     """Run 4, item 6: a HOLD forced by a macro event must not carry a stop, a target
     or a confidence tier, as every other gate already ensures."""
@@ -7036,6 +7054,7 @@ if __name__ == "__main__":
     run("run 4: session bump at bar close hour",  test_session_bump_reads_the_hour_the_bar_closes_not_opens)
     run("run 4: HTF penalty on final leader",     test_htf_conflict_penalty_lands_on_the_side_that_finally_leads)
     run("run 4: macro HOLD clears levels",        test_macro_forced_hold_clears_levels_and_confidence)
+    run("H-FG2: greed no longer penalises a BUY",  test_greed_no_longer_penalises_a_buy_but_the_fear_leg_stays)
     run("H-VR/H-BS: window, two-part + 2-sided",  test_run4b_window_and_verdicts_follow_the_prereg)
     run("H-MC: times, window, replay, verdict",    test_macro_rule_times_window_replay_and_verdict)
     run("H-FG: alignment, two-halves rule",       test_fng_frame_alignment_and_two_halves_rule)
