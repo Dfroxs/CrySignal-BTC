@@ -6,7 +6,9 @@ Four-phase pipeline: scrape news → analyze (spot + futures) → paper trade �
 
 import argparse
 import atexit
+import json
 import logging
+import os
 import sys
 import time
 from datetime import UTC, datetime
@@ -17,7 +19,7 @@ from signals.terminal import display_combined
 from news_scraper import scrape_and_export
 from notifier import _format_close_notification, _format_open_notification, _send_telegram_message, send_signal_alert
 from trading.paper import _calc_pnl, apply_futures_exit_geometry, check_and_close_positions, print_open_status, print_paper_summary
-from config import RISK_CONFIG, FUTURES_CONFIG, RISK_LIMITS
+from config import DATA_DIR, RISK_CONFIG, FUTURES_CONFIG, RISK_LIMITS
 from signals.sizing import calculate_position_size, get_pyramid_size_factor
 from trading.history import close as close_db, close_paper_position, get_open_position_count_by_direction, get_open_positions, has_open_position_same_direction, log_signal_block, open_paper_position
 
@@ -82,6 +84,18 @@ _last_atr_fut  = 0  # cached for mid-cycle vol-exit checks (1H scale)
 
 
 _FROM_CONFIG = object()   # sentinel: read RISK_CONFIG["pyramid"]["reentry_max_age_hours"]
+_FROM_MANIFEST = object() # sentinel: read the run's started_at from MANIFEST_PATH
+MANIFEST_PATH = os.path.join(DATA_DIR, "paper_run_manifest.json")
+
+
+def _run_started_at():
+    """The current paper run's `started_at`, or None (no boundary) if the manifest is
+    missing or unreadable — the gate then behaves as it did before runs had one."""
+    try:
+        with open(MANIFEST_PATH) as fh:
+            return json.load(fh).get("started_at")
+    except (OSError, ValueError):
+        return None
 
 
 def _fut_gate_on(name):
@@ -91,7 +105,8 @@ def _fut_gate_on(name):
     return name not in FUTURES_CONFIG.get("entry", {}).get("disabled_gates", ())
 
 
-def _check_reentry_quality(signal, mode, max_age_hours=_FROM_CONFIG, now=None):
+def _check_reentry_quality(signal, mode, max_age_hours=_FROM_CONFIG, now=None,
+                           run_start=_FROM_MANIFEST):
     """TA-driven re-entry guard: skip if price is worse and confidence didn't improve.
 
     Compared against the last RESOLVED WIN/LOSS in the same direction (not the
@@ -103,6 +118,11 @@ def _check_reentry_quality(signal, mode, max_age_hours=_FROM_CONFIG, now=None):
     BUY for weeks once price had moved to $84k — see
     docs/superpowers/specs/2026-10-09-no-positions-diagnosis.md.
 
+    `run_start` (None = no boundary) ignores an anchor opened before the current run
+    began; by default it is the manifest's `started_at`. Without it, run 3's SHORT WIN
+    at $68,900 blocked every run-4 SHORT at ~$63k (2026-11-19): a trade this run never
+    made gated this run's entries. Design decision (owner), not a test result.
+
     Allows re-entry on any of:
       - better entry price (lower for BUY, higher for SELL), or
       - confidence tier upgrade (WEAK → NORMAL → STRONG), or
@@ -113,6 +133,8 @@ def _check_reentry_quality(signal, mode, max_age_hours=_FROM_CONFIG, now=None):
     """
     from trading.history import _conn
     from signals.market_data import get_signal_confidence
+    if run_start is _FROM_MANIFEST:
+        run_start = _run_started_at()
     c = _conn()
     row = c.execute(
         """SELECT p.entry_price, p.type, s.strength, p.closed_at
@@ -121,8 +143,9 @@ def _check_reentry_quality(signal, mode, max_age_hours=_FROM_CONFIG, now=None):
            WHERE p.outcome IN ('WIN','LOSS')
              AND p.mode = ?
              AND p.type = ?
+             AND (? IS NULL OR datetime(p.opened_at) >= datetime(?))
            ORDER BY p.closed_at DESC LIMIT 1""",
-        (mode, signal["type"]),
+        (mode, signal["type"], run_start, run_start),
     ).fetchone()
     if not row:
         return None  # no resolved history in this direction → allow

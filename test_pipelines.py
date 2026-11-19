@@ -1037,13 +1037,70 @@ def test_live_reentry_anchor_expires_after_max_age():
         sig = {"type": "BUY", "entry_price": 84_150.0, "strength": 5.75,
                "confidence": "NORMAL", "_threshold": 4.55}
         now = datetime.fromisoformat("2026-10-07T04:01:00+00:00")
-        assert _check_reentry_quality(sig, "spot", max_age_hours=None, now=now), \
+        assert _check_reentry_quality(sig, "spot", max_age_hours=None, now=now, run_start=None), \
             "None must keep the unlimited anchor"
-        assert _check_reentry_quality(sig, "spot", max_age_hours=168, now=now) is None, \
+        assert _check_reentry_quality(sig, "spot", max_age_hours=168, now=now, run_start=None) is None, \
             "a 22-day-old anchor must be ignored under a 7-day limit"
         soon = datetime.fromisoformat("2026-09-16T00:00:00+00:00")
-        assert _check_reentry_quality(sig, "spot", max_age_hours=168, now=soon), \
+        assert _check_reentry_quality(sig, "spot", max_age_hours=168, now=soon, run_start=None), \
             "a 1-day-old anchor must still block"
+    finally:
+        try:
+            h.DB.close()
+        except Exception:
+            pass
+        h.SIGNAL_HISTORY_DB, h.DB = saved_path, saved_db
+        os.unlink(path)
+
+
+def test_live_reentry_anchor_comes_only_from_the_current_run():
+    """The 2026-11-19 case: run 3's SHORT WIN at $68,900 / 6.5 blocked every run-4 SHORT
+    at ~$63k. An anchor opened before the run's `started_at` is not this run's trade, so
+    it must not gate this run's entries. Design decision (owner), not a test result."""
+    import json
+    import os
+    import tempfile
+    from datetime import datetime
+    import trading.history as h
+    import run_bot
+    from run_bot import _check_reentry_quality
+    saved_path, saved_db = h.SIGNAL_HISTORY_DB, h.DB
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        h.SIGNAL_HISTORY_DB, h.DB = path, None
+        c = h._conn()
+        sid = c.execute("INSERT INTO signals (timestamp,type,entry_price,strength) "
+                        "VALUES ('2026-11-13T16:01:02+00:00','SELL',68899.65,6.5)").lastrowid
+        c.execute("INSERT INTO paper_positions (signal_id,type,entry_price,stop_loss,take_profit,"
+                  "opened_at,closed_at,outcome,pnl_pct,mode) VALUES (?, 'SELL',68899.65,72266.25,"
+                  "63849.75,'2026-11-13T16:01:02.961911+00:00','2026-11-15T03:06:23.729328+00:00',"
+                  "'WIN',6.387,'futures')", (sid,))
+        c.commit()
+        sig = {"type": "SELL", "entry_price": 64_038.0, "strength": 6.0,
+               "confidence": "NORMAL", "_threshold": 4.91}
+        now = datetime.fromisoformat("2026-11-19T14:01:03+00:00")
+        assert _check_reentry_quality(sig, "futures", run_start=None, now=now), \
+            "None = no run boundary: the run-3 anchor still blocks"
+        assert _check_reentry_quality(sig, "futures", run_start="2026-11-17T18:44:50.373808+00:00",
+                                      now=now) is None, "an anchor from before the run must be ignored"
+        assert _check_reentry_quality(sig, "futures", run_start="2026-11-10T00:00:00+00:00",
+                                      now=now), "an anchor inside the run still blocks"
+        fd, man = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        saved_man = run_bot.MANIFEST_PATH
+        try:
+            with open(man, "w") as fh:
+                json.dump({"started_at": "2026-11-17T18:44:50.373808+00:00"}, fh)
+            run_bot.MANIFEST_PATH = man
+            assert _check_reentry_quality(sig, "futures", now=now) is None, \
+                "by default the boundary is the manifest's started_at"
+            run_bot.MANIFEST_PATH = man + ".missing"
+            assert _check_reentry_quality(sig, "futures", now=now), \
+                "no manifest = no boundary, never a crash"
+        finally:
+            run_bot.MANIFEST_PATH = saved_man
+            os.unlink(man)
     finally:
         try:
             h.DB.close()
@@ -6376,13 +6433,20 @@ def test_scanner_paper_book_opens_one_per_coin_and_exits_stop_first_target_or_ti
     con = s.connect(os.path.join(tempfile.mkdtemp(), "b.db"))
     H = s.BAR_MS
     t0 = 1_800_000_000_000 // H * H
-    f = lambda bars: {"close": 100.0, "atr_pct": 1.0, "_bars": bars}
+    # Levels are in ATR(1h) scaled to the 24h hold (x sqrt 24): an ATR(1h) of 1/sqrt(24) %
+    # gives one 24h-ATR of 1.0 on a 100.0 close, so the bars below read in whole units.
+    k = 1.0 / s.BOOK_ATR_SCALE
+    f = lambda bars: {"close": 100.0, "atr_pct": k, "_bars": bars}
     snap = {"bar_close_ms": t0, "coins": {"BTC": f([]), "ETH": f([]), "SOL": f([]), "XRP": f([])}}
     picks = {"BTC": {"side": "LONG", "confidence": 60}, "ETH": {"side": "SHORT", "confidence": 50},
              "SOL": {"side": "LONG", "confidence": 40}, "XRP": {"side": "NONE", "confidence": 10}}
     assert s.open_book(con, 1, picks, snap, t0) == 3, "NONE opens nothing"
-    assert s.book_levels("LONG", 100.0, 1.0) == (98.5, 103.0)
-    assert s.book_levels("SHORT", 100.0, 1.0) == (101.5, 97.0)
+    close = lambda a, b: all(abs(x - y) < 1e-9 for x, y in zip(a, b))
+    assert abs(s.BOOK_ATR_SCALE - 24 ** 0.5) < 1e-12, "ATR(1h) scaled to the 24h hold"
+    assert close(s.book_levels("LONG", 100.0, 1.0), (100 - 1.5 * 24 ** 0.5, 100 + 3 * 24 ** 0.5)), \
+        "a 1% ATR(1h) stops at 1.5 x its 24h scale, not at 1.5%"
+    assert close(s.book_levels("LONG", 100.0, k), (98.5, 103.0))
+    assert close(s.book_levels("SHORT", 100.0, k), (101.5, 97.0))
     assert s.open_book(con, 2, {"BTC": {"side": "SHORT", "confidence": 90}}, snap, t0 + H) == 0, \
         "one position per coin, an opposite pick is ignored"
     flat = lambda n, start=t0: [(start + k * H, 100.5, 99.5, 100.0) for k in range(n)]
@@ -6394,8 +6458,10 @@ def test_scanner_paper_book_opens_one_per_coin_and_exits_stop_first_target_or_ti
     assert s.manage_book(con, snap2) == 3
     rows = {r[0]: r[1:] for r in con.execute(
         "SELECT coin, outcome, exit, pnl_pct, pnl_usd, closed_bar FROM scan_positions")}
-    assert rows["BTC"][:2] == ("STOP", 98.5) and abs(rows["BTC"][2] - (-1.5 - s.BOOK_COST_PP)) < 1e-9
-    assert rows["ETH"][:2] == ("TARGET", 97.0) and abs(rows["ETH"][3] - (3.0 - 0.2)) < 1e-9
+    assert rows["BTC"][0] == "STOP" and abs(rows["BTC"][1] - 98.5) < 1e-9
+    assert abs(rows["BTC"][2] - (-1.5 - s.BOOK_COST_PP)) < 1e-9
+    assert rows["ETH"][0] == "TARGET" and abs(rows["ETH"][1] - 97.0) < 1e-9
+    assert abs(rows["ETH"][3] - (3.0 - 0.2)) < 1e-9
     assert rows["SOL"][0] == "TIME", "the bar before entry must not stop it out"
     assert rows["SOL"][4] == s._iso(t0 + 24 * H), "time exit at the close 24h after entry"
     assert s.manage_book(con, snap2) == 0, "closed positions are never touched again"
@@ -7132,6 +7198,7 @@ if __name__ == "__main__":
     run("H-SC scanner: store, dedupe, error row",   test_scanner_run_once_stores_dedupes_and_logs_a_failure_as_data)
     run("H-SC eval: excess, days, verdict, leak",   test_scanner_eval_excess_day_unit_verdict_and_leakage)
     run("scanner paper book: open, stop, target, time", test_scanner_paper_book_opens_one_per_coin_and_exits_stop_first_target_or_time)
+    run("re-entry anchor only from the current run", test_live_reentry_anchor_comes_only_from_the_current_run)
     run("H-SC2 hybrid arm: engine fields, own db",  test_scanner_hybrid_arm_adds_engine_fields_only_to_its_own_prompt_and_db)
     run("random arm: count-matched, seeded, no model", test_scanner_random_arm_deals_pure_picks_count_matched_and_mirrors_failures)
     run("scanner digest: per arm, silent when quiet", test_scanner_digest_lists_opens_and_closes_per_arm_and_is_silent_when_quiet)
