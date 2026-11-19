@@ -129,3 +129,13 @@ about 1.5 days old and nothing in it was computed.
 
 **New window:** 2026-11-19 01:13:53 UTC (the bot's restart at `9a3d271`) to 2027-02-17
 01:13:53 UTC. Everything else is unchanged.
+
+## Amendment 2026-11-19 (2): the window restarts at the re-entry run-anchor restart
+
+The re-entry gate now ignores an anchor opened before the run's `started_at` (PR #61, a
+design decision for data yield). That changes a gate, so per § Window and restarts the
+window restarts. It was about 15 hours old and nothing in it was computed.
+
+**New window:** 2026-11-19 16:34:53 UTC (the bot's restart at `8ca245a`) to 2027-02-17
+16:34:53 UTC. Everything else is unchanged.
+
