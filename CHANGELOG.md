@@ -4,6 +4,19 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-19 — H-VG and H-VR/H-BS windows restart at the F&G-greed restart
+
+The bot restarted at 2026-11-19 01:13:53 UTC (`9a3d271`, PRs #57 + #58) without the greed BUY
+penalty. That changed signals, so the two windows that read the bot's stream restart.
+- H-VG: to 2027-02-17 01:13:53.
+- H-VR/H-BS: to 2027-01-18 01:13:53.
+
+Both were about 1.5 days old and nothing in them was computed. The prereg amendments, the
+instruments' `FROM`, the dashboard meters and the tests all follow; scoring day reads the
+new dates from the instruments. The manifest is unchanged (still run 4). Tests 340/340.
+
+---
+
 ## 2026-11-19 — feat(engine): no Fear & Greed penalty on a BUY in greed (H-FG2 FAIL)
 
 The owner chose to ship the licensed change now, rather than bundle it with run 4 part B.

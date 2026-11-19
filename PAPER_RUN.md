@@ -20,6 +20,13 @@ Bot restarted by killing the MainPID; systemd respawned it, pid 383220, active 1
   H-SC2 and H-DR are unaffected (separate processes and data).
 - **Part B** of the run-4 plan (veto gate, L/S, `rel_ic_dir`, basis) waits for its own
   results.
+- **2026-11-19 01:13:53 UTC: bot restarted at `9a3d271`** (PRs #57 + #58), pid 398486. No
+  position was open. The −0.5 BUY penalty at F&G ≥ 70 is gone (H-FG2 FAIL, owner: now). The
+  fear leg stays.
+  - **Signal change:** H-VG now runs to 2027-02-17 01:13:53, and H-VR/H-BS to 2027-01-18
+    01:13:53 (prereg amendments).
+  - **Unchanged:** the manifest (run 4's `started_at`), and the H-SC, H-SC2, H-DR and
+    H-FLP-C windows.
 - **2026-11-18:** pulled `9c6ed5d` (PR #48, H-VR / H-BS prereg and its instrument) and
   restarted `spotsignal-dash` only. Those tests are scored on or after 2027-01-16 18:44:50
   UTC.
