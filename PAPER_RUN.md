@@ -389,6 +389,9 @@ Anything above zero means those cycles are contaminated. It was **0** across all
 - **The Mac's pull is also a watchdog.** It flags a VPS that does not answer, a bot with no
   cycle in 3 h, or an alarm with no heartbeat (`data/alarm.ok`) in 3 h, through a macOS
   notification and Telegram sent from the Mac.
+- **Deployed 2026-11-19 03:52 UTC** (`ece8545`, PR #60), dashboard restart only.
+  `data/ops_report.ok` was seeded with today's report time, 03:30:08 UTC: that report ran on
+  the old code (its summary call is in `llm_usage.jsonl`) and wrote no heartbeat.
 - **The VPS alarm flags:**
   - the daily report not sent in 26 h (`data/ops_report.ok`);
   - scoring day not run in 26 h;
