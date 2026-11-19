@@ -17,6 +17,14 @@ was asked. Neither is a test result, and neither licenses a profit claim.
      168 h age limit (here 2026-11-22 03:06).
    - **The change:** an anchor opened before the manifest's `started_at` is ignored.
      `run_start=None` keeps the old behaviour. A missing manifest means no boundary.
+   - **Spot too:** the same function gates spot first entries, so spot anchors reset per
+     run as well. No effect today: the last spot anchor (#9, BUY at $82,716) is above
+     price, so a spot BUY already passes on price. It is still a spot trading-path change.
+   - **Replay (descriptive):** the 26 blocked SHORTs through the later gates
+     (`backtest._failing_gates`, same 1H bars, closes equal live's entries): 15 pass,
+     11 stay blocked (fakeout + trend_confluence 7, sr_first 3, psy_sl_first 1). The
+     first run-4 pass, 11-17 19:01 at $63,775, would still be open (~+1%) as of
+     11-19 16:00. The fakeout check is the backtest's own formula, so 15/26 is approximate.
    - **Backtest:** unchanged. Its anchors come from its own replay, which has no run
      boundary.
    - **Deploy:** a gate change. Per `2026-11-18-claude-veto-gate-prereg.md` § Window and
