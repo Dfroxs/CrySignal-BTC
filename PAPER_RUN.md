@@ -2,6 +2,27 @@
 
 **Rewritten 2026-10-09, when run 3 started. Read this first when you come back.**
 
+**Run 5 started 2026-11-20 15:19:48 UTC at `d954cc1`** (PR #66, gold/VIX `range=5d`).
+Owner's go: "reset balance dan 90 harinya".
+- Bot restarted by `pkill -f '[r]un_bot.py'`; systemd respawned it, pid 421157, active
+  15:19:44. `spotsignal-dash` and `spotsignal-qa` restarted.
+- **Run 4 archived:** `data/paper_run_manifest.run4.json`, plus
+  `data/backups/FINAL-run4-20261120-1519-signal_history.db` (integrity ok).
+- **New manifest:** made with `start_paper_run.py --force`. Thresholds spot 4.3 / futures
+  4.91. The dashboard account restarts at $1,000.
+- **Position #20 was open at the reset** (futures SELL $62,778). The owner chose to reset
+  now, not to wait or force-close it.
+  - It belongs to run 4, since runs are keyed on `opened_at`, and closes on its own levels.
+  - Until it closes, run 5's futures cannot open (one position at a time).
+- **What changed (trading path):** gold and VIX were blank in 740 and 191 of 2,493 cycles
+  (weekends and Yahoo's daily rollover), so `gold_vix` scored nothing there. Now fixed.
+- **Windows restart at 15:19:44:**
+  - H-VG to 2027-02-18 15:19:44;
+  - H-VR/H-BS to 2027-01-19 15:19:44;
+  - H-FLP-C and scoring day follow the manifest.
+- **Unchanged:** H-SC, H-SC2, H-DR and H-SCD. The scanner calls the engine with
+  `market_structure=None`, so gold/VIX never reach it.
+
 **Run 4 started 2026-11-17 18:44:50 UTC at `3377027`** (PR #46, run-4 part A). Owner's go.
 Bot restarted by killing the MainPID; systemd respawned it, pid 383220, active 18:44:35.
 - **No position was open at the restart.**
