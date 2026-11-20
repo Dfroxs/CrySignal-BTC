@@ -6910,6 +6910,50 @@ def test_dashboard_btc_open_rows_carry_partial_tp1_trailing_and_sizing():
     assert b["partial_pnl"] is None and b["trailing"] is False, b
 
 
+def _card_facts():
+    """A hand-built facts dict: #20 after TP1, and three scanner rows (live, carried, no price)."""
+    from datetime import UTC, datetime, timedelta
+    now = datetime(2026, 11, 20, 19, 40, tzinfo=UTC)
+    btc = {"id": 20, "mode": "futures", "type": "SELL", "entry_price": 62778.08, "stop_loss": 65476.05,
+           "trailing_stop": 60703.85, "take_profit": 58731.12, "tp1": 58731.12, "tp2": 54684.16,
+           "partial_closed": 1, "partial_pnl": 6.246, "opened_at": "2026-11-19T17:01:05+00:00",
+           "price": 58418.0, "move_pct": 6.94, "stop": 60703.85, "trailing": True, "hours": 26.7,
+           "sizing": {"leverage": 3, "margin_pct": 20.0, "liquidation_price": 83287.67}, "carried": True}
+    iso = lambda h: (now - timedelta(hours=h)).isoformat()
+    scan = [{"book": "futures", "coin": "AVAX", "side": "SHORT", "opened_bar": iso(2), "entry": 7.0, "price": 6.78,
+             "stop": 7.49, "target": 5.30, "move_pct": 3.14, "upnl": 3.11, "size_usd": 99.13, "carried": False},
+            {"book": "futures", "coin": "ETH", "side": "SHORT", "opened_bar": iso(11), "entry": 1921.0, "price": 1800.0,
+             "stop": 1990.0, "target": 1373.0, "move_pct": 5.42, "upnl": 5.37, "size_usd": 99.0, "carried": True},
+            {"book": "futures", "coin": "SOL", "side": "LONG", "opened_bar": iso(25), "entry": 70.0, "price": None,
+             "stop": 66.0, "target": 78.0, "move_pct": None, "upnl": 0.0, "size_usd": 100.0, "carried": False}]
+    return now, {"now": now, "db": {"open": [btc]},
+                 "scanner": {"book": {"open": scan}, "spot_book": {"open": []}}}
+
+
+def test_dashboard_position_cards_say_method_status_levels_and_leverage():
+    """Owner 2026-11-20: positions must say which method they come from, their status, P&L,
+    SL/TP1/TP2, leverage and time left, in plain words. One card per position."""
+    import re
+    from agents import dashboard as dsh
+    now, f = _card_facts()
+    btc = dsh._cards_block(dsh._btc_cards(f), now, fold_carried=False)
+    assert "<details" not in btc and "bawaan (tidak dihitung saldo)" in btc, \
+        "a carried BTC position stays in full, labelled (ruling: #20 must not hide)"
+    for want in ("Bot BTC", "aturan indikator (bukan AI)", "TP1 tercapai, separuh posisi sudah ditutup",
+                 "+6,25%", "54.684,16", "ikut bergerak", "3x", "likuidasi"):
+        assert want in btc, (want, btc)
+    assert re.search(r"58\.731,12\s*✓", btc), "TP1 carries its tick"
+    sc = dsh._cards_block(dsh._scanner_cards(f, "scanner"), now)
+    for want in ("Scanner Claude murni", "AI memilih koin", "satu target, tanpa TP2", "tanpa leverage",
+                 "+$3,11", "segera"):
+        assert want in sc, (want, sc)
+    folded = re.search(r"<details.*?</details>", sc, re.S).group(0)
+    assert "1 posisi bawaan (tidak dihitung saldo)" in folded and "ETH" in folded
+    assert "ETH" not in sc.replace(folded, ""), "a carried position shows only inside the fold"
+    sol = sc[sc.index("SOL"):]
+    assert "–" in sol[:600], "a missing price shows –, the card stays"
+
+
 def test_scanner_reset_carries_old_positions_and_restarts_every_window():
     """Owner's reset with run 5: every arm's books start again at $1,000, and H-SC/H-SC2/H-SCD
     count only cycles from WINDOW_FROM. A position opened before it runs out on its own, holds
@@ -7779,6 +7823,7 @@ if __name__ == "__main__":
     run("dashboard test dates = scorers' dates",  test_dashboard_fixed_tests_match_their_scorers)
     run("alarm: macro source blank 3 cycles",     test_alarm_flags_a_macro_source_blank_in_three_futures_cycles)
     run("dash: BTC rows carry TP1/partial/sizing", test_dashboard_btc_open_rows_carry_partial_tp1_trailing_and_sizing)
+    run("dash: one card per position, plain words", test_dashboard_position_cards_say_method_status_levels_and_leverage)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
