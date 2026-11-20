@@ -4,6 +4,16 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-20 — H-VG window restarts at the resting-orders restart
+
+The bot restarted at 2026-11-20 03:22:51 UTC (`f7310d5`, PRs #63 + #64, pid 413608).
+Position #20 was open; it has no back-walk. The resting orders change exits, so H-VG's
+window restarts under its prereg: 2026-11-20 03:22:51 to 2027-02-18 03:22:51
+(`scripts/veto_gate_eval.FROM`, the dashboard board, prereg amendment). H-VR/H-BS and
+H-FLP-C are unchanged. The old window was about 11 hours old, with nothing computed.
+
+---
+
 ## 2026-11-19 — fix: resting stops and targets for the bot; scanner book enters at the answer's price
 
 Two design decisions (owner: "siapkan sekarang dan perbaiki, sekalian yg scanner"), for a

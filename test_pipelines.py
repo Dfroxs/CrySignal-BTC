@@ -4273,8 +4273,8 @@ def test_veto_gate_episode_effect_follows_the_gate_and_guards_power():
     import inspect
     import pandas as pd
     import scripts.veto_gate_eval as vg
-    assert str(vg.FROM) == "2026-11-19 16:34:53" and str(vg.SCORE_BY) == "2027-02-17 16:34:53", \
-        "the window starts at the re-entry run-anchor restart (3rd amendment)"
+    assert str(vg.FROM) == "2026-11-20 03:22:51" and str(vg.SCORE_BY) == "2027-02-18 03:22:51", \
+        "the window starts at the resting-orders restart (4th amendment)"
     assert "refused" in inspect.getsource(vg.main)
     t = lambda h: pd.Timestamp("2026-11-20") + pd.Timedelta(hours=h)
     ops = pd.DataFrame([
@@ -4374,7 +4374,7 @@ def test_scoring_day_runs_each_test_once_when_due_and_never_early():
     assert "discovery" in ran[1] and "scripts/scanner_diag.py" in ran[1]
     assert sd.run_due(jan, facts, state, root, run=run, send=send) == [], "scored once, never again"
     assert os.listdir(os.path.join(root, "data", "scoring")), "full output kept"
-    late = datetime(2027, 2, 18, tzinfo=UTC)          # after every dated test, H-VG's 02-17 included
+    late = datetime(2027, 2, 19, tzinfo=UTC)          # after every dated test, H-VG's 02-18 included
     fail = lambda cmd, cwd: (1, "Traceback: boom")
     assert sd.run_due(late, dict(facts, paired_days=60), state, root, run=fail, send=send) == []
     assert "gagal" in sent[-1] and set(json.load(open(state))) == {"H-SC", "H-SCD-1"}, \
