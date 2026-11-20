@@ -4,6 +4,32 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-20 — support_resistance OFF, as H-SR licenses; ships with the shadow-context fix
+
+The owner chose to deploy the shadow fix now and to turn S/R off with it. H-SR's prereg sends
+the condition into `DISABLED_CONDITIONS` at the first restart made for another reason, and
+this is that restart.
+- **Both ceilings fall by 0.75,** and every derived threshold follows:
+
+  | | ceiling | threshold | min | max |
+  |---|---|---|---|---|
+  | futures | 25.00 → 24.25 | 4.91 → 4.76 | 3.66 | 7.32 |
+  | spot | 22.50 → 21.75 | 4.30 → 4.16 | 2.90 | 6.77 |
+
+- **Controller state:** the adaptive controller's state files hold only timestamps, so no
+  old absolute threshold carries over.
+- **The repaired code stays:** turning S/R back on means removing one name. Under the prereg
+  that needs a new, differently designed hypothesis, never a re-score.
+- **No live record:** once off, S/R contributes (0, 0), so H-SR-2 keeps only the
+  17:05 → restart hour.
+- **Test:** `test_support_resistance_is_pruned_from_both_modes_after_h_sr_failed`. The
+  repair's own test now scores with `disabled=()`. Suite 351/351.
+- **Deploy:** trading-path change, so it needs a bot restart and restarts H-VG and
+  H-VR/H-BS. It must reach the VPS before 2026-11-21 00:00 UTC, because the hybrid scanner
+  arm reads the engine score.
+
+---
+
 ## 2026-11-20 — shadow context: failed Yahoo series go out as null; gold added
 
 **On `develop`, not deployed.** The shadow agents run inside the bot, so this needs a bot

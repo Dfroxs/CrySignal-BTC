@@ -197,7 +197,14 @@ CONDITION_MAX = {
 #          ±1.0 on 23 of 113 run-3 futures cycles, i.e. noise in a fifth of them.
 # The 2026-08-29 pruning test above never covered either: backtest.py scores both
 # NEUTRAL, having no history for them.
-DISABLED_CONDITIONS = frozenset({"basis", "taker"})
+#
+# 2026-11-20: support_resistance OFF, as H-SR's prereg licenses
+# (docs/superpowers/specs/2026-11-20-sr-fix-prereg.md). It had never fired (its levels were
+# all >= 0.5% away, its window 0.2xATR). Repaired to find its own levels, then H-SR-1 FAILED:
+# positive in 5 of 10 cells at horizon 6, 8 needed. It goes at the first restart made for
+# another reason (the shadow-context fix). Both ceilings fall by 0.75 (futures 25.00 ->
+# 24.25, spot 22.50 -> 21.75), so do the thresholds.
+DISABLED_CONDITIONS = frozenset({"basis", "taker", "support_resistance"})
 
 # Engine veto gates switched off per mode (names from signals/engine._VETO_GATES).
 # `generate_signals(gates_disabled=None)` reads this, so the live bot, the variants and

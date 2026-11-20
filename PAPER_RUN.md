@@ -11,10 +11,10 @@ repaired, H-SR pre-registered).
   - The archive's name keeps it out of the dashboard's run history, as `run3-0541` did.
 - **What changed:** condition 16 now finds its own levels (`tolerance=0.0`). It had fired
   in 0 of 1,297 cycles.
-- **H-SR-1 FAILED** the same day (5 of 10 cells at horizon 6, needed 8). S/R stays live for
-  data. **At the next restart made for another reason, add `support_resistance` to
-  `DISABLED_CONDITIONS`**, per the prereg. Its 0.75 then leaves both ceilings, and the
-  thresholds follow.
+- **H-SR-1 FAILED** the same day (5 of 10 cells at horizon 6, needed 8). Per the prereg,
+  `support_resistance` goes into `DISABLED_CONDITIONS` at the next restart. That is the
+  shadow-context restart (owner: now). Ceilings become futures 24.25 and spot 21.75, and
+  thresholds 4.76 and 4.16.
 - **Windows restart at 17:05:03:** H-VG to 2027-02-18 17:05:03, and H-VR/H-BS to
   2027-01-19 17:05:03.
 - **Scanner window not cut:** it begins 2026-11-21 00:00, after this.

@@ -130,8 +130,9 @@ Jika FAKTA dan teks ini berbeda, FAKTA yang benar.
   diperbaiki. Alarm per jam kini juga memeriksa gold, VIX, DXY, S&P dan L/S.
 - Kondisi S/R (support/resistance) dulu TIDAK PERNAH menyala karena cacat desain; sudah
   diperbaiki 2026-11-20 lalu diuji (H-SR-1) dan GAGAL: arahnya tidak konsisten antar
-  pasar dan tahun. Ia tetap hidup untuk mengumpulkan data dan dimatikan pada restart
-  berikutnya.
+  pasar dan tahun. Sesuai prereg ia dimatikan (sore 2026-11-20), sehingga skor maksimum
+  futures 24.25 dan spot 21.75, dan ambang ikut turun. Ia hanya boleh hidup lagi lewat
+  hipotesis baru dengan prereg sendiri, bukan uji ulang.
 - Tanggal penilaian tiap test (H-VG, H-VR/H-BS, H-DR, H-SC, H-SC2) bisa bergeser bila bot
   di-restart dengan aturan baru. Jangan menyebut tanggal dari ingatan: arahkan ke papan
   "Kapan hasilnya bisa dipercaya?" di dashboard.
