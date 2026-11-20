@@ -1423,14 +1423,14 @@ def test_thresholds_track_the_active_condition_set():
     import config
     saved = config.DISABLED_CONDITIONS
     try:
-        config.DISABLED_CONDITIONS = frozenset()
+        config.DISABLED_CONDITIONS = frozenset({"sr_zone"})   # added 2026-11-20, after them
         assert config._max_score("spot") == 22.50 and config._max_score("futures") == 26.50, \
             "CONDITION_MAX must reproduce the documented ceilings"
         assert round(22.50 * config._SPOT_THR_FRACTION, 2) == 4.30 and \
                round(26.50 * config._THR_FRACTION, 2) == 5.20, \
             "the fractions must reproduce the pre-existing thresholds"
 
-        config.DISABLED_CONDITIONS = frozenset({"htf"})       # a 2.00 block
+        config.DISABLED_CONDITIONS = frozenset({"htf", "sr_zone"})   # a 2.00 block
         assert config._max_score("spot") == 20.50, config._max_score("spot")
         assert config._max_score("futures") == 24.50, config._max_score("futures")
         lean = round(24.50 * config._THR_FRACTION, 2)
@@ -1448,7 +1448,7 @@ def test_basis_and_taker_are_pruned_from_futures_and_spot_is_untouched():
     assert config.CONDITION_MAX["taker"][0] == 0.00
     saved = config.DISABLED_CONDITIONS
     try:
-        config.DISABLED_CONDITIONS = frozenset({"basis", "taker"})
+        config.DISABLED_CONDITIONS = frozenset({"basis", "taker", "sr_zone"})
         assert config._max_score("spot") == 22.50 and config._max_score("futures") == 25.00, \
             "basis and taker are futures-only: spot's ceiling does not move"
     finally:
@@ -1460,7 +1460,7 @@ def test_support_resistance_is_pruned_from_both_modes_after_h_sr_failed():
     at the next restart. It carries 0.75 in both modes, so both ceilings and every derived
     threshold fall with it."""
     import config
-    assert config.DISABLED_CONDITIONS == frozenset({"basis", "taker", "support_resistance"})
+    assert config.DISABLED_CONDITIONS == frozenset({"basis", "taker", "support_resistance", "sr_zone"})
     assert config.CONDITION_MAX["support_resistance"] == (0.75, 0.75)
     assert (config.SPOT_MAX_SCORE, config.SPOT_THRESHOLD,
             config.SPOT_THRESHOLD_MIN, config.SPOT_THRESHOLD_MAX) == (21.75, 4.16, 2.90, 6.77)
@@ -3214,8 +3214,9 @@ def test_disabled_conditions_keep_a_shadow_record_without_scoring():
         w = df.iloc[:i + 1]
         sr = detect_support_resistance(w)
         kw = dict(htf=None, market_structure=None, sr=sr, mode="futures", threshold_override=5.0)
+        import config
         live = generate_signals(w, **kw)
-        full = generate_signals(w, disabled=(), **kw)
+        full = generate_signals(w, disabled=config.DISABLED_CONDITIONS - {"support_resistance"}, **kw)
         would = full["_contributions"]["support_resistance"]
         assert live["_disabled_contributions"]["support_resistance"] == would
         assert live["_contributions"]["support_resistance"] == (0.0, 0.0)
@@ -3234,6 +3235,38 @@ def test_disabled_conditions_keep_a_shadow_record_without_scoring():
         assert rows[1][0] is None
     finally:
         _restore_history_db(h, saved, path)
+
+
+def test_sr_zones_follow_the_h_sr2_prereg():
+    """H-SR2: zones from higher-timeframe 5-bar fractals, tested >= 2 times, merged within
+    0.5 x ATR14(HTF); the forming HTF bucket is never read. The condition is disabled from
+    its first commit: it moves no score, ceiling or threshold, only the shadow record."""
+    import numpy as np
+    import pandas as pd
+    import config
+    from signals.engine import generate_signals
+    from signals.indicators import detect_sr_zones
+    # 4H shape built from 1H bars: a level near 100 touched by two pivot lows, one lone high.
+    lows = [104, 103, 100.0, 103, 104, 105, 106, 107, 110, 107, 106, 105, 104, 103,
+            100.2, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112]
+    rows = []
+    for i, lo in enumerate(lows):
+        for k in range(4):
+            rows.append({"open": lo + 2, "high": lo + 4, "low": lo + (0 if k == 1 else 1),
+                         "close": lo + 2.5})
+    idx = pd.date_range("2026-01-01", periods=len(rows), freq="1h")
+    df = pd.DataFrame(rows, index=idx)
+    zones = detect_sr_zones(df, "4h", 4)
+    assert [n for _, n in zones] == [2] and abs(zones[0][0] - 100.1) < 1e-9, zones
+    assert detect_sr_zones(df.iloc[:-1], "4h", 4) == detect_sr_zones(df.iloc[:-4], "4h", 4), \
+        "a bucket missing a base bar (the forming one) is never read"
+    assert detect_sr_zones(df.reset_index(drop=True), "4h", 4) == [], "no time index, no zones"
+    assert "sr_zone" in config.DISABLED_CONDITIONS and config.CONDITION_MAX["sr_zone"] == (0.75, 0.75)
+    assert (config.SIGNAL_MAX_SCORE, config.SPOT_MAX_SCORE) == (24.25, 21.75), "disabled: no ceiling moves"
+    rng = np.random.default_rng(5)
+    f = _frame(80_000 + np.cumsum(rng.normal(0, 150, 600)))
+    sig = generate_signals(f, None, None, None, mode="futures", threshold_override=5.0)
+    assert sig["_contributions"]["sr_zone"] == (0.0, 0.0) and "sr_zone" in sig["_disabled_contributions"]
 
 
 def test_attach_variants_never_raises_into_the_cycle():
@@ -7714,6 +7747,7 @@ if __name__ == "__main__":
     run("basis own checkpoint, no stale reason", test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason)
     run("S/R pruned after H-SR FAIL: 24.25/21.75", test_support_resistance_is_pruned_from_both_modes_after_h_sr_failed)
     run("disabled conditions: shadow record only", test_disabled_conditions_keep_a_shadow_record_without_scoring)
+    run("H-SR2: S/R zones per prereg, disabled",   test_sr_zones_follow_the_h_sr2_prereg)
     run("gold/VIX survive weekend + rollover",    test_gold_and_vix_survive_a_weekend_and_the_daily_rollover)
     run("scanner reset: carried, books, windows",  test_scanner_reset_carries_old_positions_and_restarts_every_window)
     run("H-SR: S/R reads own levels, can fire",   test_sr_condition_reads_its_own_levels_and_can_fire)

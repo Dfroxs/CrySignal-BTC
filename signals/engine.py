@@ -12,7 +12,8 @@ from config import DISABLED_CONDITIONS, RISK_CONFIG, VETOES_DISABLED
 # per-mode minimums live in config.py and are enforced on the adaptive base.
 _ABS_MIN_THRESHOLD = 0.5
 from signals.indicators import (calculate_adx, classify_regime, detect_candlestick_pattern,
-                                detect_rsi_divergence, detect_support_resistance)
+                                detect_rsi_divergence, detect_sr_zones,
+                                detect_support_resistance)
 from signals.market_data import get_signal_confidence
 from signals.sentiment import check_upcoming_macro_events
 
@@ -495,6 +496,28 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
             signal['reasons'].append(f"✗ Rejected at resistance ${resistance:,.0f} (within {prox_pct*100:.2f}%)")
 
     _mark('support_resistance')
+
+    # 16b — S/R zones the way a trader draws them (H-SR2, 2026-11-20-sr-zone-prereg.md):
+    # higher-timeframe fractal pivots clustered into zones tested >= 2 times, scored only on
+    # a rejection bar. Disabled from its first commit: recorded, never scored, until tested.
+    try:
+        rule, per = ("1D", 6) if mode == 'spot' else ("4h", 4)
+        atr_b = float(current.get('ATR_14', 0) or 0)
+        zones = detect_sr_zones(df, rule, per) if atr_b > 0 else []
+        z_buy = [z for z, _ in zones if abs(current['low'] - z) <= 0.5 * atr_b
+                 and current['close'] > z and current['close'] > current['open']]
+        z_sell = [z for z, _ in zones if abs(current['high'] - z) <= 0.5 * atr_b
+                  and current['close'] < z and current['close'] < current['open']]
+        if z_buy and not z_sell:
+            buy_conditions += 0.75
+            signal['reasons'].append(f"✓ Rejected off S/R zone ${max(z_buy):,.0f} (tested 2+ times)")
+        elif z_sell and not z_buy:
+            sell_conditions += 0.75
+            signal['reasons'].append(f"✗ Rejected at S/R zone ${min(z_sell):,.0f} (tested 2+ times)")
+    except Exception as exc:  # noqa: BLE001 - an experiment must never cost the cycle
+        logger.warning("S/R zone failed (%s) — sr_zone scores nothing this cycle", exc)
+
+    _mark('sr_zone')
 
     # 17 — VWAP crossover (require recent cross — pure position scores nothing in a trending market)
     vwap = current.get('VWAP_24')
