@@ -489,12 +489,15 @@ def fetch_fear_and_greed():
 # ---------------------------------------------------------------------------
 # Gold & VIX — macro correlation
 # ---------------------------------------------------------------------------
+# range=5d, not 2d: Yahoo opens each daily bar with a null close (gold 05:00, VIX
+# 08:00 UTC) and serves no weekend bars, so a 2-day window often held one close
+# and both fetchers returned 0.
 
 def fetch_gold_price():
     """Fetch gold futures price via Yahoo Finance (GC=F)."""
     try:
         resp = HTTP_SESSION.get(
-            "https://query1.finance.yahoo.com/v8/finance/chart/GC%3DF?interval=1d&range=2d",
+            "https://query1.finance.yahoo.com/v8/finance/chart/GC%3DF?interval=1d&range=5d",
             headers={"User-Agent": "Mozilla/5.0"},
             timeout=10,
         )
@@ -513,7 +516,7 @@ def fetch_vix():
     """Fetch CBOE VIX via Yahoo Finance (^VIX)."""
     try:
         resp = HTTP_SESSION.get(
-            "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&range=2d",
+            "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&range=5d",
             headers={"User-Agent": "Mozilla/5.0"},
             timeout=10,
         )

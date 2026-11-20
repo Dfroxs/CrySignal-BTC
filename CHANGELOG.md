@@ -4,6 +4,31 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-20 — fix: gold and VIX blank on weekends and at the daily rollover
+
+**On `develop`, not deployed.** `gold_vix` is scored (ceiling 0.50 both modes), so this
+is a trading-path change: deploying it means a bot restart and a decision on which test
+windows it cuts.
+
+- **Symptom:** `cycle_log.gold` is NULL in 740 of 2,493 cycles since 2026-08-30, and
+  `vix` in 191. Since 10-20 that is 209 of 760 futures cycles (27%) for gold and 45 for
+  VIX.
+- **Pattern:** gold is blank at 05:01 UTC every day and for most of every Sunday and
+  Monday. VIX is blank at 08:01 UTC every weekday; weekends are never blank.
+- **Cause:** both fetchers asked Yahoo for `range=2d`. Yahoo opens each daily bar with a
+  null close (gold 05:00, VIX 08:00 UTC) and serves no weekend bar, so the window often
+  held a single close. `len(closes) < 2` then returned 0, and history stored NULL. So
+  `gold_vix` scored nothing in those cycles. In the backtest it was already NEUTRAL.
+- **Fix:** `range=5d` for both (`signals/market_data.py`), so the last two real closes
+  are always in the window. Same semantics: latest close against the one before.
+- **Test:** `test_gold_and_vix_survive_a_weekend_and_the_daily_rollover` fakes Yahoo on
+  Monday at the rollover. It fails on the old code (returns 0) and passes on the new.
+  Suite 346/346.
+- **History:** the missing values are not lost. Gold and VIX daily closes can be fetched
+  again from Yahoo for any past date.
+
+---
+
 ## 2026-11-20 — H-VG window restarts at the resting-orders restart
 
 The bot restarted at 2026-11-20 03:22:51 UTC (`f7310d5`, PRs #63 + #64, pid 413608).

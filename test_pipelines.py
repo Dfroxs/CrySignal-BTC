@@ -1480,6 +1480,38 @@ def test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason(
         "spot never scored basis or taker, so pruning them must change nothing on spot"
 
 
+def test_gold_and_vix_survive_a_weekend_and_the_daily_rollover():
+    """Yahoo opens the new daily bar with a null close (gold at 05:00, VIX at 08:00 UTC)
+    and serves no bar on a weekend. A 2-day range then held one close, and both fetchers
+    returned 0: gold was blank for most of every Sunday and Monday, VIX at 08:01 every
+    weekday, so gold_vix scored nothing in those cycles."""
+    import re
+    from datetime import date, timedelta
+    import signals.market_data as md
+    monday = date(2026, 11, 16)
+
+    class _Resp:
+        def __init__(self, closes): self._closes = closes
+        def json(self): return {"chart": {"result": [{"indicators": {"quote": [{"close": self._closes}]}}]}}
+
+    class _Session:
+        def get(self, url, **kw):
+            days = int(re.search(r"range=(\d+)d", url).group(1))
+            span = [monday - timedelta(days=i) for i in range(days - 1, -1, -1)]
+            bars = [d for d in span if d.weekday() < 5]
+            return _Resp([None if d == monday else 100.0 + d.day for d in bars])
+
+    saved = md.HTTP_SESSION
+    md.HTTP_SESSION = _Session()
+    try:
+        for fetch in (md.fetch_gold_price, md.fetch_vix):
+            got = fetch()
+            assert got["current"] == 113.0, (fetch.__name__, got)   # Friday the 13th's close
+            assert got["change_pct"] == round(1 / 112 * 100, 2), (fetch.__name__, got)
+    finally:
+        md.HTTP_SESSION = saved
+
+
 def test_condition_max_covers_every_scored_condition():
     """A condition the engine scores but CONDITION_MAX does not know about would
     silently break the ceiling and every threshold derived from it."""
@@ -7476,6 +7508,7 @@ if __name__ == "__main__":
     run("scanner book: answer-price entry, 1m first hour", test_scanner_book_enters_at_the_answer_price_and_walks_its_first_hour_from_there)
     run("dashboard: read-only, local, no blank",    test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel)
     run("basis own checkpoint, no stale reason", test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason)
+    run("gold/VIX survive weekend + rollover",    test_gold_and_vix_survive_a_weekend_and_the_daily_rollover)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
