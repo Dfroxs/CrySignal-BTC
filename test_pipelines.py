@@ -6885,6 +6885,31 @@ def test_sr_condition_reads_its_own_levels_and_can_fire():
                             threshold_override=5.0, disabled=())["_contributions"]["support_resistance"] == (0.0, 0.0)
 
 
+def test_dashboard_btc_open_rows_carry_partial_tp1_trailing_and_sizing():
+    """Dashboard readability: a BTC card must say TP1 was hit, what the closed half made, that
+    the stop trails, and the leverage. The open-position rows carry those facts."""
+    from datetime import UTC, datetime
+    from agents import dashboard as dsh
+    h, saved, path = _temp_history_db()
+    try:
+        c = h._conn()
+        c.execute("INSERT INTO cycle_log (timestamp,mode,type,price,threshold,funding_rate) "
+                  "VALUES ('2026-11-20 19:01:02','futures','HOLD',58418,4.76,0.004)")
+        c.execute("INSERT INTO paper_positions (type,entry_price,stop_loss,trailing_stop,take_profit,tp2,"
+                  "partial_closed,partial_pnl,opened_at,mode) VALUES ('SELL',62778.08,65476.05,60703.85,"
+                  "58731.12,54684.16,1,6.246,'2026-11-19T17:01:05+00:00','futures')")
+        c.execute("INSERT INTO paper_positions (type,entry_price,stop_loss,take_profit,tp2,partial_closed,"
+                  "opened_at,mode) VALUES ('SELL',62000,64000,60000,58000,0,'2026-11-20T18:01:05+00:00','futures')")
+        c.commit()
+        f = dsh.db_facts(path, datetime(2026, 11, 20, 19, 30, tzinfo=UTC))
+    finally:
+        _restore_history_db(h, saved, path)
+    a, b = f["open"]
+    assert a["partial_pnl"] == 6.246 and a["tp1"] == 58731.12 and a["trailing"] is True, a
+    assert a["sizing"]["leverage"] == 3, a["sizing"]
+    assert b["partial_pnl"] is None and b["trailing"] is False, b
+
+
 def test_scanner_reset_carries_old_positions_and_restarts_every_window():
     """Owner's reset with run 5: every arm's books start again at $1,000, and H-SC/H-SC2/H-SCD
     count only cycles from WINDOW_FROM. A position opened before it runs out on its own, holds
@@ -7753,6 +7778,7 @@ if __name__ == "__main__":
     run("H-SR: S/R reads own levels, can fire",   test_sr_condition_reads_its_own_levels_and_can_fire)
     run("dashboard test dates = scorers' dates",  test_dashboard_fixed_tests_match_their_scorers)
     run("alarm: macro source blank 3 cycles",     test_alarm_flags_a_macro_source_blank_in_three_futures_cycles)
+    run("dash: BTC rows carry TP1/partial/sizing", test_dashboard_btc_open_rows_carry_partial_tp1_trailing_and_sizing)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

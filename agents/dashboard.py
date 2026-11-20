@@ -230,7 +230,7 @@ def db_facts(db, now, run_start=None):
         f["prices"] = q(f"SELECT {_ts('timestamp')}, price FROM cycle_log WHERE mode='futures' "
                         f"AND {_ts('timestamp')} >= ? ORDER BY {_ts('timestamp')}", d7)
         cols = ("id", "mode", "type", "entry_price", "stop_loss", "trailing_stop", "take_profit",
-                "tp2", "opened_at", "partial_closed", "signal_id")
+                "tp2", "opened_at", "partial_closed", "signal_id", "partial_pnl")
         f["open"] = [dict(zip(cols, r)) for r in q(
             f"SELECT {', '.join(cols)} FROM paper_positions WHERE closed_at IS NULL ORDER BY id")]
         for p in f["open"]:
@@ -244,6 +244,10 @@ def db_facts(db, now, run_start=None):
             p["to_stop_pct"] = ((stop - px) / px * 100 * sgn if px and stop else None)
             p["hours"] = ((now - _dt(p["opened_at"])).total_seconds() / 3600
                           if _dt(p["opened_at"]) else None)
+            # What a card says: TP1, whether the stop trails, and the sizing behind leverage.
+            p["tp1"] = p["take_profit"]
+            p["trailing"] = bool(p["trailing_stop"]) and p["trailing_stop"] != p["stop_loss"]
+            p["sizing"] = _btc_sizing(p)
         cols = ("id", "mode", "type", "entry_price", "exit_price", "opened_at", "closed_at",
                 "outcome", "pnl_pct", "signal_id")
         closed = [dict(zip(cols, r)) for r in q(
@@ -1519,16 +1523,23 @@ def _market(f):
         f"<div><dt>{k}</dt><dd>{v}</dd></div>" for k, v in items) + "</dl></section>")
 
 
-def _btc_size(p):
-    """Leverage and liquidation the sizing module gives this BTC futures position."""
+def _btc_sizing(p):
+    """{leverage, margin_pct, liquidation_price} the sizing module gives this BTC futures
+    position, or None (spot, missing levels, or a sizing failure)."""
     if p.get("mode") != "futures" or not (p.get("entry_price") and p.get("stop_loss") and p.get("take_profit")):
         return None
     try:
         from signals.sizing import calculate_futures_position
         fut = calculate_futures_position({"type": p["type"], "entry_price": p["entry_price"],
                                           "stop_loss": p["stop_loss"], "take_profit": p["take_profit"]})
-    except Exception:  # noqa: BLE001 - a detail line never costs the table
+    except Exception:  # noqa: BLE001 - a detail line never costs the card
         return None
+    return ({k: fut[k] for k in ("leverage", "margin_pct", "liquidation_price")} if fut else None)
+
+
+def _btc_size(p):
+    """Leverage and liquidation the sizing module gives this BTC futures position."""
+    fut = p.get("sizing") if "sizing" in p else _btc_sizing(p)
     if not fut:
         return None
     liq = fut["liquidation_price"]
