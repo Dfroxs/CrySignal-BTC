@@ -20,6 +20,21 @@ Bot restarted by killing the MainPID; systemd respawned it, pid 383220, active 1
   H-SC2 and H-DR are unaffected (separate processes and data).
 - **Part B** of the run-4 plan (veto gate, L/S, `rel_ic_dir`, basis) waits for its own
   results.
+- **2026-11-20 03:22:51 UTC: bot restarted at `f7310d5`** (PRs #63 + #64), pid 413608.
+  - **Open position:** #20 (futures SELL at $62,778, trail $63,966.66). It has no
+    `last_checked_at`, so its 1m walk starts at the first check after the restart,
+    never backwards.
+  - **Changes, both design decisions:**
+    - stops and targets rest like exchange orders (`trading/paper._apply_resting_orders`),
+      walking the closed 1m bars since the last check;
+    - the scanner book enters at the answer's perp price, from the next scanner run.
+  - **Also deployed:** the H-SCD prereg and instrument (scoring-day H-SCD-1/-2, dry run
+    "not yet"), the Mac pull `RunAtLoad`, and `spotsignal-dash` and `spotsignal-qa`
+    restarted.
+  - **Window change:** H-VG runs 2026-11-20 03:22:51 to 2027-02-18 03:22:51 (prereg
+    amendment, exits changed).
+  - **Unchanged:** H-VR/H-BS (signals unchanged), H-FLP-C (scored by replay), H-SC, H-SC2,
+    H-DR and the manifest.
 - **2026-11-19 16:34:53 UTC: bot restarted at `8ca245a`** (PR #61), pid 406603. No position
   was open. The re-entry gate now ignores anchors opened before the manifest's `started_at`.
   Run 3's SHORT WIN at $68,900 had blocked 26 futures SHORTs. Spot is covered too; that has
