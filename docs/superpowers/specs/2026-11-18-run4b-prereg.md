@@ -110,3 +110,11 @@ Condition 16 can now fire (PR #69), which changes futures signals. The window wa
 
 **New window:** cycles from 2026-11-20 17:05:03 UTC (`ac5ab68`) whose 24h return completes
 by 2027-01-19 17:05:03 UTC. Everything else is unchanged.
+
+## Amendment 2026-11-20 (3): the window restarts at the S/R-off restart
+
+`support_resistance` left the active set (thresholds futures 4.76, spot 4.16), which changes
+futures signals. The window was 52 minutes old and nothing in it was computed.
+
+**New window:** cycles from 2026-11-20 17:57:15 UTC (`f10a685`) whose 24h return completes
+by 2027-01-19 17:57:15 UTC. Everything else is unchanged.

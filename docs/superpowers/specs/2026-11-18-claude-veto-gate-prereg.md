@@ -167,3 +167,15 @@ about 1h45m old and nothing in it was computed.
 
 **New window:** 2026-11-20 17:05:03 UTC (the bot's restart at `ac5ab68`) to 2027-02-18
 17:05:03 UTC. Everything else is unchanged.
+
+## Amendment 2026-11-20 (4): the window restarts at the shadow-context + S/R-off restart
+
+Two changes ship together (PRs #74, #75):
+- the shadow context sends failed Yahoo series as null and adds gold, which changes this
+  test's input;
+- `support_resistance` leaves the active set (H-SR FAILED), which changes signals.
+
+Per § Window and restarts the window restarts. It was 52 minutes old with no opinion in it.
+
+**New window:** 2026-11-20 17:57:15 UTC (the bot's restart at `f10a685`) to 2027-02-18
+17:57:15 UTC. Everything else is unchanged.

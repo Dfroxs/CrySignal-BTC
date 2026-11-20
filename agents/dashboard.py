@@ -1426,9 +1426,9 @@ def _board(f):
 FIXED_TESTS = (("Data long/short memprediksi harga", "8 altcoin + BTC",
                 datetime(2026, 11, 8, tzinfo=UTC), datetime(2027, 2, 6, tzinfo=UTC)),
                ("Veto Claude untuk bot BTC", "per kejadian sinyal",
-                datetime(2026, 11, 20, 17, 5, 3, tzinfo=UTC), datetime(2027, 2, 18, 17, 5, 3, tzinfo=UTC)),
+                datetime(2026, 11, 20, 17, 57, 15, tzinfo=UTC), datetime(2027, 2, 18, 17, 57, 15, tzinfo=UTC)),
                ("Perbaikan engine: aturan varian dan arah basis", "siklus bot run 5",
-                datetime(2026, 11, 20, 17, 5, 3, tzinfo=UTC), datetime(2027, 1, 19, 17, 5, 3, tzinfo=UTC)))
+                datetime(2026, 11, 20, 17, 57, 15, tzinfo=UTC), datetime(2027, 1, 19, 17, 57, 15, tzinfo=UTC)))
 
 
 def _v2_days(path):
