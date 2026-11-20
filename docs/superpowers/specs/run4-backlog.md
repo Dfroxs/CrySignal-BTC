@@ -55,6 +55,23 @@ claim). Started 2026-10-09, updated 2026-10-10.
   licensed. Revisit only with a new prereg on run-3/4 engine trades, or if H-B shows the
   entries behave like random ones.
 
+- **Stops fill past their level live, but exactly at it in every replay** (found 2026-11-19,
+  no change).
+  - **Live:** `trading/paper.check_and_close_positions` checks only at the :01 cycle and
+    the :31 mid-cycle, and closes at the price then.
+  - **Replay:** `backtest._simulate_forward` fills a trailing stop at `trail` exactly
+    (`low <= trail`), plus the 0.05% slippage of the cost model.
+  - **Measured on runs 1–3:** past the stop by 0.05–0.65%, mean ~0.28% (positions #3, #4,
+    #5, #6, #8, #9, #10, #13). #10's trail sat above entry and still closed at −0.54%; #13
+    gave back to +0.18%.
+  - **Consequence:** every exit test (09-21, H-TPF, H-TRL) priced stops better than live
+    gets them.
+  - **Two remedies, each its own prereg or design decision:**
+    1. paper-book a resting stop: fill at the stop when a bar's high/low crosses it,
+       which is what a real stop order would do;
+    2. measure the live/replay gap on more trades first.
+  - #14's −2.56% at a 0.87% stop was the stop-before-flip bug, fixed in run 4.
+
 ## Not to re-propose (already failed)
 
 - Exit tweaks on spot (hold cap, looser post-TP1 trail, no TP1 partial): 09-21, all FAILED.

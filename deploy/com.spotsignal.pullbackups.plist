@@ -2,7 +2,9 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- Off-site backup: this Mac pulls the VPS's backups twice a day (scripts/pull_backups.sh).
      Installed by scripts/install_pull_backups.sh, which fills in __REPO__ and __LOG__.
-     A run missed while the Mac sleeps is done at wake (launchd StartCalendarInterval). -->
+     A run missed while the Mac sleeps is done at wake (launchd StartCalendarInterval), but one
+     missed while it is shut down is not: on 2026-11-19 it was off 10:58-22:00 and both runs were
+     lost. RunAtLoad makes every boot and login pull as well. -->
 <plist version="1.0">
 <dict>
     <key>Label</key><string>com.spotsignal.pullbackups</string>
@@ -15,6 +17,6 @@
     </array>
     <key>StandardOutPath</key><string>__LOG__</string>
     <key>StandardErrorPath</key><string>__LOG__</string>
-    <key>RunAtLoad</key><false/>
+    <key>RunAtLoad</key><true/>
 </dict>
 </plist>
