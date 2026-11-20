@@ -158,3 +158,12 @@ $1,000). The window was about 12 hours old and nothing in it was computed.
 
 **New window:** 2026-11-20 15:19:44 UTC (the bot's restart at `d954cc1`) to 2027-02-18
 15:19:44 UTC. Everything else is unchanged.
+
+## Amendment 2026-11-20 (3): the window restarts at the S/R-fix restart
+
+Condition 16 (`support_resistance`) can now fire (PR #69, H-SR prereg, a design decision for
+data yield). That changes signals, so per § Window and restarts the window restarts. It was
+about 1h45m old and nothing in it was computed.
+
+**New window:** 2026-11-20 17:05:03 UTC (the bot's restart at `ac5ab68`) to 2027-02-18
+17:05:03 UTC. Everything else is unchanged.

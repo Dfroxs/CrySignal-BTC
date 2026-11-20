@@ -102,3 +102,11 @@ changes futures signals. The owner started run 5 at the same restart. The window
 
 **New window:** cycles from 2026-11-20 15:19:44 UTC (`d954cc1`) whose 24h return completes
 by 2027-01-19 15:19:44 UTC. Everything else is unchanged.
+
+## Amendment 2026-11-20 (2): the window restarts at the S/R-fix restart
+
+Condition 16 can now fire (PR #69), which changes futures signals. The window was about
+1h45m old and nothing in it was computed.
+
+**New window:** cycles from 2026-11-20 17:05:03 UTC (`ac5ab68`) whose 24h return completes
+by 2027-01-19 17:05:03 UTC. Everything else is unchanged.

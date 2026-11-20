@@ -2,6 +2,21 @@
 
 **Rewritten 2026-10-09, when run 3 started. Read this first when you come back.**
 
+**Run 5's start moved to 2026-11-20 17:05:36 UTC at `ac5ab68`** (PR #69, S/R condition
+repaired, H-SR pre-registered).
+- Bot restarted at 17:05:03, pid 422848. `spotsignal-dash` and `spotsignal-qa` restarted.
+- **The 15:19 manifest** is archived as `data/paper_run_manifest.run5-1519.json`.
+  - Nothing was lost: in between there were no positions, 3 SELLs blocked `already_open`
+    and 1 shadow opinion.
+  - The archive's name keeps it out of the dashboard's run history, as `run3-0541` did.
+- **What changed:** condition 16 now finds its own levels (`tolerance=0.0`). It had fired
+  in 0 of 1,297 cycles.
+- **Windows restart at 17:05:03:** H-VG to 2027-02-18 17:05:03, and H-VR/H-BS to
+  2027-01-19 17:05:03.
+- **Scanner window not cut:** it begins 2026-11-21 00:00, after this.
+- **Unchanged:** the dashboard account ($1,000) and #20 (carried, run 4's).
+- **The 15:19 block below** still describes run 5's reset; its window lines are superseded.
+
 **Run 5 started 2026-11-20 15:19:48 UTC at `d954cc1`** (PR #66, gold/VIX `range=5d`).
 Owner's go: "reset balance dan 90 harinya".
 - Bot restarted by `pkill -f '[r]un_bot.py'`; systemd respawned it, pid 421157, active
