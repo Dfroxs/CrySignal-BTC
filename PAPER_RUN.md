@@ -20,8 +20,17 @@ Owner's go: "reset balance dan 90 harinya".
   - H-VG to 2027-02-18 15:19:44;
   - H-VR/H-BS to 2027-01-19 15:19:44;
   - H-FLP-C and scoring day follow the manifest.
-- **Unchanged:** H-SC, H-SC2, H-DR and H-SCD. The scanner calls the engine with
-  `market_structure=None`, so gold/VIX never reach it.
+- **Scanner reset too (owner, later the same day: "reset saldo + jendela 90 hari"):**
+  - Everything counts from the bar close 2026-11-21 00:00 UTC (`agents.scanner.WINDOW_FROM`):
+    H-SC, H-SC2 and H-SCD, plus all six books (pure, hybrid and random, futures and spot),
+    which start again at $1,000.
+  - Scanner positions opened before it are **carried**: they run out within 24h and are in
+    no balance. BTC #20 is carried the same way on the dashboard.
+  - The gold/VIX fix never reaches the scanner (`market_structure=None`); the reset is the
+    owner's decision.
+  - Live only once the PR is pulled (scanner is cron, so no restart; dashboard restart). If
+    pulled after 00:05, the first positions are sized on the old balance.
+- **Unchanged:** H-DR. It scores the Binance derivs archive, not the bot or the scanner.
 
 **Run 4 started 2026-11-17 18:44:50 UTC at `3377027`** (PR #46, run-4 part A). Owner's go.
 Bot restarted by killing the MainPID; systemd respawned it, pid 383220, active 18:44:35.

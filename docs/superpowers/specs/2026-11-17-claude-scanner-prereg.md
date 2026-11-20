@@ -211,3 +211,19 @@ Owner's go.
   statistic, criteria and dates (they score the bar close by design), and H-SCD (its
   Part E measures the same five minutes from klines).
 
+## Addendum 2026-11-20: window and books restart at 2026-11-21 00:00 UTC (owner)
+
+The owner reset everything with run 5 ("reset saldo + jendela 90 hari"), including the
+scanner, though the gold/VIX fix behind run 5 never reaches it (`market_structure=None`).
+It is the owner's decision, not a test result. Nothing on the window had been computed.
+
+- **Window:** H-SC (90 days and 300 picks) and H-SC2 (60 paired days) count only v2 cycles
+  with `bar_close >= 2026-11-21T00:00:00+00:00` (`agents.scanner.WINDOW_FROM`, read by
+  `scanner_eval.load` and the scoring-day counts). It starts on a UTC-day boundary because a
+  day is the unit. The ~4 days of v2 cycles before it stay in the databases and are never
+  scored. H-SC2 still pairs from the hybrid arm's first cycle in the window.
+- **Books:** every arm's futures and spot book starts again at $1,000. `book_account`
+  counts only positions opened from `WINDOW_FROM`. A position opened before it is
+  **carried**: it runs out on its own levels (24h at most) and still holds its coin's
+  slot, but no balance counts it.
+- **Unchanged:** statistic, criteria, the random arm's dealing, and the prompt.

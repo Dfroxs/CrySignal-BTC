@@ -29,7 +29,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from agents.scanner import UNIVERSE  # noqa: E402
+from agents.scanner import UNIVERSE, WINDOW_FROM  # noqa: E402
 from scripts.scanner_eval import COST_PP, MAX_ERROR_SHARE, leakage_ok, load  # noqa: E402
 
 HORIZON_H = 24
@@ -487,7 +487,7 @@ def _book(db):
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:
         b = pd.read_sql("SELECT book, coin, cycle_id, opened_bar, pnl_pct FROM scan_positions "
-                        "WHERE closed_bar IS NOT NULL", con)
+                        "WHERE closed_bar IS NOT NULL AND opened_bar >= ?", con, params=[WINDOW_FROM])
     finally:
         con.close()
     b["opened_bar"] = pd.to_datetime(b.opened_bar, utc=True).dt.tz_localize(None)
