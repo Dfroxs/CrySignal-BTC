@@ -4,6 +4,32 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-20 — audit of today's changes: dashboard test dates, alarm for blank macro data
+
+Owner: "ada sisi lain yang berhubungan yang terlewat tidak".
+- **Dashboard test board showed stale windows.** `dashboard.FIXED_TESTS` copies the test
+  dates by hand, because the scorers load pandas and the dashboard does not.
+  - It still showed H-VG from 11-20 03:22 and H-VR/H-BS from 11-19 01:13, after three
+    restarts had moved both. Now 2026-11-20 17:05:03.
+  - New guard: `test_dashboard_fixed_tests_match_their_scorers` fails when a scorer's window
+    moves and the dashboard is not updated. It covers H-DR, H-VG and H-VR/H-BS.
+- **No alarm watched any data source except funding**, which is how gold and VIX stayed
+  blank for weeks.
+  - New hourly check in `agents/alarm.py` covers gold, VIX, DXY, S&P 500 and L/S. A source
+    that is NULL or at its fallback value in each of the newest 3 futures cycles raises
+    `data:<name>`.
+  - A column missing from an old database is skipped.
+  - On a copy of the live DB it raises nothing.
+  - Test: `test_alarm_flags_a_macro_source_blank_in_three_futures_cycles`.
+- **Found, not changed:**
+  - The circuit breaker, the startup summary and the Telegram performance lines still count
+    every run since run 1, not run 5. Drawdown today: spot 2.88%, futures 0%, limit 15%.
+    Scoping the breaker to the run is a trading-path change, left for the next restart.
+  - H-SR-2's live report has no script yet. Its data is kept in `cycle_log.contributions`.
+- **Suite:** 350/350.
+
+---
+
 ## 2026-11-20 — S/R fix deployed: run 5 restarts at 17:05; H-VG and H-VR/H-BS windows restart
 
 - **Deploy:** pulled `ac5ab68` (PR #69). The bot restarted at 17:05:03 UTC, pid 422848.
