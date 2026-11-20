@@ -1454,8 +1454,12 @@ def _v2_days(path):
 
 def test_progress(scanner_db, now):
     """How far each running test is from its scoring point: days and picks collected."""
+    from agents.scanner import WINDOW_FROM
     pure = _v2_days(scanner_db)
     hyb = _v2_days(Path(scanner_db).with_name("scanner_hybrid.db"))
+    for arm in (pure, hyb):                 # before the window's first cycle, count from its start
+        if arm is not None and arm["first"] is None:
+            arm["first"] = _dt(WINDOW_FROM)
     out = []
     if pure is not None:
         out.append({"name": "Claude murni vs rata-rata 9 koin", "detail": "pilihan Claude lebih baik dari koin acak?",
@@ -1565,9 +1569,12 @@ def _positions(f):
     for name, rows in groups:
         if not rows:
             continue
-        tot = sum(r["usd"] or 0 for r in rows if not r.get("carried"))
+        mine = [r for r in rows if not r.get("carried")]
+        tot = sum(r["usd"] or 0 for r in mine)
+        n_car = len(rows) - len(mine)
+        count = (f'{len(mine)} posisi' + (f' + {n_car} bawaan' if n_car else "")) if mine else f'{n_car} posisi bawaan'
         body.append(f'<tr class="grp"><th colspan="6">{e(name)}</th><th class="n" colspan="3">'
-                    f'{len(rows)} posisi{", " + _pnl(tot, 2, " $") if any(r["usd"] is not None for r in rows) else ""}'
+                    f'{count}{", " + _pnl(tot, 2, " $") if any(r["usd"] is not None for r in mine) else ""}'
                     f'</th></tr>')
         for r in rows:
             left = r["left"]

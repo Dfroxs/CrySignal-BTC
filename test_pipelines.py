@@ -6831,6 +6831,14 @@ def test_scanner_reset_carries_old_positions_and_restarts_every_window():
     cyc, pk = e.load(str(db))
     assert list(cyc.id) == [2] and set(pk.cycle_id) == {2}, "cycles before the reset are never scored"
     assert dsh._v2_days(db)["picks"] == 1, "scoring day counts from the reset"
+    only_old = root / "data" / "old" / "scanner.db"; only_old.parent.mkdir()
+    c = connect(only_old)
+    c.execute("INSERT INTO scan_cycles (timestamp, bar_close, context) VALUES (?,?,?)",
+              (old, old, json.dumps({"bar_closed_utc": old, "prompt": "v2"})))
+    c.commit(); c.close()
+    tp = {t["name"]: t for t in dsh.test_progress(only_old, datetime(2026, 11, 20, 18, tzinfo=UTC))}
+    assert str(tp["Claude murni vs rata-rata 9 koin"]["eta"].date()) == "2027-02-19", \
+        "before the window's first cycle the board counts from its start, not 'waiting for a prompt'"
     rows = [{"book": "futures", "coin": c, "side": "LONG", "opened_bar": o, "closed_bar": cl,
              "pnl_pct": 1.0, "pnl_usd": p, "size_usd": 100, "outcome": "TIME" if cl else None,
              "upnl": None if cl else 7.0} for c, o, cl, p in books]
