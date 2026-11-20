@@ -4,6 +4,28 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-20 — H-SR-1 FAIL; dashboard: scanner ETA before its window, carried group headers
+
+- **H-SR-1 FAIL** (`docs/superpowers/specs/2026-11-20-sr-fix-results.md`). The repaired
+  S/R condition is positive in 5 of 10 cells at horizon 6 (it needed ≥ 8), and in 4–6 of 10
+  at 3, 12 and 24 (it needed ≥ 7). Per the prereg:
+  - it stays live for data until the next restart made for another reason;
+  - at that restart it goes into `DISABLED_CONDITIONS`;
+  - no re-scoring.
+- **Dashboard, scanner tests:** the board read "menunggu prompt baru" before the reset
+  window's first cycle. It now counts from `WINDOW_FROM` (H-SC 19 Feb 2027, H-SC2 20 Jan
+  2027, at the earliest).
+- **Dashboard, open positions:** a group made only of carried positions read "4 posisi,
+  +0,00 $". It now reads "4 posisi bawaan", or "n posisi + m bawaan", and its P&L counts the
+  new positions only.
+- **Checked against the database:**
+  - the live page's prices, scores, thresholds, #20's trailing stop, F&G, VIX, run history
+    and service health;
+  - every figure matched, including spot's "BUY melewati garis" (3.60 against 3.55; the
+    controller had lowered the bar).
+
+---
+
 ## 2026-11-20 — audit of today's changes: dashboard test dates, alarm for blank macro data
 
 Owner: "ada sisi lain yang berhubungan yang terlewat tidak".
