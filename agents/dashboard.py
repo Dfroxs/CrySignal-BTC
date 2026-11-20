@@ -1591,7 +1591,8 @@ def _btc_cards(f):
                     "tp1_hit": hit, "tp2": p.get("tp2"), "target": None,
                     "leverage": (f'{fut["leverage"]}x · margin {_n(fut["margin_pct"], 0)}% modal'
                                  + (f' · likuidasi {_money(fut["liquidation_price"])}'
-                                    if 0 < fut["liquidation_price"] < float("inf") else "")) if fut
+                                    if 0 < fut["liquidation_price"] < float("inf") else "")
+                                 + " (perkiraan; hasil dicatat tanpa leverage)") if fut
                     else ("spot, tanpa leverage" if p["mode"] == "spot" else None),
                     "hours_left": cap - p["hours"] if p.get("hours") is not None else None,
                     "carried": bool(p.get("carried"))})
@@ -1740,10 +1741,13 @@ def _activity(f, limit=12):
 TABS = (("ringkasan", "Ringkasan"), ("btc", "Bot BTC · aturan indikator"),
         ("koin", "Scanner Claude · AI pilih koin"), ("sistem", "Sistem"))
 
+from config import RISK_CONFIG as _RISK   # the caps the cards count down from, never copied
+
 HOW_BTC = ("Robot berbasis aturan, bukan AI: menghitung sekitar 20 indikator (EMA200, RSI, MACD, volume, dan lainnya) di candle BTC.",
            "Posisi dibuka kalau skor melewati ambang dan lolos pemeriksaan keamanan.",
            "Hanya BTC. Futures 1 jam (LONG/SHORT, leverage dihitung per posisi) dan spot 4 jam (LONG saja).",
-           "Keluar posisi: SL, TP1 (tutup separuh), TP2, trailing stop, maksimal 72 jam (futures) atau 48 jam (spot).",
+           "Keluar posisi: SL, TP1 (tutup separuh), TP2, trailing stop, maksimal "
+           f'{_RISK["max_position_hours"]} jam (futures) atau {_RISK["max_position_hours_spot"]} jam (spot).',
            "Claude hanya memberi opini (setuju/tidak) dan tidak memutuskan trade.")
 HOW_SCANNER = ("Setiap jam Claude (AI) membaca angka 9 koin lalu memilih LONG, SHORT, atau tidak sama sekali.",
                "Ada tiga akun: Claude murni, Claude + skor engine, dan Acak. Acak adalah pembanding: koinnya diundi, jumlah dan arahnya sama dengan pilihan Claude.",
