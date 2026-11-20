@@ -2,6 +2,27 @@
 
 **Rewritten 2026-10-09, when run 3 started. Read this first when you come back.**
 
+**Run 5's start moved again, to 2026-11-20 17:57:21 UTC at `f10a685`** (PRs #73, #74, #75).
+This is the run that counts.
+- **Bot:** restarted at 17:57:15, pid 424373. `spotsignal-qa` and `spotsignal-dash`
+  restarted.
+- **The 17:05 manifest** is archived as `paper_run_manifest.run5-1705.json`. In between there
+  were 0 positions and 0 entry opinions.
+- **What changed:**
+  - `support_resistance` is OFF (H-SR FAILED): thresholds futures 4.76, spot 4.16; ceilings
+    24.25 and 21.75.
+  - Disabled conditions are recorded, not scored, in `cycle_log.disabled_contributions`.
+  - The shadow context sends failed Yahoo series as null and adds gold.
+  - The Q&A knowledge is updated.
+- **Windows restart at 17:57:15:**
+  - H-VG to 2027-02-18 17:57:15;
+  - H-VR/H-BS to 2027-01-19 17:57:15;
+  - the dashboard board matches (guard test).
+- **Scanner window not cut:** it begins 2026-11-21 00:00.
+- **Unchanged:** the dashboard account ($1,000), and #20 (carried; run 4's).
+- **Blocks below:** the 17:05 and 15:19 blocks describe how run 5 got here; their thresholds
+  and window lines are superseded.
+
 **Run 5's start moved to 2026-11-20 17:05:36 UTC at `ac5ab68`** (PR #69, S/R condition
 repaired, H-SR pre-registered).
 - Bot restarted at 17:05:03, pid 422848. `spotsignal-dash` and `spotsignal-qa` restarted.

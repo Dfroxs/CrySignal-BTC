@@ -4358,7 +4358,7 @@ def test_veto_gate_episode_effect_follows_the_gate_and_guards_power():
     import inspect
     import pandas as pd
     import scripts.veto_gate_eval as vg
-    assert str(vg.FROM) == "2026-11-20 17:05:03" and str(vg.SCORE_BY) == "2027-02-18 17:05:03", \
+    assert str(vg.FROM) == "2026-11-20 17:57:15" and str(vg.SCORE_BY) == "2027-02-18 17:57:15", \
         "the window starts at the resting-orders restart (4th amendment)"
     assert "refused" in inspect.getsource(vg.main)
     t = lambda h: pd.Timestamp("2026-11-20") + pd.Timedelta(hours=h)
@@ -4394,7 +4394,7 @@ def test_run4b_window_and_verdicts_follow_the_prereg():
     import numpy as np
     import pandas as pd
     import scripts.run4b_eval as r
-    assert str(r.FROM) == "2026-11-20 17:05:03" and str(r.END) == "2027-01-19 17:05:03"
+    assert str(r.FROM) == "2026-11-20 17:57:15" and str(r.END) == "2027-01-19 17:57:15"
     assert "refused" in inspect.getsource(r.main)
     idx = pd.date_range("2026-11-19 00:00", "2027-01-20 00:00", freq="h")
     w = r.window(pd.DataFrame({"x": np.arange(len(idx))}, index=idx))

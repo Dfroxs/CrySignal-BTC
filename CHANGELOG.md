@@ -4,6 +4,25 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-20 — deployed #73–#75: run 5 restarts at 17:57; H-VG and H-VR/H-BS windows restart
+
+- **Deploy:** pulled `f10a685`, one restart for all three PRs. Bot restarted 17:57:15 UTC,
+  pid 424373; `spotsignal-qa` and `spotsignal-dash` restarted.
+- **Live now:**
+  - `support_resistance` OFF: thresholds futures 4.76, spot 4.16.
+  - Disabled conditions recorded in `cycle_log.disabled_contributions`.
+  - Shadow context with gold, and failed Yahoo series sent as null.
+  - Updated Q&A knowledge.
+- **Manifest** regenerated: `started_at = 2026-11-20T17:57:21Z`, freezing the new thresholds.
+  The 17:05 manifest is archived as `paper_run_manifest.run5-1705.json`; in between there
+  were 0 positions and 0 entry opinions.
+- **Windows** (prereg amendments; 52 minutes old, nothing computed):
+  - H-VG: `veto_gate_eval.FROM` → 17:57:15.
+  - H-VR/H-BS: `run4b_eval.FROM` → 17:57:15, END 2027-01-19 17:57:15.
+  - Dashboard `FIXED_TESTS` updated to match, as its guard test requires.
+
+---
+
 ## 2026-11-20 — disabled conditions keep a shadow record (`cycle_log.disabled_contributions`)
 
 The owner wanted S/R's live data kept after it was pruned.
