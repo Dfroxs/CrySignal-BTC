@@ -4,6 +4,22 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-20 — H-SR2-1 FAIL: S/R as a scoring bonus is closed
+
+Results: `docs/superpowers/specs/2026-11-20-sr-zone-results.md`.
+- **The verdict:** `sr_zone` (HTF fractal zones, ≥ 2 touches, rejection bar) is positive in
+  **4 of 10** cells at horizon 6, where ≥ 8 were needed, and in 2–4 of 10 at 3, 12 and 24.
+  - No cell is thin: it fires on about 25% of bars.
+  - The sign flips between markets and years (BTC 2024 −3.7, XRP 2025 +2.7), so it is not an
+    inverted signal either.
+- **Per the prereg:**
+  - both S/R scoring forms are closed (H-SR, H-SR2);
+  - `sr_zone` stays disabled and will be recorded live from the next restart;
+  - S/R keeps its TP-cap and gate roles;
+  - a new role needs its own prereg.
+
+---
+
 ## 2026-11-20 — H-SR2: S/R zones as a trader draws them (pre-registered, disabled, recorded)
 
 This answers the owner's point that S/R matters in technical analysis. H-SR tested one crude

@@ -133,7 +133,9 @@ Jika FAKTA dan teks ini berbeda, FAKTA yang benar.
   pasar dan tahun. Sesuai prereg ia dimatikan (sore 2026-11-20), sehingga skor maksimum
   futures 24.25 dan spot 21.75, dan ambang ikut turun. Ia tetap DICATAT tiap siklus sebagai
   sinyal bayangan (kolom `disabled_contributions`), tanpa ikut menilai skor. Ia hanya boleh
-  ikut menilai lagi lewat hipotesis baru dengan prereg sendiri, bukan uji ulang. S/R tetap
+  ikut menilai lagi lewat hipotesis baru dengan prereg sendiri, bukan uji ulang. Versi S/R
+  ala trader (zona dari 4H/1D, disentuh minimal 2 kali, candle penolakan; `sr_zone`, H-SR2)
+  juga diuji 2026-11-20 dan GAGAL (4 dari 10 sel), jadi S/R sebagai poin skor ditutup. S/R tetap
   dipakai bot di tempat lain: batas TP di resistance/support, gerbang `sr_first` dan gerbang
   pyramid.
 - Tanggal penilaian tiap test (H-VG, H-VR/H-BS, H-DR, H-SC, H-SC2) bisa bergeser bila bot
