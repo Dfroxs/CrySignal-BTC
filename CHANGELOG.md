@@ -4,6 +4,48 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-19 — fix: resting stops and targets for the bot; scanner book enters at the answer's price
+
+Two design decisions (owner: "siapkan sekarang dan perbaiki, sekalian yg scanner"), for a
+paper book that fills like a real one. Neither is a test result.
+
+1. **Bot: stops and targets rest like exchange orders** (`trading/paper.py`,
+   `_apply_resting_orders`).
+   - **Before:** the bot looked at the price only at :01 and :31 and closed at that price.
+     Runs 1–3's trailing-stop exits filled 0.05–0.65% past the stop (mean ~0.28%), and a
+     target touched between checks was simply missed. Every replay
+     (`backtest._simulate_forward`) fills both at their level.
+   - **Now:** before anything else in a check, the closed BTC/USDT 1m bars since the last
+     check are walked with the levels as they stood at that check.
+   - **Fill rules, the backtest's own order:**
+     - the first level touched fills at the level;
+     - a bar that opens past the stop fills at its open (a gap);
+     - when one bar touches both, the stop goes first;
+     - after TP1 the moved stop can still fill in the same bar.
+   - **The trail** still moves only at a check.
+   - **Coverage:** all modes are walked in every call, so one mode's macro close cannot
+     pre-empt a stop the other mode already hit.
+   - **New column `paper_positions.last_checked_at`,** stamped at open. Positions opened
+     before it (#20) start their walk at the first check after deploy, never backwards.
+   - **Fallbacks:** a failed fetch falls back to the price check. More than ~7 days of
+     outage also falls back.
+2. **Scanner book: entry at the answer's price** (`agents/scanner.py`, `fill_prices`,
+   `_first_hour`).
+   - **Before:** the entry was the bar close, about 5 minutes stale.
+   - **Now:** the perp price is fetched once the picks are in, and the first hour is
+     judged on the 1m bars after the fill.
+   - **Fallbacks:** a failed fetch falls back to the old rule; old positions keep it.
+   - **Windows:** H-SC, H-SC2 and H-SCD are unchanged (prereg addendum 3).
+   - Verified on the VPS: the ticker and 1m kline endpoints return the expected shape.
+
+**Deploy:** item 1 is a trading-path change and needs a bot restart, which ends H-VG's
+window (exits). Record the amendment at deploy. H-VR/H-BS (signals) and H-FLP-C (scored by
+replay) are unaffected. Item 2 needs no restart.
+
+Tests 345/345 (new: 9-case resting-order test, scanner fill test).
+
+---
+
 ## 2026-11-19 — H-SCD instrument built and wired; finding: live stops fill past their level
 
 1. **`scripts/scanner_diag.py`** (H-SCD).

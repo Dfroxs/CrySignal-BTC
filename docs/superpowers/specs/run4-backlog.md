@@ -71,6 +71,9 @@ claim). Started 2026-10-09, updated 2026-10-10.
        which is what a real stop order would do;
     2. measure the live/replay gap on more trades first.
   - #14's −2.56% at a 0.87% stop was the stop-before-flip bug, fixed in run 4.
+  - **Built 2026-11-19 (owner: fix now), remedy 1, as a design decision:** resting orders
+    in `trading/paper.py` (`_apply_resting_orders`). Live now fills like the replay. It
+    deploys with a bot restart, which ends H-VG's window.
 
 ## Not to re-propose (already failed)
 
