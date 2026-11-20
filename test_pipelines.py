@@ -6943,6 +6943,7 @@ def test_dashboard_position_cards_say_method_status_levels_and_leverage():
                  "+6,25%", "54.684,16", "ikut bergerak", "3x", "likuidasi"):
         assert want in btc, (want, btc)
     assert re.search(r"58\.731,12\s*✓", btc), "TP1 carries its tick"
+    assert "perkiraan; hasil dicatat tanpa leverage" in btc, "leverage is an estimate; P&L is unleveraged"
     sc = dsh._cards_block(dsh._scanner_cards(f, "scanner"), now)
     for want in ("Scanner Claude murni", "AI memilih koin", "satu target, tanpa TP2", "tanpa leverage",
                  "+$3,11", "segera"):
@@ -6983,6 +6984,9 @@ def test_dashboard_method_tabs_open_with_how_it_works_and_summary_links():
     at = [page.index(f">{l}</button>") for l in labels]
     assert at == sorted(at), "the four tabs, in order"
     assert "Cara kerja Bot BTC" in pane(page, "btc") and "bukan AI" in pane(page, "btc")
+    from config import RISK_CONFIG
+    assert (f'{RISK_CONFIG["max_position_hours"]} jam (futures) atau {RISK_CONFIG["max_position_hours_spot"]} '
+            f'jam (spot)') in pane(page, "btc"), "the time caps come from config, as the cards use"
     assert "Cara kerja Scanner Claude" in pane(page, "koin") and "lebih baik dari undian" in pane(page, "koin")
     summary = pane(page, "ringkasan")
     assert 'data-tab="btc"' in summary and "TP1 tercapai" in summary, "the summary links each position to its tab"
