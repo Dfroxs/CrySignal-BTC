@@ -45,7 +45,7 @@ G, R, Y, DIM, BLD, RST = "\033[32m", "\033[31m", "\033[33m", "\033[2m", "\033[1m
 
 
 def collect(mode="futures", days=180, horizons=(6,), start=None, end=None,
-            symbol="BTC/USDT"):
+            symbol="BTC/USDT", include_disabled=False):
     """Run the engine over every candle and pair each condition's contribution
     with the returns that followed, at every requested horizon.
 
@@ -94,7 +94,11 @@ def collect(mode="futures", days=180, horizons=(6,), start=None, end=None,
             sr=detect_support_resistance(window), mode=mode,
             threshold_override=threshold,
         )
-        contrib = signal.get("_contributions") or {}
+        contrib = dict(signal.get("_contributions") or {})
+        if include_disabled:
+            # A disabled condition scores (0, 0); what it WOULD have added is recorded apart
+            # (engine `_disabled_contributions`), so a condition can be tested while pruned.
+            contrib.update(signal.get("_disabled_contributions") or {})
         now = df["close"].iloc[i]
         row = {name: buy - sell for name, (buy, sell) in contrib.items()}
         for h in horizons:
@@ -230,7 +234,7 @@ def report_sweep(data, horizons, mode, days):
     print("=" * 78 + "\n")
 
 
-def run_matrix(symbols, years, mode, horizons):
+def run_matrix(symbols, years, mode, horizons, include_disabled=False):
     """Score every condition across symbols x years and report only what holds.
 
     A condition that clears |t| >= 2 in one cell has told you about one market in
@@ -243,7 +247,8 @@ def run_matrix(symbols, years, mode, horizons):
         for yr in years:
             key = f"{sym.split('/')[0]} {yr}"
             try:
-                data = collect(mode, 365, tuple(horizons), f"{yr}-01-01", f"{yr}-12-31", sym)
+                data = collect(mode, 365, tuple(horizons), f"{yr}-01-01", f"{yr}-12-31", sym,
+                               include_disabled=include_disabled)
                 # One engine pass per cell; every horizon is a shift on top of it.
                 cells[key] = {h: {r["condition"]: r for r in analyse(data, h)} for h in horizons}
                 logger.info("%s: %d candles", key, len(data))
@@ -358,6 +363,9 @@ def main():
                     help="Judge ONE pre-registered condition across cells and horizons. "
                          "Reading a single committed row is what removes the "
                          "multiple-comparison problem.")
+    ap.add_argument("--include-disabled", action="store_true",
+                    help="Also score DISABLED conditions from the engine's shadow record "
+                         "(_disabled_contributions), e.g. sr_zone under H-SR2")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -368,14 +376,15 @@ def main():
         syms = [s.strip() for s in args.symbols.split(",") if s.strip()]
         yrs = [y.strip() for y in args.years.split(",") if y.strip()]
         hs = sorted(set(horizons))
-        cells, failures = run_matrix(syms, yrs, args.mode, hs)
+        cells, failures = run_matrix(syms, yrs, args.mode, hs, args.include_disabled)
         if args.only:
             report_one(cells, failures, args.only, hs, args.mode)
         else:
             report_matrix(cells, failures, args.mode, args.horizon)
         return
 
-    data = collect(args.mode, args.days, tuple(horizons), args.start, args.end, args.symbol)
+    data = collect(args.mode, args.days, tuple(horizons), args.start, args.end, args.symbol,
+                   include_disabled=args.include_disabled)
     if data.empty:
         print("No data collected.")
         return

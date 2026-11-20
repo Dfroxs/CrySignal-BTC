@@ -205,6 +205,45 @@ def detect_support_resistance(df, lookback=50, tolerance=0.005):
     return result
 
 
+def detect_sr_zones(df, htf_rule, per_bucket, lookback=90, fractal=2, merge_atr=0.5, min_touches=2):
+    """S/R zones as a trader draws them (H-SR2, 2026-11-20-sr-zone-prereg.md; every value
+    here is fixed there). Returns [(zone_price, touches)] with touches >= `min_touches`.
+
+    Higher-timeframe bars are built from the closed base bars; a bucket counts only when all
+    `per_bucket` base bars are in it, so the forming one is never read. A pivot is a 5-bar
+    Williams fractal (strictly beyond the `fractal` bars each side). Pivot highs and lows go
+    into one list (polarity flip) and merge greedily into a zone while within
+    `merge_atr` x ATR14(HTF) of the zone's running mean."""
+    if not isinstance(df.index, pd.DatetimeIndex) or len(df) < per_bucket:
+        return []
+    g = df[['open', 'high', 'low', 'close']].resample(htf_rule, label='left', closed='left')
+    h = pd.DataFrame({'high': g['high'].max(), 'low': g['low'].min(),
+                      'close': g['close'].last(), 'n': g['close'].count()})
+    h = h[h['n'] == per_bucket].tail(lookback)
+    if len(h) < max(2 * fractal + 1, 15):
+        return []
+    atr = float(calculate_atr(h).iloc[-1])
+    if not atr > 0:
+        return []
+    hi, lo = h['high'].values, h['low'].values
+    pivots = []
+    for i in range(fractal, len(h) - fractal):
+        side = np.r_[hi[i - fractal:i], hi[i + 1:i + fractal + 1]]
+        if hi[i] > side.max():
+            pivots.append(float(hi[i]))
+        side = np.r_[lo[i - fractal:i], lo[i + 1:i + fractal + 1]]
+        if lo[i] < side.min():
+            pivots.append(float(lo[i]))
+    zones = []                                  # [sum, count]
+    for p in sorted(pivots):
+        if zones and abs(p - zones[-1][0] / zones[-1][1]) <= merge_atr * atr:
+            zones[-1][0] += p
+            zones[-1][1] += 1
+        else:
+            zones.append([p, 1])
+    return [(s / n, n) for s, n in zones if n >= min_touches]
+
+
 def detect_candlestick_pattern(df):
     """Detect bullish/bearish candlestick reversal patterns.
 

@@ -149,6 +149,7 @@ CONDITION_MAX = {
     "basis":                   (0.00, 0.50),
     "stoch_rsi":               (1.25, 1.25),
     "support_resistance":      (0.75, 0.75),
+    "sr_zone":                 (0.75, 0.75),   # H-SR2; disabled until it passes
     "vwap":                    (0.75, 0.75),
     "adx":                     (1.25, 1.25),
     "gold_vix":                (0.50, 0.50),
@@ -204,7 +205,10 @@ CONDITION_MAX = {
 # positive in 5 of 10 cells at horizon 6, 8 needed. It goes at the first restart made for
 # another reason (the shadow-context fix). Both ceilings fall by 0.75 (futures 25.00 ->
 # 24.25, spot 22.50 -> 21.75), so do the thresholds.
-DISABLED_CONDITIONS = frozenset({"basis", "taker", "support_resistance"})
+#
+# sr_zone (H-SR2, 2026-11-20-sr-zone-prereg.md) is disabled from its first commit: recorded in
+# cycle_log.disabled_contributions, never scored, until its pre-registered test passes.
+DISABLED_CONDITIONS = frozenset({"basis", "taker", "support_resistance", "sr_zone"})
 
 # Engine veto gates switched off per mode (names from signals/engine._VETO_GATES).
 # `generate_signals(gates_disabled=None)` reads this, so the live bot, the variants and

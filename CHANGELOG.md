@@ -4,6 +4,52 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-20 — H-SR2-1 FAIL: S/R as a scoring bonus is closed
+
+Results: `docs/superpowers/specs/2026-11-20-sr-zone-results.md`.
+- **The verdict:** `sr_zone` (HTF fractal zones, ≥ 2 touches, rejection bar) is positive in
+  **4 of 10** cells at horizon 6, where ≥ 8 were needed, and in 2–4 of 10 at 3, 12 and 24.
+  - No cell is thin: it fires on about 25% of bars.
+  - The sign flips between markets and years (BTC 2024 −3.7, XRP 2025 +2.7), so it is not an
+    inverted signal either.
+- **Per the prereg:**
+  - both S/R scoring forms are closed (H-SR, H-SR2);
+  - `sr_zone` stays disabled and will be recorded live from the next restart;
+  - S/R keeps its TP-cap and gate roles;
+  - a new role needs its own prereg.
+
+---
+
+## 2026-11-20 — H-SR2: S/R zones as a trader draws them (pre-registered, disabled, recorded)
+
+This answers the owner's point that S/R matters in technical analysis. H-SR tested one crude
+rule; this design follows `docs/superpowers/specs/2026-11-20-sr-zone-prereg.md`, committed
+(`e526099`) before any code or figure.
+- **`signals/indicators.detect_sr_zones`:**
+  - higher-timeframe bars built from closed base bars (futures 1H → 4H, spot 4H → 1D), with
+    incomplete buckets dropped;
+  - the last 90 HTF bars;
+  - 5-bar Williams fractal pivots, highs and lows together (polarity flip);
+  - pivots merged within 0.5 × ATR14(HTF); zones need ≥ 2 touches.
+- **Condition `sr_zone` (engine 16b):** a rejection bar at a zone scores ±0.75. The bar's
+  low (high) must be within ±0.5 × ATR of the zone, close on the far side, and close up
+  (down).
+  - It is in `DISABLED_CONDITIONS` from this first commit, so no score, ceiling (24.25 /
+    21.75) or threshold (4.76 / 4.16) moves.
+  - It is recorded in `disabled_contributions` once deployed.
+- **`scripts/condition_ic.py --include-disabled`** scores disabled conditions from the
+  engine's shadow record.
+- **Power guard** (prereg; firing rate only, no returns): BTC 1H fires on 25.3% of 2,499
+  bars (BUY 12.6%, SELL 12.7%), well over the 1% floor. Spot 4H fires on 19.1%.
+- **Tests:**
+  - new: `test_sr_zones_follow_the_h_sr2_prereg`;
+  - four ceiling tests now name `sr_zone` as postdating the documented maxima.
+  - Suite 353/353.
+- **Deploy:** engine code, so it waits for the next restart made for another reason. The
+  offline test needs no deploy.
+
+---
+
 ## 2026-11-20 — deployed #73–#75: run 5 restarts at 17:57; H-VG and H-VR/H-BS windows restart
 
 - **Deploy:** pulled `f10a685`, one restart for all three PRs. Bot restarted 17:57:15 UTC,
