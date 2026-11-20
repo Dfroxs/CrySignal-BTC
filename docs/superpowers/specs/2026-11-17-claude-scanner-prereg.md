@@ -199,3 +199,15 @@ date, after this test is scored:
 **Nothing here changes:** H-SC's statistic, criteria, window and date are as above, and no
 figure on the window is computed before that date.
 
+## Addendum 2026-11-19 (3): book entry at the answer's price (design decision, not a criterion)
+
+Owner's go.
+- **What changes:** a book position opened from the deploy on enters at the perp price
+  fetched once the picks are in (`fill_prices`, about :05), instead of the decision bar's
+  close (:00). Its first hour is judged on the 1m bars after that moment (`_first_hour`),
+  so the five minutes before the entry can neither stop nor fill it.
+- **Fallbacks:** a failed fetch falls back to the old rule. Positions opened before keep it.
+- **What does not change:** the picks and their prices in `scan_picks`, H-SC's and H-SC2's
+  statistic, criteria and dates (they score the bar close by design), and H-SCD (its
+  Part E measures the same five minutes from klines).
+

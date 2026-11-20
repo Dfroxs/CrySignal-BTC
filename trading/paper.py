@@ -1,6 +1,8 @@
 """Paper trading — trailing stop + partial take-profit position management.
 
 Each cycle:
+  0. Resting orders: the 1m bars since the last check are walked against the stop, TP1
+     and TP2, which fill at their level as exchange orders would (2026-11-19).
   1. Force-close all positions if HIGH impact macro event is <2h away.
   2. Advance trailing stop if price moved in our favour.
   3. First half exits at TP1 → trailing stop moves to breakeven.
@@ -40,6 +42,138 @@ def apply_futures_exit_geometry(signal):
         if out.get(k):
             out[k] = e + (out[k] - e) * mult
     return out
+
+
+# ---------------------------------------------------------------------------
+# Resting orders (design decision 2026-11-19, owner)
+# ---------------------------------------------------------------------------
+# The bot looks at the price only at :01 and :31. Closing at the price then filled runs
+# 1-3's trailing stops ~0.28% past the stop (0.05-0.65%), and missed any target touched in
+# between, while every replay (backtest._simulate_forward) fills both at their level. A
+# real bot keeps a stop and a target resting on the exchange, so the 1m bars since the last
+# check are walked first, with the levels as they stood at that check: the first level
+# touched fills at the level, or at the bar's open when the bar opens past it (a gap), and
+# the stop first when one bar touches both. The trail still moves only at a check.
+
+MINUTE_MS = 60_000
+_MAX_WALK_PAGES = 10      # 10 x 1000 1m bars, ~7 days: a longer outage falls back to price
+
+
+def _fetch_minute_bars(since_ms):
+    """Closed BTC/USDT 1m bars from `since_ms` on: [(open_ms, o, h, l, c, v)], paged."""
+    from signals.market_data import exchange
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+    out, cursor = [], since_ms
+    for _ in range(_MAX_WALK_PAGES):
+        rows = exchange.fetch_ohlcv("BTC/USDT", "1m", since=cursor, limit=1000)
+        rows = [r for r in rows if r[0] >= cursor and r[0] + MINUTE_MS <= now_ms]
+        if not rows:
+            break
+        out += rows
+        cursor = rows[-1][0] + MINUTE_MS
+        if cursor + MINUTE_MS > now_ms:
+            break
+    return out
+
+
+def _iso_ms(ms):
+    return datetime.fromtimestamp(ms / 1000, UTC).isoformat()
+
+
+def _book_partial(pos, tp1, atr):
+    """TP1 for the first half, as the price path below books it. Returns the new stop."""
+    entry = pos["entry_price"]
+    _ec = EXECUTION_CONFIG
+    _fee = _ec["futures_fee_pct"] if pos.get("mode") == "futures" else _ec["spot_fee_pct"]
+    _costs = (_fee + _ec.get("slippage_pct", 0.05)) * 2
+    d = 1 if pos["type"] == "BUY" else -1
+    pnl = d * (tp1 - entry) / entry * 100 - _costs
+    trail = pos.get("trailing_stop") or pos["stop_loss"]
+    if pos.get("mode") == "spot" and atr and atr > 0:
+        cushion = entry - d * 0.5 * atr
+        new_sl = max(trail, cushion) if d == 1 else min(trail, cushion)
+    else:
+        new_sl = entry
+    sh.partial_close_position(pos["id"], pnl, new_sl=new_sl)
+    pos.update(partial_closed=1, partial_pnl=pnl, trailing_stop=new_sl)
+    return pnl, new_sl
+
+
+def _walk_resting_orders(pos, bars):
+    """Walk `bars` for one open position. Returns its close events; books every fill."""
+    d = 1 if pos["type"] == "BUY" else -1
+    entry, mode = pos["entry_price"], pos.get("mode", "futures")
+    tp1 = pos.get("tp1") or pos["take_profit"]
+    tp2 = pos.get("tp2")
+    events = []
+    for ts, o, hi, lo, cl, *_ in bars:
+        trail = pos.get("trailing_stop") or pos["stop_loss"]
+        partial = pos.get("partial_closed", 0)
+        if (lo <= trail) if d == 1 else (hi >= trail):
+            fill = o if (d * (o - trail) < 0) else trail          # a gap fills at the open
+            pnl = _calc_pnl(pos, fill)
+            outcome = "WIN" if pnl > 0 else "LOSS"
+            sh.close_paper_position(pos["id"], outcome, pnl, exit_price=fill)
+            events.append({"type": pos["type"], "entry": entry, "exit": fill, "pnl": pnl,
+                           "outcome": "SL" if outcome == "LOSS" else "Trail", "mode": mode})
+            logger.info("Paper %s %s → %s at resting stop $%.2f (filled $%.2f, %.2f%%)",
+                        pos["type"], pos["id"], outcome, trail, fill, pnl)
+            return events
+        if not partial and ((hi >= tp1) if d == 1 else (lo <= tp1)):
+            pnl, new_sl = _book_partial(pos, tp1, pos.get("atr") or 0)
+            events.append({"type": pos["type"], "entry": entry, "exit": tp1, "pnl": pnl,
+                           "outcome": "TP1", "mode": mode})
+            logger.info("Paper %s %s → PARTIAL WIN at resting TP1 $%.2f (+%.2f%%), stop $%.2f",
+                        pos["type"], pos["id"], tp1, pnl, new_sl)
+            partial = 1
+        if partial and tp2 and ((hi >= tp2) if d == 1 else (lo <= tp2)):
+            pnl = _calc_pnl(dict(pos, partial_closed=1), tp2)
+            sh.close_paper_position(pos["id"], "WIN", pnl, exit_price=tp2)
+            events.append({"type": pos["type"], "entry": entry, "exit": tp2, "pnl": pnl,
+                           "outcome": "TP2", "mode": mode})
+            logger.info("Paper %s %s → WIN at resting TP2 $%.2f (combined +%.2f%%)",
+                        pos["type"], pos["id"], tp2, pnl)
+            return events
+        if partial:                       # the stop just moved: the rest of this bar
+            trail = pos["trailing_stop"]   # can still reach it, as in the backtest
+            if (lo <= trail) if d == 1 else (hi >= trail):
+                pnl = _calc_pnl(pos, trail)
+                outcome = "WIN" if pnl > 0 else "LOSS"
+                sh.close_paper_position(pos["id"], outcome, pnl, exit_price=trail)
+                events.append({"type": pos["type"], "entry": entry, "exit": trail, "pnl": pnl,
+                               "outcome": "SL" if outcome == "LOSS" else "Trail", "mode": mode})
+                return events
+    return events
+
+
+def _apply_resting_orders(minute_bars=None):
+    """Walk every open position (all modes: a macro close in one mode's call must not
+    pre-empt a stop the other mode's position already hit). Returns close events."""
+    fetch = minute_bars or _fetch_minute_bars
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+    events = []
+    for pos in sh.get_open_positions(None):
+        if not pos.get("last_checked_at"):
+            # Opened before resting orders existed: its trail may have moved since, so an
+            # old bar would be read against today's level. Start the walk from now.
+            sh.set_last_checked(pos["id"], _iso_ms(now_ms // MINUTE_MS * MINUTE_MS))
+            continue
+        start = datetime.fromisoformat(pos["last_checked_at"])
+        since = -(-int(start.timestamp() * 1000) // MINUTE_MS) * MINUTE_MS   # next whole minute
+        if since + MINUTE_MS > now_ms and minute_bars is None:
+            continue                       # no 1m bar has closed since: nothing to fetch
+        try:
+            bars = [b for b in fetch(since) if b[0] >= since]
+        except Exception as exc:  # noqa: BLE001 - the price check below still runs
+            logger.warning("resting-order walk skipped for %s: %s", pos["id"], exc)
+            continue
+        if not bars:
+            continue
+        ev = _walk_resting_orders(pos, sorted(bars))
+        events += ev
+        if not ev or ev[-1]["outcome"] == "TP1":
+            sh.set_last_checked(pos["id"], _iso_ms(max(b[0] for b in bars) + MINUTE_MS))
+    return events
 
 
 # Slippage threshold — warn when fill price is this far past the trigger
@@ -98,7 +232,8 @@ def _check_slippage(trigger_price, fill_price, pos_id):
 # Position management
 # ---------------------------------------------------------------------------
 
-def check_and_close_positions(current_price, mode=None, current_atr=0, funding_rate=0):
+def check_and_close_positions(current_price, mode=None, current_atr=0, funding_rate=0,
+                              minute_bars=None):
     """Check open paper positions against *current_price*, optionally filtered by mode.
 
     If a HIGH impact USD macro event is within 2 hours, all open positions
@@ -107,9 +242,12 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
 
     Returns a list of close-event dicts: {type, entry, exit, pnl, outcome, mode}
     so the caller can send notifications.
+
+    `minute_bars(since_ms)` returns the closed 1m bars the resting orders are walked over
+    (default: BTC/USDT from the exchange). They are walked before anything else here.
     """
     from signals.sentiment import check_upcoming_macro_events
-    closed = []
+    closed = _apply_resting_orders(minute_bars)
 
     # ── Macro gate — force-close ALL positions ──────────────────────
     has_macro, event_name = check_upcoming_macro_events()
@@ -142,7 +280,7 @@ def check_and_close_positions(current_price, mode=None, current_atr=0, funding_r
     # ── Normal position management ──────────────────────────────────
     open_positions = sh.get_open_positions(mode)
     if not open_positions:
-        return []
+        return closed
 
     for pos in open_positions:
         pos_id  = pos["id"]
