@@ -11,8 +11,8 @@ from config import DISABLED_CONDITIONS, RISK_CONFIG, VETOES_DISABLED
 # Below this a threshold stops being a bar and becomes an off switch — the
 # per-mode minimums live in config.py and are enforced on the adaptive base.
 _ABS_MIN_THRESHOLD = 0.5
-from signals.indicators import (calculate_adx, classify_regime,
-                                detect_candlestick_pattern, detect_rsi_divergence)
+from signals.indicators import (calculate_adx, classify_regime, detect_candlestick_pattern,
+                                detect_rsi_divergence, detect_support_resistance)
 from signals.market_data import get_signal_confidence
 from signals.sentiment import check_upcoming_macro_events
 
@@ -471,9 +471,13 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     _mark('stoch_rsi')
 
     # 16 — Support/Resistance proximity (ATR-scaled)
-    if sr:
-        support = sr.get('support')
-        resistance = sr.get('resistance')
+    # Its own levels, with no minimum distance (H-SR, 2026-11-20). `sr` keeps the detector's
+    # 0.5% exclusion for the TP caps and gates, so it never held a level within 0.2×ATR and
+    # this condition could not fire: 0 of 1,297 live cycles.
+    if sr is not None:
+        near = detect_support_resistance(df, tolerance=0.0)
+        support = near.get('support')
+        resistance = near.get('resistance')
         price = current['close']
         atr = current.get('ATR_14', 0)
         # Use 0.2× ATR as proximity threshold (~$135 at $80k BTC) instead of hardcoded 0.3%
