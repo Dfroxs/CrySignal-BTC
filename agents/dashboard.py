@@ -1550,6 +1550,111 @@ def _btc_size(p):
 CARRIED = ' <small class="mute" title="dibuka sebelum reset; tidak dihitung di saldo sekarang">bawaan</small>'
 
 
+# ── Position cards (owner, 2026-11-20: "ini dari metode yang mana") ─────────────────
+METHODS = {"btc": ("Bot BTC", "aturan indikator (bukan AI)"),
+           "scanner": ("Scanner Claude murni", "AI memilih koin"),
+           "hybrid": ("Scanner Claude + engine", "AI memilih koin, dibantu skor engine"),
+           "random": ("Scanner Acak", "patokan: koin diundi")}
+CARD_CSS = """
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;margin:10px 0}
+.pcard{border:1px solid var(--rule);border-radius:10px;padding:12px;background:var(--tint);font-size:14px;line-height:1.5}
+.pcard .ph{margin-bottom:4px}.pcard .pt{font-size:16px;margin:4px 0}
+.mlabel{color:#fff;border-radius:4px;padding:1px 7px;font-size:12px;font-weight:600}
+.m-btc{background:var(--good)}.m-scanner{background:var(--c1)}.m-hybrid{background:var(--c2)}.m-random{background:var(--mute)}
+.plev{width:100%;margin-top:6px;font-size:13px;border-collapse:collapse}.plev td{padding:2px 4px}
+.plev td:nth-child(odd){color:var(--mute)}details.fold{margin:6px 0}details.fold summary{cursor:pointer;color:var(--ink2)}
+"""
+
+
+def _px(v):
+    return _n(v, 4 if v is not None and v < 10 else 2) if v is not None else "–"
+
+
+def _btc_cards(f):
+    """One card dict per open BTC bot position (both books)."""
+    from config import RISK_CONFIG
+    out = []
+    for p in (f.get("db") or {}).get("open") or []:
+        cap = RISK_CONFIG.get("max_position_hours_spot" if p["mode"] == "spot" else "max_position_hours", 72)
+        hit = bool(p.get("partial_closed"))
+        fut = p.get("sizing")
+        out.append({"method": "btc", "book": p["mode"], "coin": "BTC",
+                    "side": "LONG" if p["type"] == "BUY" else "SHORT", "opened": _dt(p.get("opened_at")),
+                    "status": "TP1 tercapai, separuh posisi sudah ditutup" if hit else "berjalan",
+                    "pnl_final_pct": p.get("partial_pnl") if hit else None, "pnl_open_pct": p.get("move_pct"),
+                    "pnl_usd": None, "size_usd": None, "entry": p.get("entry_price"), "price": p.get("price"),
+                    "stop": p.get("stop"), "trailing": bool(p.get("trailing")), "tp1": p.get("tp1") or p.get("take_profit"),
+                    "tp1_hit": hit, "tp2": p.get("tp2"), "target": None,
+                    "leverage": (f'{fut["leverage"]}x · margin {_n(fut["margin_pct"], 0)}% modal'
+                                 + (f' · likuidasi {_money(fut["liquidation_price"])}'
+                                    if 0 < fut["liquidation_price"] < float("inf") else "")) if fut
+                    else ("spot, tanpa leverage" if p["mode"] == "spot" else None),
+                    "hours_left": cap - p["hours"] if p.get("hours") is not None else None,
+                    "carried": bool(p.get("carried"))})
+    return out
+
+
+def _scanner_cards(f, key):
+    """One card dict per open position of one scanner arm (`key` in METHODS), both books."""
+    now = f["now"]
+    out = []
+    for bk, label in BOOKS_LABEL:
+        for p in (((f.get(key) or {}).get(bk)) or {}).get("open") or []:
+            o = _dt(p.get("opened_bar"))
+            out.append({"method": key, "book": label, "coin": p["coin"], "side": p["side"], "opened": o,
+                        "status": "berjalan", "pnl_final_pct": None, "pnl_open_pct": p.get("move_pct"),
+                        "pnl_usd": p.get("upnl") if p.get("move_pct") is not None else None,
+                        "size_usd": p.get("size_usd"), "entry": p.get("entry"), "price": p.get("price"),
+                        "stop": p.get("stop"), "trailing": False, "tp1": None, "tp1_hit": False, "tp2": None,
+                        "target": p.get("target"), "leverage": "tanpa leverage",
+                        "hours_left": 24 - (now - o).total_seconds() / 3600 if o else None,
+                        "carried": bool(p.get("carried"))})
+    return out
+
+
+def _card(c, now):
+    name, desc = METHODS[c["method"]]
+    left = c["hours_left"]
+    left_s = "–" if left is None else ("segera" if left <= 0 else f"{left:.0f} jam")
+    if c["pnl_final_pct"] is not None or c["tp1_hit"]:
+        pnl = (f'separuh pertama {_pnl(c["pnl_final_pct"], 2, "%")} (final) · '
+               f'sisa separuh {_pnl(c["pnl_open_pct"], 2, "%")} (belum final)')
+    elif c["pnl_open_pct"] is None:
+        pnl = _pnl(None)
+    else:
+        pnl = _pnl(c["pnl_open_pct"], 2, "%") + (
+            f' = {_money(c["pnl_usd"], True)} dari modal {_money(c["size_usd"])}' if c["pnl_usd"] is not None else "") \
+            + " (belum final)"
+    stop = _px(c["stop"]) + (" <small>ikut bergerak</small>" if c["trailing"] else "")
+    if c["method"] == "btc":
+        lev = [("Masuk", _px(c["entry"])), ("Sekarang", _px(c["price"])), ("Stop (SL)", stop),
+               ("TP1", _px(c["tp1"]) + (" ✓" if c["tp1_hit"] else "")), ("TP2", _px(c["tp2"])),
+               ("Leverage", e(c["leverage"] or "–"))]
+    else:
+        lev = [("Masuk", _px(c["entry"])), ("Sekarang", _px(c["price"])), ("Stop (SL)", stop),
+               ("Target", _px(c["target"]) + " <small>satu target, tanpa TP2</small>"),
+               ("Leverage", e(c["leverage"] or "–"))]
+    rows = "".join(f"<tr><td>{a}</td><td>{b}</td></tr>" for a, b in lev)
+    carried = " · <small>bawaan (tidak dihitung saldo)</small>" if c["carried"] else ""
+    return (f'<div class="pcard"><div class="ph"><span class="mlabel m-{c["method"]}">{e(name)}</span> '
+            f'<small>{e(desc)} · {e(c["book"])}</small></div>'
+            f'<div class="pt"><b>{e(c["coin"])}</b> {_side(c["side"])} · dibuka {_ago(now, c["opened"])}{carried}</div>'
+            f'<div><b>Status:</b> {e(c["status"])} · sisa waktu {left_s}</div>'
+            f'<div><b>Untung/rugi:</b> {pnl}</div><table class="plev">{rows}</table></div>')
+
+
+def _cards_block(cards, now, fold_carried=True):
+    """Live cards in full; with `fold_carried`, each book's carried cards in one <details>."""
+    live = [c for c in cards if not (fold_carried and c["carried"])]
+    out = '<div class="cards">' + "".join(_card(c, now) for c in live) + "</div>" if live else ""
+    if fold_carried:
+        for book in dict.fromkeys(c["book"] for c in cards if c["carried"]):
+            car = [c for c in cards if c["carried"] and c["book"] == book]
+            out += (f'<details class="fold"><summary>{len(car)} posisi bawaan (tidak dihitung saldo) · '
+                    f'{e(book)} ▸</summary><div class="cards">' + "".join(_card(c, now) for c in car) + "</div></details>")
+    return out
+
+
 def _positions(f):
     from config import RISK_CONFIG
     d, now = f.get("db") or {}, f["now"]
@@ -1694,7 +1799,7 @@ def render(f):
          # before the stylesheet paints, so a saved light theme does not flash dark first
          "<script>try{var t=localStorage.getItem('dash-theme');if(t==='light'||t==='dark')"
          "document.documentElement.dataset.theme=t}catch(e){}</script>"
-         f"<style>{CSS}</style></head><body><main>"]
+         f"<style>{CSS}{CARD_CSS}</style></head><body><main>"]
     ok = not probs
     P.append(f'<header class="bar"><div class="brand">SpotSignal<span>demo</span></div>'
              f'<a class="health {"ok" if ok else "bad"}" href="#sistem" data-tab="sistem">'
