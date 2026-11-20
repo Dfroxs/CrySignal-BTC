@@ -6986,6 +6986,7 @@ def test_dashboard_method_tabs_open_with_how_it_works_and_summary_links():
     assert "Cara kerja Scanner Claude" in pane(page, "koin") and "lebih baik dari undian" in pane(page, "koin")
     summary = pane(page, "ringkasan")
     assert 'data-tab="btc"' in summary and "TP1 tercapai" in summary, "the summary links each position to its tab"
+    assert "+6,25%" in summary, "after TP1 the summary line shows the closed half too, not only the open one"
     assert "Posisi yang sedang berjalan" not in page, "the old column table is gone"
     assert "TP1 tercapai, separuh posisi sudah ditutup" in pane(page, "btc")
     assert "Tidak ada posisi terbuka." in pane(empty, "ringkasan")
