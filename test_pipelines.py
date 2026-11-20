@@ -5575,9 +5575,9 @@ def test_dashboard_runs_market_position_detail_and_stats():
                     "totals": {"futures": dsh._book([(None, None, 2.0, "WIN"), (None, None, -1.0, "LOSS")]), "spot": {"n": 0}}}}
         mk = dsh._market(f)
         assert "turun" in mk and "naik" in mk and "+0,0029%" in mk and "FOMC &lt;x&gt;" in mk and "7 j" in mk, mk
-        pos = dsh._positions(f)
-        assert "66.000,00" in pos and "60.000,00" in pos and "66 j" in pos, "stop, target, 72 h cap minus 6 h"
-        assert "leverage " in pos and "likuidasi" in pos, "BTC futures gets its sizing detail row"
+        pos = dsh._cards_block(dsh._btc_cards(f), now, fold_carried=False)
+        assert "66.000,00" in pos and "60.000,00" in pos and "66 jam" in pos, "stop, TP1, 72 h cap minus 6 h"
+        assert "Leverage" in pos and "x · margin" in pos and "likuidasi" in pos, "BTC futures card shows its sizing"
         st = dsh._stats(f)
         assert "Bot BTC (futures)" in st and "50%" in st and "2,00" in st and "Acak (spot)" in st, st
         assert "run 3 sejak 17 Nov; run 2 berakhir" in dsh._run_hint(f)
@@ -6954,6 +6954,44 @@ def test_dashboard_position_cards_say_method_status_levels_and_leverage():
     assert "–" in sol[:600], "a missing price shows –, the card stays"
 
 
+def test_dashboard_method_tabs_open_with_how_it_works_and_summary_links():
+    """Owner 2026-11-20: "tab pilih koin & bot BTC bikin bingung, ini metode yang mana". Each
+    method gets its own tab, named for the method and opened by a "Cara kerja" box; the
+    summary lists positions by method and links to the tab."""
+    import os, tempfile
+    from datetime import UTC, datetime
+    from agents import dashboard as dsh
+    now = datetime(2026, 11, 20, 19, 30, tzinfo=UTC)
+    pane = lambda page, k: page.split(f'id="tab-{k}"')[1].split('class="tabpanel"')[0]
+    h, saved, path = _temp_history_db()
+    try:
+        c = h._conn()
+        c.execute("INSERT INTO cycle_log (timestamp,mode,type,price,threshold,funding_rate) "
+                  "VALUES ('2026-11-20 19:01:02','futures','HOLD',58418,4.76,0.004)")
+        c.commit()
+        empty = dsh.render(dsh.collect(dsh.ROOT, path, os.path.join(tempfile.mkdtemp(), "none.db"), now,
+                                       lambda cmd: "active"))
+        c.execute("INSERT INTO paper_positions (type,entry_price,stop_loss,trailing_stop,take_profit,tp2,"
+                  "partial_closed,partial_pnl,opened_at,mode) VALUES ('SELL',62778.08,65476.05,60703.85,"
+                  "58731.12,54684.16,1,6.246,'2026-11-19T17:01:05+00:00','futures')")
+        c.commit()
+        page = dsh.render(dsh.collect(dsh.ROOT, path, os.path.join(tempfile.mkdtemp(), "none.db"), now,
+                                      lambda cmd: "active"))
+    finally:
+        _restore_history_db(h, saved, path)
+    labels = ["Ringkasan", "Bot BTC · aturan indikator", "Scanner Claude · AI pilih koin", "Sistem"]
+    at = [page.index(f">{l}</button>") for l in labels]
+    assert at == sorted(at), "the four tabs, in order"
+    assert "Cara kerja Bot BTC" in pane(page, "btc") and "bukan AI" in pane(page, "btc")
+    assert "Cara kerja Scanner Claude" in pane(page, "koin") and "lebih baik dari undian" in pane(page, "koin")
+    summary = pane(page, "ringkasan")
+    assert 'data-tab="btc"' in summary and "TP1 tercapai" in summary, "the summary links each position to its tab"
+    assert "Posisi yang sedang berjalan" not in page, "the old column table is gone"
+    assert "TP1 tercapai, separuh posisi sudah ditutup" in pane(page, "btc")
+    assert "Tidak ada posisi terbuka." in pane(empty, "ringkasan")
+    assert "Tidak ada posisi BTC" in pane(empty, "btc")
+
+
 def test_scanner_reset_carries_old_positions_and_restarts_every_window():
     """Owner's reset with run 5: every arm's books start again at $1,000, and H-SC/H-SC2/H-SCD
     count only cycles from WINDOW_FROM. A position opened before it runs out on its own, holds
@@ -7824,6 +7862,7 @@ if __name__ == "__main__":
     run("alarm: macro source blank 3 cycles",     test_alarm_flags_a_macro_source_blank_in_three_futures_cycles)
     run("dash: BTC rows carry TP1/partial/sizing", test_dashboard_btc_open_rows_carry_partial_tp1_trailing_and_sizing)
     run("dash: one card per position, plain words", test_dashboard_position_cards_say_method_status_levels_and_leverage)
+    run("dash: a tab per method, Cara kerja, links", test_dashboard_method_tabs_open_with_how_it_works_and_summary_links)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
