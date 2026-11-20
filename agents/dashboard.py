@@ -1216,12 +1216,9 @@ def _btc_tab(f, now):
     d, man, macro = f.get("db") or {}, f.get("manifest") or {}, f.get("macro")
     last = d.get("last") or {}
     ac, ca = d.get("account"), d.get("claude_account")
-    P = ['<section><h2>Posisi yang sedang berjalan</h2>']
+    P = ['<section><h2>Posisi berjalan</h2>']
     if d.get("open"):
-        rows = [[_side(p["type"]), e(p["mode"]) + (CARRIED if p.get("carried") else ""), _t(p["opened_at"]), _n(p["entry_price"]), _n(p["price"]),
-                 _pnl(p["move_pct"], 2, "%"), _n(p["stop"])] for p in d["open"]]
-        P.append(_table(["arah", "jenis", "dibuka", "harga masuk", "harga sekarang", "untung/rugi", "stop"],
-                        rows, num=(3, 4, 5, 6)))
+        P.append(_cards_block(_btc_cards(f), now, fold_carried=False))
     else:
         lc = (d.get("closed_recent") or [None])[0]
         P.append('<p class="empty">Tidak ada posisi BTC.' + (
@@ -1562,7 +1559,9 @@ CARD_CSS = """
 .mlabel{color:#fff;border-radius:4px;padding:1px 7px;font-size:12px;font-weight:600}
 .m-btc{background:var(--good)}.m-scanner{background:var(--c1)}.m-hybrid{background:var(--c2)}.m-random{background:var(--mute)}
 .plev{width:100%;margin-top:6px;font-size:13px;border-collapse:collapse}.plev td{padding:2px 4px}
-.plev td:nth-child(odd){color:var(--mute)}details.fold{margin:6px 0}details.fold summary{cursor:pointer;color:var(--ink2)}
+.plev td:nth-child(odd){color:var(--mute)}details.fold{margin:6px 0}.how{border-left:4px solid var(--accent);background:var(--tint);padding:10px 14px;border-radius:6px}
+.how ul{margin:4px 0 0 18px;padding:0}.m-box-btc{border-color:var(--good)}.plines{list-style:none;padding:0}.plines li{padding:4px 0}
+.plines a{color:inherit;text-decoration:none}details.fold summary{cursor:pointer;color:var(--ink2)}
 """
 
 
@@ -1577,7 +1576,7 @@ def _btc_cards(f):
     for p in (f.get("db") or {}).get("open") or []:
         cap = RISK_CONFIG.get("max_position_hours_spot" if p["mode"] == "spot" else "max_position_hours", 72)
         hit = bool(p.get("partial_closed"))
-        fut = p.get("sizing")
+        fut = p.get("sizing") if "sizing" in p else _btc_sizing(p)
         out.append({"method": "btc", "book": p["mode"], "coin": "BTC",
                     "side": "LONG" if p["type"] == "BUY" else "SHORT", "opened": _dt(p.get("opened_at")),
                     "status": "TP1 tercapai, separuh posisi sudah ditutup" if hit else "berjalan",
@@ -1643,6 +1642,17 @@ def _card(c, now):
             f'<div><b>Untung/rugi:</b> {pnl}</div><table class="plev">{rows}</table></div>')
 
 
+def _scanner_positions(f):
+    """Scanner tab: each arm's open positions as cards, carried ones folded per book."""
+    now, out = f["now"], []
+    for key, name, _ in ARMS:
+        cards = _scanner_cards(f, key)
+        if cards:
+            out.append(f'<h3>{e(METHODS[key][0])}</h3>' + _cards_block(cards, now))
+    body = "".join(out) or '<p class="empty">Tidak ada posisi scanner terbuka.</p>'
+    return '<section><h2>Posisi berjalan</h2>' + body + "</section>"
+
+
 def _cards_block(cards, now, fold_carried=True):
     """Live cards in full; with `fold_carried`, each book's carried cards in one <details>."""
     live = [c for c in cards if not (fold_carried and c["carried"])]
@@ -1653,69 +1663,6 @@ def _cards_block(cards, now, fold_carried=True):
             out += (f'<details class="fold"><summary>{len(car)} posisi bawaan (tidak dihitung saldo) · '
                     f'{e(book)} ▸</summary><div class="cards">' + "".join(_card(c, now) for c in car) + "</div></details>")
     return out
-
-
-def _positions(f):
-    from config import RISK_CONFIG
-    d, now = f.get("db") or {}, f["now"]
-    groups = []
-    btc = []
-    for p in d.get("open") or []:
-        cap = RISK_CONFIG.get("max_position_hours_spot" if p["mode"] == "spot" else "max_position_hours", 72)
-        target = p.get("tp2") if p.get("partial_closed") else p.get("take_profit")
-        btc.append({"coin": "BTC", "side": p["type"], "opened": _dt(p["opened_at"]), "size": None,
-                    "move": p.get("move_pct"), "usd": None, "stop": p.get("stop"),
-                    "target": target, "t2": bool(p.get("partial_closed")),
-                    "left": cap - p["hours"] if p.get("hours") is not None else None,
-                    "detail": _btc_size(p), "mode": p["mode"], "carried": p.get("carried")})
-    groups.append(("Bot BTC", btc))
-    for key, name, _ in ARMS:
-        for bk, label in BOOKS_LABEL:
-            rows = []
-            for p in (((f.get(key) or {}).get(bk)) or {}).get("open") or []:
-                o = _dt(p["opened_bar"])
-                rows.append({"coin": p["coin"], "side": p["side"], "opened": o, "size": p.get("size_usd"),
-                             "move": p.get("move_pct"), "usd": p.get("upnl"), "stop": p.get("stop"),
-                             "target": p.get("target"), "t2": False,
-                             "left": 24 - (now - o).total_seconds() / 3600 if o else None, "detail": None,
-                             "carried": p.get("carried")})
-            groups.append((f"{name} ({label})", rows))
-    body = []
-    px = lambda v: _n(v, 4 if v is not None and v < 10 else 2) if v is not None else "–"
-    for name, rows in groups:
-        if not rows:
-            continue
-        mine = [r for r in rows if not r.get("carried")]
-        tot = sum(r["usd"] or 0 for r in mine)
-        n_car = len(rows) - len(mine)
-        count = (f'{len(mine)} posisi' + (f' + {n_car} bawaan' if n_car else "")) if mine else f'{n_car} posisi bawaan'
-        body.append(f'<tr class="grp"><th colspan="6">{e(name)}</th><th class="n" colspan="3">'
-                    f'{count}{", " + _pnl(tot, 2, " $") if any(r["usd"] is not None for r in mine) else ""}'
-                    f'</th></tr>')
-        for r in rows:
-            left = r["left"]
-            left_s = "–" if left is None else ("segera" if left <= 0 else f"{left:.0f} j")
-            body.append(f'<tr><td><b>{e(r["coin"])}</b>{CARRIED if r.get("carried") else ""}</td><td>{_side(r["side"])}</td>'
-                        f'<td class="mute">{_ago(now, r["opened"])}</td>'
-                        f'<td class="n">{_money(r["size"]) if r["size"] else "–"}</td>'
-                        f'<td class="n">{_pnl(r["move"], 2, "%")}</td>'
-                        f'<td class="n">{_pnl(r["usd"], 2) if r["usd"] is not None else "–"}</td>'
-                        f'<td class="n">{px(r["stop"])}</td>'
-                        f'<td class="n">{px(r["target"])}{"<small> T2</small>" if r["t2"] else ""}</td>'
-                        f'<td class="n">{left_s}</td></tr>')
-            if r["detail"]:
-                body.append(f'<tr class="sub"><td colspan="9">{e(r["detail"])}</td></tr>')
-    head = '<div class="pane"><h2>Posisi berjalan</h2>'
-    if not body:
-        return head + '<p class="empty">Tidak ada posisi terbuka.</p></div>'
-    return (head + '<div class="scroll"><table class="grid"><thead><tr><th>koin</th><th>arah</th><th>dibuka</th>'
-            '<th class="n">modal</th><th class="n">%</th><th class="n">untung/rugi</th><th class="n">stop</th>'
-            '<th class="n">target</th><th class="n">sisa waktu</th></tr></thead>'
-            f'<tbody>{"".join(body)}</tbody></table></div>'
-            '<p class="note">Stop bot BTC ikut bergerak mengikuti harga (trailing); setelah target 1 kena, '
-            'kolom target menunjukkan target 2 (T2). Stop dan target scanner tetap. Sisa waktu: posisi '
-            'ditutup otomatis saat habis (bot BTC 72 jam futures, 48 jam spot; scanner 24 jam). '
-            'Leverage dan likuidasi bot BTC adalah perkiraan; akun demo mencatat hasil tanpa leverage.</p></div>')
 
 
 def _stats(f):
@@ -1785,7 +1732,47 @@ def _activity(f, limit=12):
         f'<small>{e(n)}</small></span><span class="amt">{amt}</span></li>' for t, n, txt, amt in rows[:limit]) + "</ul></div>"
 
 
-TABS = (("ringkasan", "Ringkasan"), ("koin", "Pilih koin"), ("btc", "Bot BTC"), ("sistem", "Sistem"))
+TABS = (("ringkasan", "Ringkasan"), ("btc", "Bot BTC · aturan indikator"),
+        ("koin", "Scanner Claude · AI pilih koin"), ("sistem", "Sistem"))
+
+HOW_BTC = ("Robot berbasis aturan, bukan AI: menghitung sekitar 20 indikator (EMA200, RSI, MACD, volume, dan lainnya) di candle BTC.",
+           "Posisi dibuka kalau skor melewati ambang dan lolos pemeriksaan keamanan.",
+           "Hanya BTC. Futures 1 jam (LONG/SHORT, leverage dihitung per posisi) dan spot 4 jam (LONG saja).",
+           "Keluar posisi: SL, TP1 (tutup separuh), TP2, trailing stop, maksimal 72 jam (futures) atau 48 jam (spot).",
+           "Claude hanya memberi opini (setuju/tidak) dan tidak memutuskan trade.")
+HOW_SCANNER = ("Setiap jam Claude (AI) membaca angka 9 koin lalu memilih LONG, SHORT, atau tidak sama sekali.",
+               "Ada tiga akun: Claude murni, Claude + skor engine, dan Acak. Acak adalah pembanding: koinnya diundi, jumlah dan arahnya sama dengan pilihan Claude.",
+               "Setiap posisi memakai 10% saldo, tanpa leverage, satu SL dan satu target, maksimal 24 jam.",
+               "Yang diuji: apakah pilihan Claude lebih baik dari undian?")
+
+
+def _how(title, bullets, method):
+    return (f'<section class="how m-box-{method}"><h2>Cara kerja {e(title)}</h2><ul>'
+            + "".join(f"<li>{e(b)}</li>" for b in bullets) + "</ul></section>")
+
+
+def _position_lines(f):
+    """Ringkasan: one line per live position, by method, linking to that method's tab."""
+    now = f["now"]
+    groups = [("btc", _btc_cards(f))] + [(k, _scanner_cards(f, k)) for k, _, _ in ARMS]
+    lines, carried = [], {}
+    for key, cards in groups:
+        tab = "btc" if key == "btc" else "koin"
+        for c in cards:
+            if c["carried"] and key != "btc":
+                carried[key] = carried.get(key, 0) + 1
+                continue
+            pnl = _pnl(c["pnl_open_pct"], 2, "%")
+            lines.append(f'<li><a href="#{tab}" data-tab="{tab}"><span class="mlabel m-{key}">{e(METHODS[key][0])}</span> '
+                         f'<b>{e(c["coin"])}</b> {_side(c["side"])} · {e(c["status"])} · {pnl}'
+                         + (" <small>bawaan</small>" if c["carried"] else "") + "</a></li>")
+    for key, n in carried.items():
+        lines.append(f'<li><a href="#koin" data-tab="koin"><span class="mlabel m-{key}">{e(METHODS[key][0])}</span> '
+                     f'{n} posisi bawaan (tidak dihitung saldo)</a></li>')
+    head = '<div class="pane"><h2>Posisi berjalan</h2>'
+    if not lines:
+        return head + '<p class="empty">Tidak ada posisi terbuka.</p></div>'
+    return head + '<ul class="plines">' + "".join(lines) + "</ul></div>"
 
 
 def render(f):
@@ -1813,10 +1800,11 @@ def render(f):
     P.append('<nav class="tabs" role="tablist" aria-label="Bagian dashboard">' + "".join(
         f'<button role="tab" id="t-{k}" aria-controls="tab-{k}" data-tab="{k}">{e(n)}</button>' for k, n in TABS) + "</nav>")
     panels = {"ringkasan": _market(f) + _board(f) + _progress(f.get("tests"), now)
-              + '<section class="wide-pane">' + _positions(f) + "</section>"
+              + '<section class="wide-pane">' + _position_lines(f) + "</section>"
               + '<section class="wide-pane"><div class="pane">' + _stats(f) + "</div></section>"
               + '<section class="wide-pane">' + _activity(f) + "</section>",
-              "koin": _picks_tab(f), "btc": _runs(f) + _btc_tab(f, now), "sistem": _system_tab(f, now)}
+              "koin": _how("Scanner Claude", HOW_SCANNER, "scanner") + _scanner_positions(f) + _picks_tab(f),
+              "btc": _how("Bot BTC", HOW_BTC, "btc") + _btc_tab(f, now) + _runs(f), "sistem": _system_tab(f, now)}
     for k, _ in TABS:
         P.append(f'<div class="tabpanel" role="tabpanel" id="tab-{k}" aria-labelledby="t-{k}">{panels[k]}</div>')
     P.append('<details class="glossary"><summary>Arti istilah</summary><dl>'
