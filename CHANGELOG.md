@@ -4,6 +4,22 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-20 — run 5 starts at the gold/VIX restart; H-VG and H-VR/H-BS windows restart
+
+The owner reset the run ("reset balance dan 90 harinya") when PR #66 was deployed.
+- **Restart:** bot restarted 2026-11-20 15:19:44 UTC at `d954cc1` (pid 421157). New
+  manifest `started_at = 2026-11-20T15:19:48Z`, so the dashboard account restarts at $1,000.
+- **Archives:** run 4's manifest is `paper_run_manifest.run4.json`, and its final DB is
+  `FINAL-run4-20261120-1519-signal_history.db` (integrity ok).
+- **Position #20** (futures SELL, opened 11-19) was open. It stays run 4's and closes on
+  its own levels.
+- **Windows** (prereg amendments; both were under two days old, nothing computed):
+  - H-VG: `veto_gate_eval.FROM` → 2026-11-20 15:19:44, scored from 2027-02-18 15:19:44.
+  - H-VR/H-BS: `run4b_eval.FROM` → 2026-11-20 15:19:44, END 2027-01-19 15:19:44.
+- **Not restarted:** H-SC, H-SC2, H-DR and H-SCD. The scanner never sees gold/VIX.
+
+---
+
 ## 2026-11-20 — fix: gold and VIX blank on weekends and at the daily rollover
 
 **On `develop`, not deployed.** `gold_vix` is scored (ceiling 0.50 both modes), so this

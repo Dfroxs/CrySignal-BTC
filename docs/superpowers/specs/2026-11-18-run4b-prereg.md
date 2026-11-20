@@ -93,3 +93,12 @@ old and nothing in it was computed.
 
 **New window:** cycles from 2026-11-19 01:13:53 UTC (`9a3d271`) whose 24h return completes
 by 2027-01-18 01:13:53 UTC. Everything else is unchanged.
+
+## Amendment 2026-11-20: the window restarts at the run-5 restart
+
+Gold and VIX are no longer blank on weekends and at Yahoo's daily rollover (PR #66), which
+changes futures signals. The owner started run 5 at the same restart. The window was about
+1.6 days old and nothing in it was computed.
+
+**New window:** cycles from 2026-11-20 15:19:44 UTC (`d954cc1`) whose 24h return completes
+by 2027-01-19 15:19:44 UTC. Everything else is unchanged.

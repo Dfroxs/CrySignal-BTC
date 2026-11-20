@@ -148,3 +148,13 @@ the window restarts. It was about 11 hours old and nothing in it was computed.
 **New window:** 2026-11-20 03:22:51 UTC (the bot's restart at `f7310d5`) to 2027-02-18
 03:22:51 UTC. Everything else is unchanged.
 
+
+## Amendment 2026-11-20 (2): the window restarts at the run-5 restart
+
+Gold and VIX are no longer blank on weekends and at Yahoo's daily rollover (PR #66,
+`range=2d` → `5d`). `gold_vix` is scored, so signals change, and per § Window and restarts
+the window restarts. The owner also started run 5 here (new manifest, account back to
+$1,000). The window was about 12 hours old and nothing in it was computed.
+
+**New window:** 2026-11-20 15:19:44 UTC (the bot's restart at `d954cc1`) to 2027-02-18
+15:19:44 UTC. Everything else is unchanged.
