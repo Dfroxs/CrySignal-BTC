@@ -1443,13 +1443,29 @@ def test_basis_and_taker_are_pruned_from_futures_and_spot_is_untouched():
     so both leave the active set. Both are futures-only, so every spot figure must be
     exactly what it was: spot's ceiling, threshold and band do not move."""
     import config
-    assert config.DISABLED_CONDITIONS == frozenset({"basis", "taker"}), config.DISABLED_CONDITIONS
+    assert config.DISABLED_CONDITIONS >= frozenset({"basis", "taker"}), config.DISABLED_CONDITIONS
     assert config.CONDITION_MAX["basis"] == (0.00, 0.50), config.CONDITION_MAX["basis"]
     assert config.CONDITION_MAX["taker"][0] == 0.00
+    saved = config.DISABLED_CONDITIONS
+    try:
+        config.DISABLED_CONDITIONS = frozenset({"basis", "taker"})
+        assert config._max_score("spot") == 22.50 and config._max_score("futures") == 25.00, \
+            "basis and taker are futures-only: spot's ceiling does not move"
+    finally:
+        config.DISABLED_CONDITIONS = saved
+
+
+def test_support_resistance_is_pruned_from_both_modes_after_h_sr_failed():
+    """2026-11-20: H-SR-1 FAILED, and the prereg sends the condition into DISABLED_CONDITIONS
+    at the next restart. It carries 0.75 in both modes, so both ceilings and every derived
+    threshold fall with it."""
+    import config
+    assert config.DISABLED_CONDITIONS == frozenset({"basis", "taker", "support_resistance"})
+    assert config.CONDITION_MAX["support_resistance"] == (0.75, 0.75)
     assert (config.SPOT_MAX_SCORE, config.SPOT_THRESHOLD,
-            config.SPOT_THRESHOLD_MIN, config.SPOT_THRESHOLD_MAX) == (22.50, 4.30, 3.00, 7.00)
-    assert config.SIGNAL_MAX_SCORE == 25.00, config.SIGNAL_MAX_SCORE
-    assert config.SIGNAL_THRESHOLD == round(25.00 * config._THR_FRACTION, 2) == 4.91
+            config.SPOT_THRESHOLD_MIN, config.SPOT_THRESHOLD_MAX) == (21.75, 4.16, 2.90, 6.77)
+    assert (config.SIGNAL_MAX_SCORE, config.SIGNAL_THRESHOLD,
+            config.THRESHOLD_MIN, config.THRESHOLD_MAX) == (24.25, 4.76, 3.66, 7.32)
 
 
 def test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason():
@@ -4695,11 +4711,14 @@ def test_shadow_context_sends_failed_fetches_as_missing_not_as_numbers():
     sig = _shadow_signal("BUY", "futures")
     sig["_market"] = {"funding": {"rate_pct": 0.0, "basis_pct": 0.0}, "long_short": {"ratio": 1.0},
                       "open_interest": {"change_pct": 0.0}, "taker": {"ratio": 1.0},
-                      "dxy": {"change_pct": -0.06}}
+                      "dxy": {"current": 99.5, "change_pct": -0.06},
+                      "gold": {"current": 3570.0, "change_pct": -2.9},
+                      "vix": {"current": 0, "change_pct": 0}, "sp500": {}}
     m = build_context(sig)["market"]
-    for k in ("funding_rate_pct", "basis_pct", "ls_ratio", "oi_change_pct", "taker_ratio"):
+    for k in ("funding_rate_pct", "basis_pct", "ls_ratio", "oi_change_pct", "taker_ratio",
+              "vix_change_pct", "sp500_change_pct"):
         assert m[k] is None, (k, m[k])
-    assert m["dxy_change_pct"] == -0.06, "real readings must pass through"
+    assert m["dxy_change_pct"] == -0.06 and m["gold_change_pct"] == -2.9, "real readings must pass through"
     real = build_context(_shadow_signal("BUY", "futures"))["market"]
     assert real["ls_ratio"] == 1.31 and real["funding_rate_pct"] == 0.004
 
@@ -6784,7 +6803,7 @@ def test_sr_condition_reads_its_own_levels_and_can_fire():
         w = df.iloc[:i + 1]
         sr = detect_support_resistance(w)
         sig = generate_signals(w, htf=None, market_structure=None, sr=sr, mode="futures",
-                               threshold_override=5.0)
+                               threshold_override=5.0, disabled=())   # pruned since H-SR FAILED
         fired += sig["_contributions"]["support_resistance"] != (0.0, 0.0)
         price, atr = w["close"].iloc[-1], w["ATR_14"].iloc[-1]
         old_in_reach += any(lv and abs(price - lv) / price <= atr * 0.2 / price
@@ -6793,7 +6812,7 @@ def test_sr_condition_reads_its_own_levels_and_can_fire():
     assert fired > 0, "the repaired condition must be able to fire"
     w = df.iloc[:400]
     assert generate_signals(w, htf=None, market_structure=None, sr=None, mode="futures",
-                            threshold_override=5.0)["_contributions"]["support_resistance"] == (0.0, 0.0)
+                            threshold_override=5.0, disabled=())["_contributions"]["support_resistance"] == (0.0, 0.0)
 
 
 def test_scanner_reset_carries_old_positions_and_restarts_every_window():
@@ -7656,6 +7675,7 @@ if __name__ == "__main__":
     run("scanner book: answer-price entry, 1m first hour", test_scanner_book_enters_at_the_answer_price_and_walks_its_first_hour_from_there)
     run("dashboard: read-only, local, no blank",    _before_scanner_reset(test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel))
     run("basis own checkpoint, no stale reason", test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason)
+    run("S/R pruned after H-SR FAIL: 24.25/21.75", test_support_resistance_is_pruned_from_both_modes_after_h_sr_failed)
     run("gold/VIX survive weekend + rollover",    test_gold_and_vix_survive_a_weekend_and_the_daily_rollover)
     run("scanner reset: carried, books, windows",  test_scanner_reset_carries_old_positions_and_restarts_every_window)
     run("H-SR: S/R reads own levels, can fire",   test_sr_condition_reads_its_own_levels_and_can_fire)
