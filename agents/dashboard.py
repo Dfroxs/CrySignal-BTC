@@ -1768,6 +1768,8 @@ def _position_lines(f):
                 carried[key] = carried.get(key, 0) + 1
                 continue
             pnl = _pnl(c["pnl_open_pct"], 2, "%")
+            if c["tp1_hit"]:
+                pnl = f'separuh pertama {_pnl(c["pnl_final_pct"], 2, "%")}, sisa {pnl}'
             lines.append(f'<li><a href="#{tab}" data-tab="{tab}"><span class="mlabel m-{key}">{e(METHODS[key][0])}</span> '
                          f'<b>{e(c["coin"])}</b> {_side(c["side"])} · {e(c["status"])} · {pnl}'
                          + (" <small>bawaan</small>" if c["carried"] else "") + "</a></li>")
