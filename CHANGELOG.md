@@ -4,6 +4,24 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-20 — disabled conditions keep a shadow record (`cycle_log.disabled_contributions`)
+
+The owner wanted S/R's live data kept after it was pruned.
+- **Engine:** `_mark()` now records what a disabled condition WOULD have added, as
+  `signal['_disabled_contributions']`, before it rolls the accumulators back.
+  - The rollback is unchanged, so no score, reason or `_contributions` entry moves.
+  - It covers every disabled condition: S/R, basis and taker.
+- **Storage:** `trading/history.log_cycle` stores it in a new column, `disabled_contributions`
+  (JSON, NULL when there is none). It is added by the same migration list as `variants`.
+- **Prereg:** H-SR-2 now reads this column (amendment in the prereg). It stays report-only.
+- **Why not the `variants` path:** that path re-scores market-structure biases, and one of
+  its variants (`rel_ic_dir`) is under test in H-VR.
+- **Test:** `test_disabled_conditions_keep_a_shadow_record_without_scoring`. Over 120 windows
+  it shows three things: the shadow value equals S/R's live contribution with it enabled,
+  live scores differ by exactly that, and the column round-trips. Suite 352/352.
+
+---
+
 ## 2026-11-20 — support_resistance OFF, as H-SR licenses; ships with the shadow-context fix
 
 The owner chose to deploy the shadow fix now and to turn S/R off with it. H-SR's prereg sends

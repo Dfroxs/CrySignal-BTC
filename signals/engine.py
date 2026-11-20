@@ -68,6 +68,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     # backtest. scripts/condition_ic.py correlates these against forward returns
     # to answer which of the 22 conditions actually carry predictive power.
     _contrib = {}
+    _disabled = {}          # what each disabled condition WOULD have added; never scored
     _seen = [0.0, 0.0]
     _seen_reasons = [len(signal['reasons'])]
     # None = the configured active set; pass an empty collection to score
@@ -86,6 +87,10 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
         """
         nonlocal buy_conditions, sell_conditions
         if name in _off:
+            # Recorded before the rollback, so a pruned condition keeps a live record
+            # (cycle_log.disabled_contributions) without touching a score (H-SR, 2026-11-20).
+            _disabled[name] = (round(buy_conditions - _seen[0], 4),
+                               round(sell_conditions - _seen[1], 4))
             buy_conditions, sell_conditions = _seen[0], _seen[1]
             # Its reason lines go too: a condition that scored nothing must not tell
             # Telegram or the shadow agents that it fired.
@@ -959,6 +964,7 @@ def generate_signals(df, htf=None, market_structure=None, sr=None, mode='futures
     signal['buy_score'] = round(buy_conditions, 2)
     signal['sell_score'] = round(sell_conditions, 2)
     signal['_contributions'] = _contrib
+    signal['_disabled_contributions'] = _disabled
     signal['atr'] = current['ATR_14']
     signal['_threshold'] = threshold
 

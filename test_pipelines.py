@@ -3199,6 +3199,43 @@ def test_log_cycle_stores_variants_as_json():
     finally:
         _restore_history_db(h, saved, path)
 
+def test_disabled_conditions_keep_a_shadow_record_without_scoring():
+    """H-SR (2026-11-20): support_resistance is pruned but still logged. A disabled
+    condition's would-be (buy, sell) goes to `_disabled_contributions` and
+    cycle_log.disabled_contributions, and no score, reason or contribution moves."""
+    import json
+    import numpy as np
+    from signals.engine import generate_signals
+    from signals.indicators import detect_support_resistance
+    rng = np.random.default_rng(11)
+    df = _frame(80_000 + np.cumsum(rng.normal(0, 120, 420)))
+    seen = 0
+    for i in range(300, 420):
+        w = df.iloc[:i + 1]
+        sr = detect_support_resistance(w)
+        kw = dict(htf=None, market_structure=None, sr=sr, mode="futures", threshold_override=5.0)
+        live = generate_signals(w, **kw)
+        full = generate_signals(w, disabled=(), **kw)
+        would = full["_contributions"]["support_resistance"]
+        assert live["_disabled_contributions"]["support_resistance"] == would
+        assert live["_contributions"]["support_resistance"] == (0.0, 0.0)
+        assert abs((full["buy_score"] - live["buy_score"]) - would[0]) < 0.011
+        assert abs((full["sell_score"] - live["sell_score"]) - would[1]) < 0.011
+        seen += would != (0.0, 0.0)
+    assert seen > 0, "the shadow record must see S/R fire"
+    h, saved, path = _temp_history_db()
+    try:
+        sig = generate_signals(df, None, None, detect_support_resistance(df), mode="futures",
+                               threshold_override=5.2)
+        h.log_cycle(sig, df, None, None, "futures")
+        h.log_cycle(dict(sig, _disabled_contributions=None), df, None, None, "futures")
+        rows = h._conn().execute("SELECT disabled_contributions FROM cycle_log ORDER BY id").fetchall()
+        assert set(json.loads(rows[0][0])) >= {"support_resistance", "basis", "taker"}, rows[0][0]
+        assert rows[1][0] is None
+    finally:
+        _restore_history_db(h, saved, path)
+
+
 def test_attach_variants_never_raises_into_the_cycle():
     """A broken history read must leave the real signal unchanged and simply record no
     variants — the cycle is worth more than the experiment."""
@@ -7676,6 +7713,7 @@ if __name__ == "__main__":
     run("dashboard: read-only, local, no blank",    _before_scanner_reset(test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel))
     run("basis own checkpoint, no stale reason", test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason)
     run("S/R pruned after H-SR FAIL: 24.25/21.75", test_support_resistance_is_pruned_from_both_modes_after_h_sr_failed)
+    run("disabled conditions: shadow record only", test_disabled_conditions_keep_a_shadow_record_without_scoring)
     run("gold/VIX survive weekend + rollover",    test_gold_and_vix_survive_a_weekend_and_the_daily_rollover)
     run("scanner reset: carried, books, windows",  test_scanner_reset_carries_old_positions_and_restarts_every_window)
     run("H-SR: S/R reads own levels, can fire",   test_sr_condition_reads_its_own_levels_and_can_fire)
