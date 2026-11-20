@@ -292,6 +292,9 @@ def _migrate_paper_positions():
         ("pyramid_entry",  "INTEGER DEFAULT NULL"),
         ("size_factor",    "REAL DEFAULT 1.0"),
         ("exit_price",     "REAL"),
+        # Where the resting-order walk (trading/paper.py) resumes: the close of the last
+        # 1m bar walked. NULL = a position opened before resting orders existed.
+        ("last_checked_at", "TEXT"),
     ]
     for col, coltype in new_cols:
         try:
@@ -700,19 +703,21 @@ def open_paper_position(signal, mode='futures', pyramid_entry=None, size_factor=
     conn = _conn()
     tp1 = signal["take_profit"]
     tp2 = signal.get("tp2", tp1)
+    opened_at = datetime.now(UTC).isoformat()
     atr = signal.get("atr")
     cur = conn.execute(
         """INSERT INTO paper_positions
            (signal_id, type, entry_price, stop_loss, take_profit,
-            opened_at, atr, trailing_stop, tp1, tp2, partial_closed, mode, pyramid_entry, size_factor)
-           VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?,?)""",
+            opened_at, atr, trailing_stop, tp1, tp2, partial_closed, mode, pyramid_entry, size_factor,
+            last_checked_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,0,?,?,?,?)""",
         (
             signal.get("db_id"),
             signal["type"],
             signal["entry_price"],
             signal["stop_loss"],
             tp1,
-            datetime.now(UTC).isoformat(),
+            opened_at,
             atr,
             signal["stop_loss"],   # trailing_stop starts at original SL
             tp1,
@@ -720,6 +725,7 @@ def open_paper_position(signal, mode='futures', pyramid_entry=None, size_factor=
             mode,
             pyramid_entry,
             size_factor,
+            opened_at,
         ),
     )
     conn.commit()
@@ -830,6 +836,13 @@ def update_trailing_stop(pos_id, new_sl):
         "UPDATE paper_positions SET trailing_stop=? WHERE id=?",
         (round(new_sl, 2), pos_id),
     )
+    c.commit()
+
+
+def set_last_checked(pos_id, iso):
+    """Record where the resting-order walk resumes for this position."""
+    c = _conn()
+    c.execute("UPDATE paper_positions SET last_checked_at=? WHERE id=?", (iso, pos_id))
     c.commit()
 
 

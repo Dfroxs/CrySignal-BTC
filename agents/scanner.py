@@ -372,6 +372,10 @@ def connect(path=DB_PATH):
         );
         CREATE INDEX IF NOT EXISTS idx_scan_pos_open ON scan_positions(book, coin, closed_bar);
     """)
+    try:   # 2026-11-19: when the entry was priced (NULL = at the bar close, the old rule)
+        con.execute("ALTER TABLE scan_positions ADD COLUMN entry_at TEXT")
+    except sqlite3.OperationalError:
+        pass
     return con
 
 
@@ -408,6 +412,39 @@ def book_account(con, book="futures"):
     return BOOK_START_USD + real, used
 
 
+# Amended 2026-11-19 (owner): the answer arrives ~5 minutes after the bar close, so a book
+# entry priced at the close was 5 minutes stale. A position now enters at the perp price
+# fetched once the picks are in, and its first hour is judged on the 1m bars after that
+# moment. A failed fetch falls back to the bar close and the 1h bar, as before.
+
+def fill_prices(get=_get):
+    """({coin: last perp price}, the moment fetched in ms), or ({}, None) on failure."""
+    try:
+        rows = get("/fapi/v1/ticker/price")
+        at = int(time.time() * 1000)
+        px = {r["symbol"][:-4]: float(r["price"]) for r in rows if r.get("symbol", "").endswith("USDT")}
+        return {c: px[c] for c in UNIVERSE if c in px}, at
+    except Exception as exc:  # noqa: BLE001 - the book falls back to the bar close
+        logger.warning("fill prices: %s", exc)
+        return {}, None
+
+
+def _first_hour(get, coin, entry_ms, bar_end_ms):
+    """(high, low) of the 1m perp bars from the first whole minute after `entry_ms` to the end
+    of the entry bar, or None when they cannot be fetched."""
+    start = -(-entry_ms // 60_000) * 60_000
+    try:
+        rows = get("/fapi/v1/klines", {"symbol": coin + "USDT", "interval": "1m",
+                                       "startTime": start, "endTime": bar_end_ms - 1, "limit": 60})
+        rows = [r for r in rows if start <= int(r[0]) < bar_end_ms]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("%s first-hour 1m bars: %s", coin, exc)
+        return None
+    if not rows:
+        return None
+    return max(float(r[2]) for r in rows), min(float(r[3]) for r in rows)
+
+
 def book_levels(side, entry, atr_pct):
     d = 1 if side == "LONG" else -1
     a = entry * atr_pct / 100 * BOOK_ATR_SCALE
@@ -422,12 +459,12 @@ def _close_pos(con, pid, book, side, entry, size, bar_close_ms, exit_px, outcome
                                round(pct / 100 * size, 4), pid))
 
 
-def manage_book(con, snap):
+def manage_book(con, snap, get=_get):
     """Walk every open position through the closed bars after its entry. Returns closes."""
     closed = 0
-    for pid, book, coin, side, opened, entry, stop, target, size in con.execute(
-            "SELECT id, book, coin, side, opened_bar, entry, stop, target, size_usd FROM scan_positions "
-            "WHERE closed_bar IS NULL").fetchall():
+    for pid, book, coin, side, opened, entry, stop, target, size, entry_at in con.execute(
+            "SELECT id, book, coin, side, opened_bar, entry, stop, target, size_usd, entry_at "
+            "FROM scan_positions WHERE closed_bar IS NULL").fetchall():
         f = snap["coins"].get(coin)
         if not f:
             continue                         # missing this hour; the next fetch has the bars
@@ -437,6 +474,11 @@ def manage_book(con, snap):
             end = open_ms + BAR_MS
             if open_ms < t0:
                 continue
+            if open_ms == t0 and entry_at:
+                # The entry bar: only the minutes after the fill count.
+                fh = _first_hour(get, coin, int(datetime.fromisoformat(entry_at).timestamp() * 1000), end)
+                if fh is not None:
+                    hi, lo = fh
             hit_stop = lo <= stop if side == "LONG" else hi >= stop
             hit_tgt = hi >= target if side == "LONG" else lo <= target
             if hit_stop or hit_tgt:
@@ -451,7 +493,7 @@ def manage_book(con, snap):
     return closed
 
 
-def open_book(con, cid, picks, snap, bar_close_ms, book="futures"):
+def open_book(con, cid, picks, snap, bar_close_ms, book="futures", fills=None, fill_ms=None):
     """One position per coin and book: a pick for a coin the book already holds is ignored,
     one the book cannot take (SHORT on spot) or the free cash cannot cover is skipped.
     Size = BOOK_FRACTION of the book's realised equity."""
@@ -467,11 +509,13 @@ def open_book(con, cid, picks, snap, bar_close_ms, book="futures"):
         if size <= 0 or used + size > equity:
             logger.info("book: no cash for %s (%.2f used of %.2f)", coin, used, equity)
             continue
-        stop, target = book_levels(p["side"], f["close"], f["atr_pct"])
+        fill = (fills or {}).get(coin) if fill_ms else None
+        entry = fill or f["close"]
+        stop, target = book_levels(p["side"], entry, f["atr_pct"])
         con.execute("INSERT INTO scan_positions (book, coin, side, cycle_id, confidence, opened_bar, "
-                    "entry, stop, target, atr_pct, size_usd) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                    (book, coin, p["side"], cid, p["confidence"], _iso(bar_close_ms), f["close"],
-                     stop, target, f["atr_pct"], size))
+                    "entry, stop, target, atr_pct, size_usd, entry_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (book, coin, p["side"], cid, p["confidence"], _iso(bar_close_ms), entry,
+                     stop, target, f["atr_pct"], size, _iso(fill_ms) if fill else None))
         used += size
         opened += 1
     return opened
@@ -498,7 +542,7 @@ def run_once(ask_fn=None, get=_get, db_path=DB_PATH, now_ms=None, usage_path=USA
             logger.info("bar %s already scanned", bar)
             return None
         try:
-            manage_book(con, snap)           # exits first, on the bars closed since last cycle
+            manage_book(con, snap, get)      # exits first, on the bars closed since last cycle
         except Exception as exc:  # noqa: BLE001 - the book must never cost a scan
             logger.warning("paper book not managed: %s", exc)
         ctx = build_context(snap, engine=(arm == "hybrid"))
@@ -529,8 +573,10 @@ def run_once(ask_fn=None, get=_get, db_path=DB_PATH, now_ms=None, usage_path=USA
             [(cid, c, p["side"], p["confidence"], p["reason"], snap["coins"][c]["close"])
              for c, p in picks.items()])
         try:
+            fills, fill_ms = (fill_prices(get) if any(p["side"] in ("LONG", "SHORT") for p in picks.values())
+                              else ({}, None))
             for book in BOOKS:
-                open_book(con, cid, picks, snap, snap["bar_close_ms"], book)
+                open_book(con, cid, picks, snap, snap["bar_close_ms"], book, fills, fill_ms)
         except Exception as exc:  # noqa: BLE001
             logger.warning("paper book not opened: %s", exc)
         con.commit()

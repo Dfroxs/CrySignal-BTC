@@ -2191,6 +2191,111 @@ def test_a_live_tp2_exit_pays_a_full_round_trip_and_records_its_price():
         sent.check_upcoming_macro_events = orig
         _restore_history_db(h, saved, path)
 
+def test_resting_orders_fill_at_their_level_between_checks():
+    """Design decision 2026-11-19 (owner): stops and targets rest like exchange orders. The
+    bot used to look only at :01 and :31 and close at the price then: runs 1-3 trail exits
+    filled ~0.28% past the stop, and a target touched between checks was missed. Now the
+    1m bars since the last check are walked first: the first level touched fills at the
+    level (at the bar's open on a gap), the stop first when one bar touches both, as
+    backtest._simulate_forward fills them."""
+    from datetime import UTC, datetime, timedelta
+    import signals.sentiment as sent
+    from trading import paper
+    h, saved, path = _temp_history_db()
+    orig = sent.check_upcoming_macro_events
+    sent.check_upcoming_macro_events = lambda: (False, None)
+    t0 = datetime(2026, 11, 19, 17, 0, tzinfo=UTC)
+    ms = lambda k: int((t0 + timedelta(minutes=k)).timestamp() * 1000)
+    calls = []
+    def src(bars):
+        def fetch(since_ms):
+            calls.append(since_ms)
+            return [b for b in bars if b[0] >= since_ms]
+        return fetch
+    def open_pos(stype, sl, tp1, tp2, mode="futures"):
+        pid = h.open_paper_position({"type": stype, "entry_price": 100.0, "stop_loss": sl,
+                                     "take_profit": tp1, "tp2": tp2, "atr": 1.0}, mode=mode)
+        h._conn().execute("UPDATE paper_positions SET opened_at=?, last_checked_at=? WHERE id=?",
+                          (t0.isoformat(), t0.isoformat(), pid))
+        h._conn().commit()
+        return pid
+    row = lambda pid: dict(h._conn().execute("SELECT * FROM paper_positions WHERE id=?", (pid,)).fetchone())
+    try:
+        # 1. stop touched at 17:01, price back to 96.5 by the check: LOSS at the stop, not missed
+        pid = open_pos("BUY", 95.0, 101.0, 102.0)
+        bars = [(ms(0), 100.0, 100.5, 99.8, 100.2, 1), (ms(1), 100.2, 100.3, 94.0, 96.0, 1)]
+        out = paper.check_and_close_positions(96.5, mode="futures", minute_bars=src(bars))
+        r = row(pid)
+        assert r["outcome"] == "LOSS" and r["exit_price"] == 95.0, r
+        assert abs(r["pnl_pct"] - paper._calc_pnl(dict(r, partial_closed=0), 95.0)) < 1e-9
+        assert [e["outcome"] for e in out] == ["SL"] and calls[-1] == ms(0)
+        # 2. a gap: the bar opens below the stop, so the stop fills at the open
+        pid = open_pos("BUY", 95.0, 101.0, 102.0)
+        paper.check_and_close_positions(93.5, mode="futures",
+                                        minute_bars=src([(ms(0), 94.0, 94.5, 93.0, 93.5, 1)]))
+        assert row(pid)["exit_price"] == 94.0
+        # 3. TP1 touched between checks, then back under it: the partial is taken at TP1,
+        #    the trail moves to entry, and the next bar's dip fills the rest at entry
+        pid = open_pos("BUY", 95.0, 101.0, 102.0)
+        bars = [(ms(0), 100.1, 101.2, 100.05, 100.6, 1), (ms(1), 100.6, 100.7, 99.9, 100.1, 1)]
+        out = paper.check_and_close_positions(100.4, mode="futures", minute_bars=src(bars))
+        r = row(pid)
+        assert r["partial_closed"] == 1 and r["exit_price"] == 100.0 and r["outcome"] in ("WIN", "LOSS"), r
+        assert [e["outcome"] for e in out] == ["TP1", r["outcome"] == "LOSS" and "SL" or "Trail"]
+        # 4. one bar touches both the stop and TP1: the stop wins, as in the backtest
+        pid = open_pos("BUY", 95.0, 101.0, 102.0)
+        paper.check_and_close_positions(98.0, mode="futures",
+                                        minute_bars=src([(ms(0), 100.0, 101.5, 94.5, 98.0, 1)]))
+        r = row(pid)
+        assert r["exit_price"] == 95.0 and not r["partial_closed"], r
+        # 5. SELL mirror, TP1 then TP2 in later bars: WIN at TP2
+        pid = open_pos("SELL", 105.0, 99.0, 98.0)
+        bars = [(ms(0), 99.8, 99.9, 98.9, 99.5, 1), (ms(1), 99.5, 99.6, 97.8, 98.1, 1)]
+        out = paper.check_and_close_positions(98.3, mode="futures", minute_bars=src(bars))
+        r = row(pid)
+        assert r["outcome"] == "WIN" and r["exit_price"] == 98.0 and r["partial_closed"] == 1, r
+        assert [e["outcome"] for e in out] == ["TP1", "TP2"]
+        # 5b. TP1 and a return to entry inside one bar: the moved stop fills in that same
+        #     bar, as backtest._simulate_forward books it (TP1, then TP2, then the trail)
+        pid = open_pos("SELL", 105.0, 99.0, 98.0)
+        paper.check_and_close_positions(99.5, mode="futures",
+                                        minute_bars=src([(ms(0), 100.0, 100.2, 98.9, 99.5, 1)]))
+        r = row(pid)
+        assert r["partial_closed"] == 1 and r["exit_price"] == 100.0, r
+        # 6. nothing touched: the position stays open, last_checked advances, and a second
+        #    check never walks the same bars again
+        pid = open_pos("BUY", 95.0, 101.0, 102.0)
+        bars = [(ms(0), 100.0, 100.4, 99.6, 100.1, 1), (ms(1), 100.1, 100.3, 99.7, 100.0, 1)]
+        paper.check_and_close_positions(100.0, mode="futures", minute_bars=src(bars))
+        assert row(pid)["outcome"] is None
+        assert row(pid)["last_checked_at"] == (t0 + timedelta(minutes=2)).isoformat()
+        paper.check_and_close_positions(100.0, mode="futures", minute_bars=src(bars))
+        assert calls[-1] == ms(2), "the next walk starts after the last bar walked"
+        # 7. a position from before this change (no last_checked_at) is not walked back:
+        #    its trail may have moved since, and an old bar would read against the new level
+        pid = open_pos("BUY", 95.0, 101.0, 102.0)
+        h._conn().execute("UPDATE paper_positions SET last_checked_at=NULL WHERE id=?", (pid,))
+        h._conn().commit()
+        n = len(calls)
+        paper.check_and_close_positions(100.0, mode="futures",
+                                        minute_bars=src([(ms(0), 100.0, 100.0, 90.0, 100.0, 1)]))
+        assert row(pid)["outcome"] is None and row(pid)["last_checked_at"] > t0.isoformat()
+        assert all(c > ms(0) for c in calls[n:]), "nothing is walked from before the change"
+        # 8. a failed fetch falls back to the price check and keeps last_checked
+        pid = open_pos("BUY", 95.0, 101.0, 102.0)
+        def boom(since_ms):
+            raise RuntimeError("network")
+        paper.check_and_close_positions(100.0, mode="futures", minute_bars=boom)
+        assert row(pid)["outcome"] is None and row(pid)["last_checked_at"] == t0.isoformat()
+        # 9. a fresh position is stamped at open, so the first check walks from there
+        pid = h.open_paper_position({"type": "BUY", "entry_price": 100.0, "stop_loss": 95.0,
+                                     "take_profit": 101.0, "tp2": 102.0, "atr": 1.0}, mode="spot")
+        assert row(pid)["last_checked_at"] == row(pid)["opened_at"]
+    finally:
+        sent.check_upcoming_macro_events = orig
+        _restore_history_db(h, saved, path)
+
+
 def test_a_trade_without_a_partial_still_pays_exactly_two_sides():
     """The no-partial path was always right; this holds it there while the other is fixed."""
     from backtest import _net_pnl
@@ -6663,6 +6768,52 @@ def test_scanner_eval_excess_day_unit_verdict_and_leakage():
     assert len(e.load(db, prompt=None)[0]) == 4
 
 
+def test_scanner_book_enters_at_the_answer_price_and_walks_its_first_hour_from_there():
+    """Design decision 2026-11-19 (owner): the book priced entry at the bar close (:00) while
+    the answer arrives ~:05. It now enters at the perp price fetched when the answer is in,
+    and judges the first hour on the 1m bars after that moment, so a move in the five
+    minutes before the entry can neither stop nor fill it. A failed fetch falls back to the
+    old rule; positions from before keep it."""
+    import os
+    import tempfile
+    from agents import scanner as s
+    H, M = s.BAR_MS, 60_000
+    t0 = 1_800_000_000_000 // H * H
+    fill_ms = t0 + 5 * M + 20_000
+    def get(path, params=None, session=None):
+        if path == "/fapi/v1/ticker/price":
+            return [{"symbol": "BTCUSDT", "price": "101.0"}, {"symbol": "ETHUSDT", "price": "50.0"}]
+        if path == "/fapi/v1/klines" and params.get("interval") == "1m":
+            assert params["startTime"] == t0 + 6 * M, "the first whole minute after the fill"
+            return [[t0 + k * M, "101", "101.4", "100.6", "101", "1"] for k in range(6, 60)]
+        raise AssertionError(path)
+    fills, at = s.fill_prices(get)
+    assert fills == {"BTC": 101.0, "ETH": 50.0} and at is not None
+    con = s.connect(os.path.join(tempfile.mkdtemp(), "b.db"))
+    f = lambda bars: {"close": 100.0, "atr_pct": 1.0 / s.BOOK_ATR_SCALE, "_bars": bars}
+    snap = {"bar_close_ms": t0, "coins": {"BTC": f([]), "SOL": f([])}}
+    picks = {"BTC": {"side": "LONG", "confidence": 60}, "SOL": {"side": "LONG", "confidence": 60}}
+    assert s.open_book(con, 1, picks, snap, t0, fills={"BTC": 101.0}, fill_ms=fill_ms) == 2
+    rows = {r[0]: r[1:] for r in con.execute("SELECT coin, entry, stop, target, entry_at FROM scan_positions")}
+    assert rows["BTC"][0] == 101.0 and abs(rows["BTC"][1] - (101.0 - 1.5 * 1.01)) < 1e-9, rows["BTC"]
+    assert rows["BTC"][3] == s._iso(fill_ms), "the fill moment is stored"
+    assert rows["SOL"][0] == 100.0 and rows["SOL"][3] is None, "no fill price: the old rule"
+    # the first 1h bar dips to 98.0 (below BTC's stop 99.485), but only in the minutes before
+    # the fill; the 1m bars after it stay above. SOL (stop 98.5) has no fill time, so its 1h
+    # bar counts and stops it.
+    first = (t0, 101.5, 98.0, 101.0)
+    snap2 = {"coins": {"BTC": f([first]), "SOL": f([first])}}
+    assert s.manage_book(con, snap2, get) == 1
+    out = dict(con.execute("SELECT coin, outcome FROM scan_positions"))
+    assert out == {"BTC": None, "SOL": "STOP"}, out
+    def down(path, params=None, session=None):
+        raise RuntimeError("network")
+    con2 = s.connect(os.path.join(tempfile.mkdtemp(), "c.db"))
+    s.open_book(con2, 1, {"BTC": picks["BTC"]}, snap, t0, fills={"BTC": 101.0}, fill_ms=fill_ms)
+    assert s.manage_book(con2, snap2, down) == 1, "1m bars unavailable: the 1h bar decides"
+    assert s.fill_prices(down) == ({}, None)
+
+
 def test_scanner_diag_parts_on_synthetic_data_follow_the_prereg():
     """H-SCD on synthetic data only (the prereg forbids any run on the real window before
     H-SC's date). 80 daily cycles, 3 coins. Claude goes LONG one coin a day, which moves
@@ -7321,6 +7472,8 @@ if __name__ == "__main__":
     run("random arm: count-matched, seeded, no model", test_scanner_random_arm_deals_pure_picks_count_matched_and_mirrors_failures)
     run("scanner digest: per arm, silent when quiet", test_scanner_digest_lists_opens_and_closes_per_arm_and_is_silent_when_quiet)
     run("H-SCD diag: parts, split, hash lock",      test_scanner_diag_parts_on_synthetic_data_follow_the_prereg)
+    run("resting orders fill at their level",     test_resting_orders_fill_at_their_level_between_checks)
+    run("scanner book: answer-price entry, 1m first hour", test_scanner_book_enters_at_the_answer_price_and_walks_its_first_hour_from_there)
     run("dashboard: read-only, local, no blank",    test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel)
     run("basis own checkpoint, no stale reason", test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason)
 
