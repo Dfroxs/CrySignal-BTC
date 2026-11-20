@@ -4,6 +4,19 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-20 — S/R fix deployed: run 5 restarts at 17:05; H-VG and H-VR/H-BS windows restart
+
+- **Deploy:** pulled `ac5ab68` (PR #69). The bot restarted at 17:05:03 UTC, pid 422848.
+- **Manifest:** regenerated, `started_at = 2026-11-20T17:05:36Z`. The 15:19 one is archived
+  as `paper_run_manifest.run5-1519.json`. In between there were 0 positions, 3 blocked
+  SELLs and 1 shadow opinion.
+- **Windows** (prereg amendments; about 1h45m old, nothing computed):
+  - H-VG: `veto_gate_eval.FROM` → 2026-11-20 17:05:03.
+  - H-VR/H-BS: `run4b_eval.FROM` → 2026-11-20 17:05:03, END 2027-01-19 17:05:03.
+- **Scanner:** its window (2026-11-21 00:00) starts after the fix, so it is not cut.
+
+---
+
 ## 2026-11-20 — fix: the S/R condition can fire (H-SR pre-registered)
 
 This is a design decision for data yield (owner: "perbaiki ... ketimbang di hapus tidak punya
