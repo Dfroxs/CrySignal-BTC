@@ -139,3 +139,12 @@ window restarts. It was about 15 hours old and nothing in it was computed.
 **New window:** 2026-11-19 16:34:53 UTC (the bot's restart at `8ca245a`) to 2027-02-17
 16:34:53 UTC. Everything else is unchanged.
 
+## Amendment 2026-11-20: the window restarts at the resting-orders restart
+
+Live stops and targets now rest like exchange orders: the 1m bars since the last check are
+walked first (PR #64, a design decision). That changes exits, so per § Window and restarts
+the window restarts. It was about 11 hours old and nothing in it was computed.
+
+**New window:** 2026-11-20 03:22:51 UTC (the bot's restart at `f7310d5`) to 2027-02-18
+03:22:51 UTC. Everything else is unchanged.
+
