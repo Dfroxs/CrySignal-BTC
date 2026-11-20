@@ -4695,11 +4695,14 @@ def test_shadow_context_sends_failed_fetches_as_missing_not_as_numbers():
     sig = _shadow_signal("BUY", "futures")
     sig["_market"] = {"funding": {"rate_pct": 0.0, "basis_pct": 0.0}, "long_short": {"ratio": 1.0},
                       "open_interest": {"change_pct": 0.0}, "taker": {"ratio": 1.0},
-                      "dxy": {"change_pct": -0.06}}
+                      "dxy": {"current": 99.5, "change_pct": -0.06},
+                      "gold": {"current": 3570.0, "change_pct": -2.9},
+                      "vix": {"current": 0, "change_pct": 0}, "sp500": {}}
     m = build_context(sig)["market"]
-    for k in ("funding_rate_pct", "basis_pct", "ls_ratio", "oi_change_pct", "taker_ratio"):
+    for k in ("funding_rate_pct", "basis_pct", "ls_ratio", "oi_change_pct", "taker_ratio",
+              "vix_change_pct", "sp500_change_pct"):
         assert m[k] is None, (k, m[k])
-    assert m["dxy_change_pct"] == -0.06, "real readings must pass through"
+    assert m["dxy_change_pct"] == -0.06 and m["gold_change_pct"] == -2.9, "real readings must pass through"
     real = build_context(_shadow_signal("BUY", "futures"))["market"]
     assert real["ls_ratio"] == 1.31 and real["funding_rate_pct"] == 0.004
 
