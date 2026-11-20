@@ -1207,7 +1207,7 @@ def _picks_tab(f):
     det.append('<p class="note">Aturan semua akun pilih koin: tiap posisi 10% saldo, satu posisi per koin, stop '
                '1,5×ATR, target 3×ATR, ditutup paling lama 24 jam. Biaya futures 0,20%, spot 0,30%. Akun spot '
                'hanya mengambil LONG.</p>')
-    det.append(f'<p class="note">Panggilan Claude murni: {s["cycles"]}, gagal {s["errors"]}, biaya ${s["usd"]:.2f}.</p>')
+    det.append(_cost_note(s))
     P.append('<details class="tech"><summary>Detail teknis</summary>' + "".join(det) + "</details>")
     return "".join(P)
 
@@ -1319,6 +1319,11 @@ def _btc_tab(f, now):
     return "".join(P)
 
 
+def _cost_note(s):
+    """The scanner's call count and cost since it started, in the page's own money format."""
+    return f'<p class="note">Panggilan Claude murni: {s["cycles"]}, gagal {s["errors"]}, biaya {_money(s["usd"])}.</p>'
+
+
 def _system_tab(f, now):
     h, d, c, man = f.get("host") or {}, f.get("db") or {}, f.get("cost"), f.get("manifest") or {}
     rows = [[f'<span class="dot {"" if ok else "bad"}" aria-hidden="true"></span>', e(name), f"<b>{e(val)}</b>",
@@ -1328,10 +1333,10 @@ def _system_tab(f, now):
         bud = c.get("budget")
         over = bud and c["llm_usd_projected_month"] > bud
         P.append('<section><h2>Biaya Claude API</h2><dl class="kv">'
-                 f'<div><dt>24 jam terakhir</dt><dd>${c["llm_usd_24h"]:.2f}</dd></div>'
-                 f'<div><dt>Bulan ini</dt><dd>${c["llm_usd_mtd"]:.2f}</dd></div>'
+                 f'<div><dt>24 jam terakhir</dt><dd>{_money(c["llm_usd_24h"])}</dd></div>'
+                 f'<div><dt>Bulan ini</dt><dd>{_money(c["llm_usd_mtd"])}</dd></div>'
                  f'<div><dt>Perkiraan akhir bulan</dt><dd class="{"neg" if over else ""}">'
-                 f'${c["llm_usd_projected_month"]:.2f}{f"<small>batas ${bud:.0f}</small>" if bud else ""}</dd></div></dl></section>')
+                 f'{_money(c["llm_usd_projected_month"])}{f"<small>batas {_money(bud)}</small>" if bud else ""}</dd></div></dl></section>')
     meta = [("Run dimulai", f"{_t(man.get('started_at'))} UTC"), ("Bot berjalan sejak", f"{_t(h.get('bot_since'))} UTC" if h.get("bot_since") else "–"),
             ("Versi kode di VPS", h.get("git_head") or "–"), ("Siklus 24 jam", _n(d.get("cycles_24h"), 0)),
             ("Ukuran database", f"{d.get('db_mb', '–')} MB"), ("Backup terakhir", e(h.get("backup_latest") or "–"))]
@@ -1812,6 +1817,12 @@ def render(f):
              '<dt>SHORT ↓</dt><dd>bertaruh harga turun; untung kalau harga turun.</dd>'
              '<dt>Stop</dt><dd>harga batas rugi; posisi ditutup otomatis di sana.</dd>'
              '<dt>Target</dt><dd>harga ambil untung.</dd>'
+             '<dt>TP1</dt><dd>target pertama; separuh posisi ditutup di sini.</dd>'
+             '<dt>TP2</dt><dd>target kedua untuk separuh sisanya.</dd>'
+             '<dt>Trailing stop</dt><dd>stop yang ikut bergerak mengikuti harga untuk mengunci untung.</dd>'
+             '<dt>Leverage</dt><dd>pengali modal pada futures.</dd>'
+             '<dt>Likuidasi</dt><dd>harga di mana posisi ber-leverage habis.</dd>'
+             '<dt>Bawaan</dt><dd>posisi dari sebelum reset; berjalan sampai tutup, tidak dihitung di saldo sekarang.</dd>'
              '<dt>Untung/rugi</dt><dd>hasil kalau posisi ditutup saat ini; belum final.</dd>'
              '<dt>Spot / futures</dt><dd>spot hanya bisa LONG; futures bisa LONG dan SHORT.</dd>'
              '<dt>Acak</dt><dd>akun patokan: jumlah dan arah sama dengan Claude murni, koinnya diundi.</dd>'

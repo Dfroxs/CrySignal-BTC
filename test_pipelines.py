@@ -6992,6 +6992,29 @@ def test_dashboard_method_tabs_open_with_how_it_works_and_summary_links():
     assert "Tidak ada posisi BTC" in pane(empty, "btc")
 
 
+def test_dashboard_money_is_indonesian_everywhere_and_glossary_explains_levels():
+    """One number format on the page ($1,14, not $1.14), and the glossary explains every level a
+    card names."""
+    import os, tempfile
+    from datetime import UTC, datetime
+    from agents import dashboard as dsh
+    assert "$1,14" in dsh._cost_note({"cycles": 96, "errors": 0, "usd": 1.14})
+    now = datetime(2026, 11, 20, 19, 30, tzinfo=UTC)
+    sy = dsh._system_tab({"host": {}, "db": {}, "manifest": {},
+                          "cost": {"llm_usd_24h": 0.63, "llm_usd_mtd": 3.44, "llm_usd_projected_month": 9.91,
+                                   "budget": None}}, now)
+    assert "$0,63" in sy and "$3,44" in sy and "$9,91" in sy and "$3.44" not in sy, sy
+    h, saved, path = _temp_history_db()
+    try:
+        h._conn()
+        page = dsh.render(dsh.collect(dsh.ROOT, path, os.path.join(tempfile.mkdtemp(), "none.db"), now,
+                                      lambda cmd: "active"))
+    finally:
+        _restore_history_db(h, saved, path)
+    for term in ("TP1", "TP2", "Trailing stop", "Leverage", "Likuidasi", "Bawaan"):
+        assert f"<dt>{term}</dt>" in page, term
+
+
 def test_scanner_reset_carries_old_positions_and_restarts_every_window():
     """Owner's reset with run 5: every arm's books start again at $1,000, and H-SC/H-SC2/H-SCD
     count only cycles from WINDOW_FROM. A position opened before it runs out on its own, holds
@@ -7863,6 +7886,7 @@ if __name__ == "__main__":
     run("dash: BTC rows carry TP1/partial/sizing", test_dashboard_btc_open_rows_carry_partial_tp1_trailing_and_sizing)
     run("dash: one card per position, plain words", test_dashboard_position_cards_say_method_status_levels_and_leverage)
     run("dash: a tab per method, Cara kerja, links", test_dashboard_method_tabs_open_with_how_it_works_and_summary_links)
+    run("dash: Indonesian money, fuller glossary",  test_dashboard_money_is_indonesian_everywhere_and_glossary_explains_levels)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
