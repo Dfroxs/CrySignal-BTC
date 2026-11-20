@@ -402,13 +402,19 @@ BOOKS = {   # round trip in pp: (fee + 0.05% slippage) x 2; sides the book can t
 }
 BOOK_COST_PP = BOOKS["futures"]["cost_pp"]
 
+# Reset 2026-11-20 (owner, with run 5): every arm's books restart at BOOK_START_USD and
+# H-SC / H-SC2 / H-SCD count only cycles from this bar close on. A position opened before it
+# is carried: it runs out on its own levels (<= BOOK_HOLD_H) and holds its coin's slot, but
+# no balance counts it. Compared as text, the format every scan_* timestamp is stored in.
+WINDOW_FROM = "2026-11-21T00:00:00+00:00"
+
 
 def book_account(con, book="futures"):
-    """(realised equity, USD tied up in open positions) of one book."""
-    real = con.execute("SELECT COALESCE(SUM(pnl_usd), 0) FROM scan_positions "
-                       "WHERE book = ? AND closed_bar IS NOT NULL", (book,)).fetchone()[0]
-    used = con.execute("SELECT COALESCE(SUM(size_usd), 0) FROM scan_positions "
-                       "WHERE book = ? AND closed_bar IS NULL", (book,)).fetchone()[0]
+    """(realised equity, USD tied up in open positions) of one book, from WINDOW_FROM."""
+    real = con.execute("SELECT COALESCE(SUM(pnl_usd), 0) FROM scan_positions WHERE book = ? "
+                       "AND closed_bar IS NOT NULL AND opened_bar >= ?", (book, WINDOW_FROM)).fetchone()[0]
+    used = con.execute("SELECT COALESCE(SUM(size_usd), 0) FROM scan_positions WHERE book = ? "
+                       "AND closed_bar IS NULL AND opened_bar >= ?", (book, WINDOW_FROM)).fetchone()[0]
     return BOOK_START_USD + real, used
 
 

@@ -55,3 +55,10 @@ often hybrid's pick agrees with `engine_signal`; both arms' demo books; cost.
 
 - **PASS:** keeping the engine score in the scanner's input for any later scanner work.
 - **FAIL / INCONCLUSIVE:** the scanner stays pure. No profit claim either way.
+
+## Addendum 2026-11-20: window restarts at 2026-11-21 00:00 UTC (owner)
+
+With the run-5 reset, H-SC2 counts only cycles of both arms with `bar_close >=
+2026-11-21T00:00:00+00:00` (`agents.scanner.WINDOW_FROM`). It needs 60 paired days from
+there. The hybrid books restart at $1,000 the same way as the pure ones (see the H-SC
+prereg's addendum of this date). Nothing on the window had been computed. Criteria unchanged.

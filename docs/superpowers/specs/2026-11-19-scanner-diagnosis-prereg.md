@@ -244,3 +244,9 @@ This replaces "committed, with its hash in the results doc": the Telegram messag
 tamper-evident record made before confirmation. The results doc quotes it afterwards.
 Nothing else changes.
 
+## Amendment 2026-11-20: the window follows H-SC's restart
+
+H-SCD diagnoses H-SC's window, so it now starts at 2026-11-21 00:00 UTC, and it still runs
+on H-SC's scoring date. `scanner_diag` reads cycles through `scanner_eval.load` and the
+closed book rows from `WINDOW_FROM`. Every arm's window starts at the same bar. Nothing had
+been computed.
