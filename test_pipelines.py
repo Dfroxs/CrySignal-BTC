@@ -6731,6 +6731,32 @@ def _before_scanner_reset(fn):
     return wrapped
 
 
+def test_sr_condition_reads_its_own_levels_and_can_fire():
+    """H-SR: condition 16 read `sr`, whose levels are all >= 0.5% from the close, while it
+    scores only within 0.2xATR, so it never fired. It now finds its own levels with no
+    minimum distance. `sr=None` still scores nothing, and `sr` itself is unchanged."""
+    import numpy as np
+    from signals.engine import generate_signals
+    from signals.indicators import detect_support_resistance
+    rng = np.random.default_rng(11)
+    df = _frame(80_000 + np.cumsum(rng.normal(0, 120, 420)))
+    fired, old_in_reach = 0, 0
+    for i in range(300, 420):
+        w = df.iloc[:i + 1]
+        sr = detect_support_resistance(w)
+        sig = generate_signals(w, htf=None, market_structure=None, sr=sr, mode="futures",
+                               threshold_override=5.0)
+        fired += sig["_contributions"]["support_resistance"] != (0.0, 0.0)
+        price, atr = w["close"].iloc[-1], w["ATR_14"].iloc[-1]
+        old_in_reach += any(lv and abs(price - lv) / price <= atr * 0.2 / price
+                            for lv in (sr["support"], sr["resistance"]))
+    assert old_in_reach == 0, "the default detector never holds a level within reach"
+    assert fired > 0, "the repaired condition must be able to fire"
+    w = df.iloc[:400]
+    assert generate_signals(w, htf=None, market_structure=None, sr=None, mode="futures",
+                            threshold_override=5.0)["_contributions"]["support_resistance"] == (0.0, 0.0)
+
+
 def test_scanner_reset_carries_old_positions_and_restarts_every_window():
     """Owner's reset with run 5: every arm's books start again at $1,000, and H-SC/H-SC2/H-SCD
     count only cycles from WINDOW_FROM. A position opened before it runs out on its own, holds
@@ -7585,6 +7611,7 @@ if __name__ == "__main__":
     run("basis own checkpoint, no stale reason", test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason)
     run("gold/VIX survive weekend + rollover",    test_gold_and_vix_survive_a_weekend_and_the_daily_rollover)
     run("scanner reset: carried, books, windows",  test_scanner_reset_carries_old_positions_and_restarts_every_window)
+    run("H-SR: S/R reads own levels, can fire",   test_sr_condition_reads_its_own_levels_and_can_fire)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

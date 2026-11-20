@@ -4,6 +4,39 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-20 — fix: the S/R condition can fire (H-SR pre-registered)
+
+This is a design decision for data yield (owner: "perbaiki ... ketimbang di hapus tidak punya
+data kita"). It is not a test result. The test is pre-registered in
+`docs/superpowers/specs/2026-11-20-sr-fix-prereg.md`, written before any return was computed.
+
+- **Bug:** condition 16 (`support_resistance`, ceiling 0.75 in both modes) read `sr`, and
+  `detect_support_resistance` returns only levels at least 0.5% from the close. The condition
+  scores within 0.2×ATR, about 0.27% on 1H and 0.37% on 4H, so it could never fire.
+  - It was found in 2026-08 and never fixed.
+  - Live: 0 of 1,297 cycles since 10-09.
+  - Its 0.75 still counted in both ceilings, so the thresholds sat about 0.15 above what the
+    live conditions could reach.
+- **Fix:** the condition finds its own levels with `tolerance=0.0` (`signals/engine.py`).
+  - Unchanged: the window, the bounce rule, the weight, the ceilings and the thresholds.
+  - `sr` itself is untouched, so the TP caps, the pyramid gate and the terminal read what
+    they did.
+  - No value was chosen: 0.0 is the detector with its exclusion removed.
+- **Firing rate**, the only figure seen (BTC, about 2,950 bars, no returns computed):
+
+  | | 1H | 4H |
+  |---|---|---|
+  | before | 0% | 0% |
+  | after | 3.6% | 3.2% |
+
+- **Test:** `test_sr_condition_reads_its_own_levels_and_can_fire` fails on the old engine and
+  passes now. Suite 348/348.
+- **Deploy:** this is a trading-path change, so it needs a bot restart and restarts H-VG and
+  H-VR/H-BS. It must reach the VPS before 2026-11-21 00:00 UTC, or the scanner's new window
+  starts with a mixed engine (the hybrid arm reads the engine's score).
+
+---
+
 ## 2026-11-20 — scanner reset: books back to $1,000, H-SC/H-SC2/H-SCD windows from 2026-11-21 00:00
 
 This is the owner's decision ("reset saldo + jendela 90 hari"), not a test result. The
