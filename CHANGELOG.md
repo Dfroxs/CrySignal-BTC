@@ -4,6 +4,24 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-20 — Q&A knowledge brought up to date with today's changes
+
+`agents/qa_knowledge.md` is read on every question, so this takes effect without a restart.
+- **New section "Run sekarang dan reset 2026-11-20":**
+  - run 5, with each run's $1,000 account;
+  - carried ("bawaan") positions, such as #20 belonging to run 4;
+  - the circuit breaker and Telegram performance still counting every run;
+  - the scanner reset from 2026-11-21 00:00;
+  - the gold/VIX fix and the new alarm;
+  - the S/R repair and its H-SR-1 FAIL.
+- **Scoring dates:** test dates are deliberately not written down. They moved twice today,
+  so the bot is told to point at the dashboard's board.
+- **Corrected:**
+  - `reentry_first` also ignores anchors from before the run (2026-11-19).
+  - Stops and targets rest like exchange orders (2026-11-20).
+
+---
+
 ## 2026-11-20 — H-SR-1 FAIL; dashboard: scanner ETA before its window, carried group headers
 
 - **H-SR-1 FAIL** (`docs/superpowers/specs/2026-11-20-sr-fix-results.md`). The repaired
