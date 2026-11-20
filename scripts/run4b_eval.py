@@ -8,7 +8,7 @@ Two run-4 part-B candidates, both on the first 60 days of run 4's own futures cy
 - H-BS: which way does the futures basis point? Two-sided, because H-F (2020-2026 history)
   found it bearish and H-L1 (run 3 live) found it bullish.
 
-    # on the VPS (or a pulled DB copy), on or after 2027-01-16 18:44:50 UTC:
+    # on the VPS (or a pulled DB copy), on or after 2027-01-19 15:19:44 UTC:
     ./venv/bin/python scripts/run4b_eval.py --db data/signal_history.db --out data/run4b_result.json
 """
 from __future__ import annotations
@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.live_ic import HORIZON, block_ic, health, load_cycles, paired_ic_diff  # noqa: E402
 
-FROM = pd.Timestamp("2026-11-19 01:13:53")          # F&G-greed restart (amendment); was run 4's start
+FROM = pd.Timestamp("2026-11-20 15:19:44")          # run-5 restart, gold/VIX fix (amendment 2); was 11-19 01:13:53
 END = FROM + pd.Timedelta(days=60)                   # window end and earliest scoring date
 MIN_N = 1000                                          # cycles with every input present
 
