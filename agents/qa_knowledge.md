@@ -1,6 +1,6 @@
 # Pengetahuan proyek SpotSignal (untuk agent tanya-jawab)
 
-Ditulis 2026-10-09 untuk v2.9.x (gerbang regime/stale_cache dan backup diperjelas 2026-10-10). Ini menjelaskan CARA KERJA bot. Angka yang berubah
+Ditulis 2026-10-09 untuk v2.9.x (gerbang regime/stale_cache dan backup diperjelas 2026-10-10; run 5, reset dan perbaikan data diperbarui 2026-11-20). Ini menjelaskan CARA KERJA bot. Angka yang berubah
 (threshold saat ini, jumlah siklus, posisi) selalu diambil dari FAKTA, bukan dari sini.
 Jika FAKTA dan teks ini berbeda, FAKTA yang benar.
 
@@ -50,7 +50,8 @@ Jika FAKTA dan teks ini berbeda, FAKTA yang benar.
 
 ## Arti gerbang (nama di blocks_by_gate)
 - `reentry_first`: re-entry ditolak karena harga lebih buruk dari WIN/LOSS terakhir yang
-  searah dan confidence tidak naik. Patokan yang lebih tua dari 168 jam diabaikan.
+  searah dan confidence tidak naik. Patokan yang lebih tua dari 168 jam diabaikan, dan
+  sejak 2026-11-19 juga patokan dari sebelum run sekarang dimulai.
   Batas ini design decision 2026-10-09, karena satu WIN 12 Sep pernah mengunci spot
   berminggu-minggu.
 - `confidence_first`: confidence di bawah NORMAL (strength < 1.2× threshold).
@@ -90,6 +91,9 @@ Jika FAKTA dan teks ini berbeda, FAKTA yang benar.
 - Stop-loss awal sekitar 1.5× ATR, TP1 dan TP2 (2× jarak TP1). Futures sejak run 3:
   jarak stop/target × 2.0 dan trailing 3.5× ATR (lulus uji pre-registered
   2026-10-09). Futures juga ditutup bila funding terlalu mahal (±0.10%).
+- Sejak 2026-11-20 stop dan target bekerja seperti order yang menunggu di bursa: sebelum
+  tiap pemeriksaan (:01 dan :31), candle 1 menit sejak pemeriksaan terakhir ditelusuri,
+  jadi stop atau target yang tersentuh di antaranya terisi di levelnya.
 - TP1 kena: 50% ditutup, stop pindah ke breakeven, trailing stop mengencang.
 - TP2 atau trailing stop kena: sisa 50% ditutup. P&L = rata-rata kedua bagian.
 - Batas waktu 72 jam; volatilitas melonjak (ATR > 2× ATR saat entry) memicu VOL_EXIT.
@@ -110,7 +114,29 @@ Jika FAKTA dan teks ini berbeda, FAKTA yang benar.
 - Jika Binance tidak terjangkau, data futures (funding dll.) jatuh ke NETRAL tanpa
   error. Lihat `futures_blind_24h` di FAKTA.
 
-## Run 3 dan agen
+## Run sekarang dan reset 2026-11-20
+- Run sekarang adalah **run 5** (lihat `run_start` di FAKTA). Tiap run, akun demo di
+  dashboard mulai lagi dari $1.000 dan hanya menghitung posisi yang DIBUKA di run itu.
+- Posisi yang dibuka sebelum reset disebut **bawaan**: tetap berjalan sampai kena stop,
+  target atau batas waktu, tetapi tidak masuk saldo run sekarang; hasilnya masuk run
+  tempat ia dibuka. Contoh: posisi #20 (futures SELL, dibuka 19 Nov) milik run 4.
+- Circuit breaker (batas drawdown) dan baris performa di Telegram/terminal masih menghitung
+  SEMUA run sejak run 1, belum per run.
+- Scanner juga di-reset: keenam buku (Claude murni, Claude + engine, acak; futures dan
+  spot) mulai $1.000, dan test scanner (H-SC, H-SC2, H-SCD) dihitung dari 2026-11-21
+  00:00 UTC. Posisi scanner dari sebelum itu juga "bawaan".
+- Perbaikan data 2026-11-20: gold dan VIX dulu sering kosong (akhir pekan dan saat bar
+  harian Yahoo berganti), sehingga kondisi gold_vix bernilai 0 di siklus itu; sudah
+  diperbaiki. Alarm per jam kini juga memeriksa gold, VIX, DXY, S&P dan L/S.
+- Kondisi S/R (support/resistance) dulu TIDAK PERNAH menyala karena cacat desain; sudah
+  diperbaiki 2026-11-20 lalu diuji (H-SR-1) dan GAGAL: arahnya tidak konsisten antar
+  pasar dan tahun. Ia tetap hidup untuk mengumpulkan data dan dimatikan pada restart
+  berikutnya.
+- Tanggal penilaian tiap test (H-VG, H-VR/H-BS, H-DR, H-SC, H-SC2) bisa bergeser bila bot
+  di-restart dengan aturan baru. Jangan menyebut tanggal dari ingatan: arahkan ke papan
+  "Kapan hasilnya bisa dipercaya?" di dashboard.
+
+## Run 3 dan agen (riwayat)
 - Paper run berjalan dengan versi kode yang dipatok. Restart dicatat di PAPER_RUN.md.
 - Agen shadow (Claude; DeepSeek ikut sampai 2026-10-15 lalu dimatikan pemilik) memberi opini pada setiap sinyal dan posisi, tetapi
   TIDAK PERNAH memutuskan trade. Hipotesis run 3 (H-L data live, H-V varian, H-B,
