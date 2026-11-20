@@ -66,3 +66,12 @@ scoring dates. It carries no verdict: at ~0.8 fires a day it cannot reach a usef
 - If it reaches the VPS before 2026-11-21 00:00 UTC, the scanner's new window (which
   begins then) is not cut. The hybrid arm's engine score includes this condition, so it
   would be cut otherwise.
+
+## Amendment 2026-11-20 (after H-SR-1 FAILED): where H-SR-2 reads from
+
+S/R went into `DISABLED_CONDITIONS` as licensed. The owner asked to keep its live data, so the
+engine now records each disabled condition's would-be (buy, sell) in
+`cycle_log.disabled_contributions` before rolling it back. No score, reason or contribution
+moves. H-SR-2 reads that column from the S/R-off restart on, plus `contributions` for the
+hour it was live. It is still reported only, with no verdict. This changes no criterion of
+H-SR-1, which is closed.

@@ -131,8 +131,11 @@ Jika FAKTA dan teks ini berbeda, FAKTA yang benar.
 - Kondisi S/R (support/resistance) dulu TIDAK PERNAH menyala karena cacat desain; sudah
   diperbaiki 2026-11-20 lalu diuji (H-SR-1) dan GAGAL: arahnya tidak konsisten antar
   pasar dan tahun. Sesuai prereg ia dimatikan (sore 2026-11-20), sehingga skor maksimum
-  futures 24.25 dan spot 21.75, dan ambang ikut turun. Ia hanya boleh hidup lagi lewat
-  hipotesis baru dengan prereg sendiri, bukan uji ulang.
+  futures 24.25 dan spot 21.75, dan ambang ikut turun. Ia tetap DICATAT tiap siklus sebagai
+  sinyal bayangan (kolom `disabled_contributions`), tanpa ikut menilai skor. Ia hanya boleh
+  ikut menilai lagi lewat hipotesis baru dengan prereg sendiri, bukan uji ulang. S/R tetap
+  dipakai bot di tempat lain: batas TP di resistance/support, gerbang `sr_first` dan gerbang
+  pyramid.
 - Tanggal penilaian tiap test (H-VG, H-VR/H-BS, H-DR, H-SC, H-SC2) bisa bergeser bila bot
   di-restart dengan aturan baru. Jangan menyebut tanggal dari ingatan: arahkan ke papan
   "Kapan hasilnya bisa dipercaya?" di dashboard.
