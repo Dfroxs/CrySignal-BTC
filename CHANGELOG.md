@@ -4,6 +4,44 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-20 — dashboard readability: a tab per method, one card per position
+
+The owner found that the positions and the tabs did not say which method they came from,
+and that P&L, SL, TP1, TP2, leverage and status were unclear. The trigger was #20's
+"target $54.684,16", shown after TP1 with no word that half the position was already
+closed.
+- **Design:** `docs/superpowers/specs/2026-11-20-dashboard-readability-design.md`, both
+  choices made by the owner in browser mockups.
+- **Plan:** `docs/superpowers/plans/2026-11-20-dashboard-readability.md`.
+
+**What changed:**
+- **Tabs:** `Ringkasan | Bot BTC · aturan indikator | Scanner Claude · AI pilih koin |
+  Sistem`. Each method tab opens with a **"Cara kerja"** box: who decides (rules, not AI;
+  or Claude), which coins, leverage or not, how positions close, and what is being tested.
+- **One card per open position:**
+  - a method label;
+  - status in words ("TP1 tercapai, separuh posisi sudah ditutup", "berjalan", "bawaan");
+  - P&L in % and $, the closed half kept apart from the open half;
+  - entry, price now, SL (with "ikut bergerak" when trailing), TP1 ✓ and TP2;
+  - for scanner cards, "satu target, tanpa TP2" and "tanpa leverage";
+  - BTC leverage, margin and liquidation;
+  - time left.
+- **Carried positions:** scanner ones fold into one line per book. BTC's stay in full,
+  because #20 is the BTC tab's only position.
+- **Ringkasan:** one line per position, by method, linking to its tab.
+- **Money format:** Indonesian everywhere ("$1,14").
+- **Glossary:** TP1, TP2, trailing stop, leverage, liquidation and "bawaan".
+- **Code:** `db_facts` open rows gain `partial_pnl`, `tp1`, `trailing` and `sizing`. The old
+  positions table (`_positions`) is gone.
+
+**Tests:** five new dashboard tests. Suite 357/357. Checked on copies of the live
+databases: #20 renders TP1 ✓, +6.25% final, TP2 54.684,16, 3x and liquidation $83.287,67,
+the scanner's carried positions are folded, and nothing fails to read.
+
+**Deploy:** a `spotsignal-dash` restart only.
+
+---
+
 ## 2026-11-20 — H-SR2-1 FAIL: S/R as a scoring bonus is closed
 
 Results: `docs/superpowers/specs/2026-11-20-sr-zone-results.md`.

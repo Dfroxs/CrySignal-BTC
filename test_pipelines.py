@@ -5575,9 +5575,9 @@ def test_dashboard_runs_market_position_detail_and_stats():
                     "totals": {"futures": dsh._book([(None, None, 2.0, "WIN"), (None, None, -1.0, "LOSS")]), "spot": {"n": 0}}}}
         mk = dsh._market(f)
         assert "turun" in mk and "naik" in mk and "+0,0029%" in mk and "FOMC &lt;x&gt;" in mk and "7 j" in mk, mk
-        pos = dsh._positions(f)
-        assert "66.000,00" in pos and "60.000,00" in pos and "66 j" in pos, "stop, target, 72 h cap minus 6 h"
-        assert "leverage " in pos and "likuidasi" in pos, "BTC futures gets its sizing detail row"
+        pos = dsh._cards_block(dsh._btc_cards(f), now, fold_carried=False)
+        assert "66.000,00" in pos and "60.000,00" in pos and "66 jam" in pos, "stop, TP1, 72 h cap minus 6 h"
+        assert "Leverage" in pos and "x · margin" in pos and "likuidasi" in pos, "BTC futures card shows its sizing"
         st = dsh._stats(f)
         assert "Bot BTC (futures)" in st and "50%" in st and "2,00" in st and "Acak (spot)" in st, st
         assert "run 3 sejak 17 Nov; run 2 berakhir" in dsh._run_hint(f)
@@ -6885,6 +6885,141 @@ def test_sr_condition_reads_its_own_levels_and_can_fire():
                             threshold_override=5.0, disabled=())["_contributions"]["support_resistance"] == (0.0, 0.0)
 
 
+def test_dashboard_btc_open_rows_carry_partial_tp1_trailing_and_sizing():
+    """Dashboard readability: a BTC card must say TP1 was hit, what the closed half made, that
+    the stop trails, and the leverage. The open-position rows carry those facts."""
+    from datetime import UTC, datetime
+    from agents import dashboard as dsh
+    h, saved, path = _temp_history_db()
+    try:
+        c = h._conn()
+        c.execute("INSERT INTO cycle_log (timestamp,mode,type,price,threshold,funding_rate) "
+                  "VALUES ('2026-11-20 19:01:02','futures','HOLD',58418,4.76,0.004)")
+        c.execute("INSERT INTO paper_positions (type,entry_price,stop_loss,trailing_stop,take_profit,tp2,"
+                  "partial_closed,partial_pnl,opened_at,mode) VALUES ('SELL',62778.08,65476.05,60703.85,"
+                  "58731.12,54684.16,1,6.246,'2026-11-19T17:01:05+00:00','futures')")
+        c.execute("INSERT INTO paper_positions (type,entry_price,stop_loss,take_profit,tp2,partial_closed,"
+                  "opened_at,mode) VALUES ('SELL',62000,64000,60000,58000,0,'2026-11-20T18:01:05+00:00','futures')")
+        c.commit()
+        f = dsh.db_facts(path, datetime(2026, 11, 20, 19, 30, tzinfo=UTC))
+    finally:
+        _restore_history_db(h, saved, path)
+    a, b = f["open"]
+    assert a["partial_pnl"] == 6.246 and a["tp1"] == 58731.12 and a["trailing"] is True, a
+    assert a["sizing"]["leverage"] == 3, a["sizing"]
+    assert b["partial_pnl"] is None and b["trailing"] is False, b
+
+
+def _card_facts():
+    """A hand-built facts dict: #20 after TP1, and three scanner rows (live, carried, no price)."""
+    from datetime import UTC, datetime, timedelta
+    now = datetime(2026, 11, 20, 19, 40, tzinfo=UTC)
+    btc = {"id": 20, "mode": "futures", "type": "SELL", "entry_price": 62778.08, "stop_loss": 65476.05,
+           "trailing_stop": 60703.85, "take_profit": 58731.12, "tp1": 58731.12, "tp2": 54684.16,
+           "partial_closed": 1, "partial_pnl": 6.246, "opened_at": "2026-11-19T17:01:05+00:00",
+           "price": 58418.0, "move_pct": 6.94, "stop": 60703.85, "trailing": True, "hours": 26.7,
+           "sizing": {"leverage": 3, "margin_pct": 20.0, "liquidation_price": 83287.67}, "carried": True}
+    iso = lambda h: (now - timedelta(hours=h)).isoformat()
+    scan = [{"book": "futures", "coin": "AVAX", "side": "SHORT", "opened_bar": iso(2), "entry": 7.0, "price": 6.78,
+             "stop": 7.49, "target": 5.30, "move_pct": 3.14, "upnl": 3.11, "size_usd": 99.13, "carried": False},
+            {"book": "futures", "coin": "ETH", "side": "SHORT", "opened_bar": iso(11), "entry": 1921.0, "price": 1800.0,
+             "stop": 1990.0, "target": 1373.0, "move_pct": 5.42, "upnl": 5.37, "size_usd": 99.0, "carried": True},
+            {"book": "futures", "coin": "SOL", "side": "LONG", "opened_bar": iso(25), "entry": 70.0, "price": None,
+             "stop": 66.0, "target": 78.0, "move_pct": None, "upnl": 0.0, "size_usd": 100.0, "carried": False}]
+    return now, {"now": now, "db": {"open": [btc]},
+                 "scanner": {"book": {"open": scan}, "spot_book": {"open": []}}}
+
+
+def test_dashboard_position_cards_say_method_status_levels_and_leverage():
+    """Owner 2026-11-20: positions must say which method they come from, their status, P&L,
+    SL/TP1/TP2, leverage and time left, in plain words. One card per position."""
+    import re
+    from agents import dashboard as dsh
+    now, f = _card_facts()
+    btc = dsh._cards_block(dsh._btc_cards(f), now, fold_carried=False)
+    assert "<details" not in btc and "bawaan (tidak dihitung saldo)" in btc, \
+        "a carried BTC position stays in full, labelled (ruling: #20 must not hide)"
+    for want in ("Bot BTC", "aturan indikator (bukan AI)", "TP1 tercapai, separuh posisi sudah ditutup",
+                 "+6,25%", "54.684,16", "ikut bergerak", "3x", "likuidasi"):
+        assert want in btc, (want, btc)
+    assert re.search(r"58\.731,12\s*✓", btc), "TP1 carries its tick"
+    assert "perkiraan; hasil dicatat tanpa leverage" in btc, "leverage is an estimate; P&L is unleveraged"
+    sc = dsh._cards_block(dsh._scanner_cards(f, "scanner"), now)
+    for want in ("Scanner Claude murni", "AI memilih koin", "satu target, tanpa TP2", "tanpa leverage",
+                 "+$3,11", "segera"):
+        assert want in sc, (want, sc)
+    folded = re.search(r"<details.*?</details>", sc, re.S).group(0)
+    assert "1 posisi bawaan (tidak dihitung saldo)" in folded and "ETH" in folded
+    assert "ETH" not in sc.replace(folded, ""), "a carried position shows only inside the fold"
+    sol = sc[sc.index("SOL"):]
+    assert "–" in sol[:600], "a missing price shows –, the card stays"
+
+
+def test_dashboard_method_tabs_open_with_how_it_works_and_summary_links():
+    """Owner 2026-11-20: "tab pilih koin & bot BTC bikin bingung, ini metode yang mana". Each
+    method gets its own tab, named for the method and opened by a "Cara kerja" box; the
+    summary lists positions by method and links to the tab."""
+    import os, tempfile
+    from datetime import UTC, datetime
+    from agents import dashboard as dsh
+    now = datetime(2026, 11, 20, 19, 30, tzinfo=UTC)
+    pane = lambda page, k: page.split(f'id="tab-{k}"')[1].split('class="tabpanel"')[0]
+    h, saved, path = _temp_history_db()
+    try:
+        c = h._conn()
+        c.execute("INSERT INTO cycle_log (timestamp,mode,type,price,threshold,funding_rate) "
+                  "VALUES ('2026-11-20 19:01:02','futures','HOLD',58418,4.76,0.004)")
+        c.commit()
+        empty = dsh.render(dsh.collect(dsh.ROOT, path, os.path.join(tempfile.mkdtemp(), "none.db"), now,
+                                       lambda cmd: "active"))
+        c.execute("INSERT INTO paper_positions (type,entry_price,stop_loss,trailing_stop,take_profit,tp2,"
+                  "partial_closed,partial_pnl,opened_at,mode) VALUES ('SELL',62778.08,65476.05,60703.85,"
+                  "58731.12,54684.16,1,6.246,'2026-11-19T17:01:05+00:00','futures')")
+        c.commit()
+        page = dsh.render(dsh.collect(dsh.ROOT, path, os.path.join(tempfile.mkdtemp(), "none.db"), now,
+                                      lambda cmd: "active"))
+    finally:
+        _restore_history_db(h, saved, path)
+    labels = ["Ringkasan", "Bot BTC · aturan indikator", "Scanner Claude · AI pilih koin", "Sistem"]
+    at = [page.index(f">{l}</button>") for l in labels]
+    assert at == sorted(at), "the four tabs, in order"
+    assert "Cara kerja Bot BTC" in pane(page, "btc") and "bukan AI" in pane(page, "btc")
+    from config import RISK_CONFIG
+    assert (f'{RISK_CONFIG["max_position_hours"]} jam (futures) atau {RISK_CONFIG["max_position_hours_spot"]} '
+            f'jam (spot)') in pane(page, "btc"), "the time caps come from config, as the cards use"
+    assert "Cara kerja Scanner Claude" in pane(page, "koin") and "lebih baik dari undian" in pane(page, "koin")
+    summary = pane(page, "ringkasan")
+    assert 'data-tab="btc"' in summary and "TP1 tercapai" in summary, "the summary links each position to its tab"
+    assert "+6,25%" in summary, "after TP1 the summary line shows the closed half too, not only the open one"
+    assert "Posisi yang sedang berjalan" not in page, "the old column table is gone"
+    assert "TP1 tercapai, separuh posisi sudah ditutup" in pane(page, "btc")
+    assert "Tidak ada posisi terbuka." in pane(empty, "ringkasan")
+    assert "Tidak ada posisi BTC" in pane(empty, "btc")
+
+
+def test_dashboard_money_is_indonesian_everywhere_and_glossary_explains_levels():
+    """One number format on the page ($1,14, not $1.14), and the glossary explains every level a
+    card names."""
+    import os, tempfile
+    from datetime import UTC, datetime
+    from agents import dashboard as dsh
+    assert "$1,14" in dsh._cost_note({"cycles": 96, "errors": 0, "usd": 1.14})
+    now = datetime(2026, 11, 20, 19, 30, tzinfo=UTC)
+    sy = dsh._system_tab({"host": {}, "db": {}, "manifest": {},
+                          "cost": {"llm_usd_24h": 0.63, "llm_usd_mtd": 3.44, "llm_usd_projected_month": 9.91,
+                                   "budget": None}}, now)
+    assert "$0,63" in sy and "$3,44" in sy and "$9,91" in sy and "$3.44" not in sy, sy
+    h, saved, path = _temp_history_db()
+    try:
+        h._conn()
+        page = dsh.render(dsh.collect(dsh.ROOT, path, os.path.join(tempfile.mkdtemp(), "none.db"), now,
+                                      lambda cmd: "active"))
+    finally:
+        _restore_history_db(h, saved, path)
+    for term in ("TP1", "TP2", "Trailing stop", "Leverage", "Likuidasi", "Bawaan"):
+        assert f"<dt>{term}</dt>" in page, term
+
+
 def test_scanner_reset_carries_old_positions_and_restarts_every_window():
     """Owner's reset with run 5: every arm's books start again at $1,000, and H-SC/H-SC2/H-SCD
     count only cycles from WINDOW_FROM. A position opened before it runs out on its own, holds
@@ -7753,6 +7888,10 @@ if __name__ == "__main__":
     run("H-SR: S/R reads own levels, can fire",   test_sr_condition_reads_its_own_levels_and_can_fire)
     run("dashboard test dates = scorers' dates",  test_dashboard_fixed_tests_match_their_scorers)
     run("alarm: macro source blank 3 cycles",     test_alarm_flags_a_macro_source_blank_in_three_futures_cycles)
+    run("dash: BTC rows carry TP1/partial/sizing", test_dashboard_btc_open_rows_carry_partial_tp1_trailing_and_sizing)
+    run("dash: one card per position, plain words", test_dashboard_position_cards_say_method_status_levels_and_leverage)
+    run("dash: a tab per method, Cara kerja, links", test_dashboard_method_tabs_open_with_how_it_works_and_summary_links)
+    run("dash: Indonesian money, fuller glossary",  test_dashboard_money_is_indonesian_everywhere_and_glossary_explains_levels)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
