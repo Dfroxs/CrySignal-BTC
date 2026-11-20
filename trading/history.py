@@ -247,6 +247,9 @@ def _migrate_cycle_log():
         # Score variants (signals/variants.py) as JSON — logged, never traded. NULL when
         # none were scored, which is every row before run 3.
         ("variants",      "TEXT"),
+        # What each DISABLED condition would have added, (buy, sell) as JSON — never scored.
+        # Kept so a pruned condition (support_resistance, H-SR) still yields live data.
+        ("disabled_contributions", "TEXT"),
     ]
     for col, coltype in cols:
         try:
@@ -525,6 +528,10 @@ def log_cycle(signal, df, market_structure, htf, mode):
 
     _variants = signal.get("_variants")
     variants_json = json.dumps(_variants, default=float) if _variants else None
+    _dis = signal.get("_disabled_contributions")
+    disabled_json = json.dumps(
+        {k: [round(float(v[0]), 4), round(float(v[1]), 4)] for k, v in _dis.items()}
+    ) if _dis else None
 
     # Open positions count for this mode
     open_count = len(get_open_positions(mode))
@@ -572,6 +579,7 @@ def log_cycle(signal, df, market_structure, htf, mode):
         " | ".join(reasons_clean),
         contributions_json,
         variants_json,
+        disabled_json,
         open_count,
     )
     c = _conn()
@@ -583,8 +591,8 @@ def log_cycle(signal, df, market_structure, htf, mode):
             dxy_change, sp500, sp500_change, btc_dom, stablecoin_b, oi_change,
             basis_pct, taker_ratio, gold, gold_change, vix, vix_change,
             fear_greed, news_sentiment, htf_data, reasons, contributions, variants,
-            open_positions)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            disabled_contributions, open_positions)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         row,
     )
     c.commit()

@@ -15,6 +15,7 @@ repaired, H-SR pre-registered).
   `support_resistance` goes into `DISABLED_CONDITIONS` at the next restart. That is the
   shadow-context restart (owner: now). Ceilings become futures 24.25 and spot 21.75, and
   thresholds 4.76 and 4.16.
+  It is still **logged, not scored**, in `cycle_log.disabled_contributions` (H-SR-2).
 - **Windows restart at 17:05:03:** H-VG to 2027-02-18 17:05:03, and H-VR/H-BS to
   2027-01-19 17:05:03.
 - **Scanner window not cut:** it begins 2026-11-21 00:00, after this.
