@@ -130,12 +130,15 @@ def build_context(signal):
                 if k in ("4h", "1d", "1w") and _label(v)},
         # A failed Binance futures fetch leaves 0 / 1.0 placeholders: sent as numbers they
         # read as a calm market, so they go out as null (missing), as variants treat them.
+        # The Yahoo series fail the same way (current 0, change 0); gold is scored by the
+        # engine's gold_vix and was not sent at all before 2026-11-20.
         "market": {"funding_rate_pct": _real(g("funding", "rate_pct"), 0.0),
                    "basis_pct": _real(g("funding", "basis_pct"), 0.0),
                    "ls_ratio": _real(g("long_short", "ratio"), 1.0),
                    "oi_change_pct": _real(g("open_interest", "change_pct"), 0.0),
-                   "taker_ratio": _real(g("taker", "ratio"), 1.0), "dxy_change_pct": g("dxy", "change_pct"),
-                   "sp500_change_pct": g("sp500", "change_pct"), "vix_change_pct": g("vix", "change_pct")},
+                   "taker_ratio": _real(g("taker", "ratio"), 1.0),
+                   **{f"{k}_change_pct": g(k, "change_pct") if g(k, "current") else None
+                      for k in ("dxy", "sp500", "gold", "vix")}},
         "contributions": {k: [_num(v[0]), _num(v[1])] for k, v in (s.get("_contributions") or {}).items()},
         "exit_rules": rules,
     }

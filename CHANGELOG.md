@@ -4,6 +4,23 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-20 — shadow context: failed Yahoo series go out as null; gold added
+
+**On `develop`, not deployed.** The shadow agents run inside the bot, so this needs a bot
+restart, and it changes H-VG's input, so the window restarts with it.
+- **The bug:** `agents/shadow.build_context` sent failed Binance fields (funding, basis, L/S,
+  OI, taker) as null. The Yahoo series (DXY, S&P 500, VIX) went out raw, so a failed fetch
+  (current 0, change 0) read to Claude as "0% change", a calm market. That is the same
+  class as the gold/VIX gap.
+- **Fix:** each `*_change_pct` is now null when its `current` is 0.
+- **Gold added:** `gold_change_pct` is now sent. The engine scores gold in `gold_vix`, but
+  Claude was never shown it.
+- **Who sees it:** the entry, exit and flip shadows all build on this context.
+- **Test:** `test_shadow_context_sends_failed_fetches_as_missing_not_as_numbers` is
+  extended. Suite 350/350.
+
+---
+
 ## 2026-11-20 — Q&A knowledge brought up to date with today's changes
 
 `agents/qa_knowledge.md` is read on every question, so this takes effect without a restart.
