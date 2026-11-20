@@ -35,6 +35,8 @@ Bot restarted by killing the MainPID; systemd respawned it, pid 383220, active 1
     amendment, exits changed).
   - **Unchanged:** H-VR/H-BS (signals unchanged), H-FLP-C (scored by replay), H-SC, H-SC2,
     H-DR and the manifest.
+  - **PR #65 (H-VG amendment)** pulled 2026-11-20 03:29 at `67e7a63`; dashboard restart only.
+    Its trading-path diff is empty, and the bot stayed at pid 413608.
 - **2026-11-19 16:34:53 UTC: bot restarted at `8ca245a`** (PR #61), pid 406603. No position
   was open. The re-entry gate now ignores anchors opened before the manifest's `started_at`.
   Run 3's SHORT WIN at $68,900 had blocked 26 futures SHORTs. Spot is covered too; that has
