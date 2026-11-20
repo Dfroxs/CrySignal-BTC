@@ -5254,6 +5254,33 @@ def test_alarm_db_facts_flag_a_blind_latest_futures_cycle_and_tolerate_no_shadow
     f = collect_db_facts("/nonexistent/dir/none.db", now)
     assert f["db_error"], "an unreadable database is reported, never raised"
 
+def test_alarm_flags_a_macro_source_blank_in_three_futures_cycles():
+    """Gold and VIX were blank for weeks with nothing saying so: only funding was checked.
+    A source blank (NULL or its fallback) in each of the newest 3 futures cycles alarms; one
+    blank cycle, spot cycles, or a database without the column do not."""
+    import os, sqlite3, tempfile
+    from datetime import UTC, datetime
+    from agents.alarm import collect_db_facts, conditions
+    fd, path = tempfile.mkstemp(suffix=".db"); os.close(fd)
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE cycle_log (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, mode TEXT, "
+                "funding_rate REAL, gold REAL, vix REAL, dxy REAL, sp500 REAL, ls_ratio REAL)")
+    rows = [("2026-11-20 13:01:00", "futures", 0.001, 3500, 28, 99, 6000, 1.9),
+            ("2026-11-20 14:01:00", "futures", 0.001, None, None, 99, 6000, 1.0),
+            ("2026-11-20 15:01:00", "futures", 0.001, None, 28, 99, 6000, 1.0),
+            ("2026-11-20 15:01:01", "spot", 0.001, 3500, 28, 99, 6000, 1.9),
+            ("2026-11-20 16:01:00", "futures", 0.001, None, 28, 99, 6000, 1.0)]
+    con.executemany("INSERT INTO cycle_log (timestamp, mode, funding_rate, gold, vix, dxy, sp500, ls_ratio) "
+                    "VALUES (?,?,?,?,?,?,?,?)", rows)
+    con.commit(); con.close()
+    try:
+        f = collect_db_facts(path, datetime(2026, 11, 20, 16, 10, tzinfo=UTC))
+        assert f["db_error"] is None and f["macro_blank"] == ["gold", "L/S"], f
+        assert {k for k in conditions(f) if k.startswith("data:")} == {"data:gold", "data:L/S"}
+    finally:
+        os.unlink(path)
+
+
 def test_alarm_db_facts_watch_exit_and_flip_opinions_too():
     import os, sqlite3
     from datetime import UTC, datetime
@@ -6731,6 +6758,18 @@ def _before_scanner_reset(fn):
     return wrapped
 
 
+def test_dashboard_fixed_tests_match_their_scorers():
+    """The dashboard's board copied H-VG's and H-VR/H-BS's dates and kept showing the old
+    windows after three restarts moved them. Each copy must equal its scorer's own."""
+    import scripts.hdr_eval as hdr
+    import scripts.run4b_eval as r4b
+    import scripts.veto_gate_eval as vg
+    from agents.dashboard import FIXED_TESTS
+    want = [(hdr.FROM, hdr.RETURN_BY), (vg.FROM, vg.SCORE_BY), (r4b.FROM, r4b.END)]
+    got = [(s.replace(tzinfo=None), e.replace(tzinfo=None)) for _, _, s, e in FIXED_TESTS]
+    assert got == [(a.to_pydatetime(), b.to_pydatetime()) for a, b in want], (got, want)
+
+
 def test_sr_condition_reads_its_own_levels_and_can_fire():
     """H-SR: condition 16 read `sr`, whose levels are all >= 0.5% from the close, while it
     scores only within 0.2xATR, so it never fired. It now finds its own levels with no
@@ -7612,6 +7651,8 @@ if __name__ == "__main__":
     run("gold/VIX survive weekend + rollover",    test_gold_and_vix_survive_a_weekend_and_the_daily_rollover)
     run("scanner reset: carried, books, windows",  test_scanner_reset_carries_old_positions_and_restarts_every_window)
     run("H-SR: S/R reads own levels, can fire",   test_sr_condition_reads_its_own_levels_and_can_fire)
+    run("dashboard test dates = scorers' dates",  test_dashboard_fixed_tests_match_their_scorers)
+    run("alarm: macro source blank 3 cycles",     test_alarm_flags_a_macro_source_blank_in_three_futures_cycles)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

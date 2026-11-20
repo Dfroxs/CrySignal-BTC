@@ -36,6 +36,12 @@ MAX_CYCLE_AGE_MIN = 75          # cycles run hourly at :01
 MIN_MEM_AVAILABLE_MB = 120      # host has 960 MB, ~380 MB free with both bots up
 MAX_DISK_USED_PCT = 90
 SHADOW_ERROR_RUN = 3            # this many newest opinions all errored → provider down
+# A source that falls back in silence (2026-11-20: gold/VIX were blank in 740/191 cycles for
+# weeks, and only funding was checked). Blank = NULL or the fetcher's fallback value, in each
+# of the newest MACRO_BLANK_RUN futures cycles, so one slow Yahoo reply does not page.
+MACRO_BLANK_RUN = 3
+MACRO_FIELDS = (("gold", "gold", 0), ("VIX", "vix", 0), ("DXY", "dxy", 0),
+                ("S&P 500", "sp500", 0), ("L/S", "ls_ratio", 1.0))   # (name, column, fallback)
 REALERT_H = 6
 SCANNER_ARMS = (("murni", "scanner.db"), ("hybrid", "scanner_hybrid.db"),
                 ("acak", "scanner_random.db"))
@@ -60,7 +66,7 @@ def collect_db_facts(db_path, now):
     """Last cycle age, whether the newest futures cycle is blind, and failing shadow
     providers. An unreadable database comes back as `db_error`, never raises."""
     f = {"db_error": None, "last_cycle_age_min": None, "futures_funding_zero": False,
-         "shadow_failing": []}
+         "shadow_failing": [], "macro_blank": []}
     try:
         con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     except sqlite3.Error as exc:
@@ -74,6 +80,14 @@ def collect_db_facts(db_path, now):
         row = q(f"SELECT funding_rate FROM cycle_log WHERE mode='futures' "
                 f"ORDER BY {_ts('timestamp')} DESC, id DESC LIMIT 1")
         f["futures_funding_zero"] = bool(row) and row[0][0] == 0
+        cols = {r[1] for r in q("PRAGMA table_info(cycle_log)")}
+        for name, col, fallback in MACRO_FIELDS:
+            if col not in cols:
+                continue
+            rows = q(f"SELECT {col} IS NULL OR {col} = ? FROM cycle_log WHERE mode='futures' "
+                     f"ORDER BY {_ts('timestamp')} DESC, id DESC LIMIT ?", fallback, MACRO_BLANK_RUN)
+            if len(rows) == MACRO_BLANK_RUN and all(r[0] for r in rows):
+                f["macro_blank"].append(name)
         tables = {r[0] for r in q("SELECT name FROM sqlite_master WHERE type='table'")}
         # Entry opinions (H-S/H-VG), and since 2026-11-19 exit and flip opinions too: the flip
         # shadow feeds H-FLP-C and could fail every time with nothing saying so.
@@ -192,6 +206,9 @@ def conditions(f):
             out["cycle_stale"] = f"siklus terakhir {age:.0f} menit lalu (batas {MAX_CYCLE_AGE_MIN})"
         if f.get("futures_funding_zero"):
             out["futures_blind"] = "siklus futures terakhir tanpa data funding — Binance futures terputus?"
+        for name in f.get("macro_blank") or []:
+            out[f"data:{name}"] = (f"data {name} kosong di {MACRO_BLANK_RUN} siklus futures terakhir "
+                                   "— sumbernya gagal, kondisinya dinilai netral")
         for prov in f.get("shadow_failing") or []:
             out[f"shadow:{prov}"] = (f"agent shadow {prov}: {SHADOW_ERROR_RUN} pendapat terakhir "
                                      "gagal — key/saldo?")
@@ -286,7 +303,7 @@ def _label(key):
             "scanner_err": f"scanner {name}", "backup": f"backup {name}",
             "derivs": "arsip derivatives", "offsite": "backup ke Mac", "news": "arsip berita",
             "report": "laporan harian", "scoring": "penilaian otomatis",
-            "macro": "kalender ekonomi"}.get(kind, key)
+            "macro": "kalender ekonomi", "data": f"data {name}"}.get(kind, key)
 
 
 def render(new, again, recovered, now):
