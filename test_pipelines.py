@@ -6715,6 +6715,81 @@ def test_scanner_random_arm_deals_pure_picks_count_matched_and_mirrors_failures(
     assert con.execute("SELECT COUNT(*) FROM scan_positions").fetchone()[0] >= 1, "it trades its own books"
 
 
+def _before_scanner_reset(fn):
+    """Run a scanner test written before the 2026-11-21 reset with the window opened all the
+    way back, so its fixtures (dated 11-17/18) still fall inside it."""
+    def wrapped():
+        import agents.scanner as sc
+        import scripts.scanner_diag as sd
+        import scripts.scanner_eval as se
+        saved = sc.WINDOW_FROM
+        sc.WINDOW_FROM = se.WINDOW_FROM = sd.WINDOW_FROM = "2000-01-01T00:00:00+00:00"
+        try:
+            fn()
+        finally:
+            sc.WINDOW_FROM = se.WINDOW_FROM = sd.WINDOW_FROM = saved
+    return wrapped
+
+
+def test_scanner_reset_carries_old_positions_and_restarts_every_window():
+    """Owner's reset with run 5: every arm's books start again at $1,000, and H-SC/H-SC2/H-SCD
+    count only cycles from WINDOW_FROM. A position opened before it runs out on its own, holds
+    its coin, and is in no balance; the BTC bot's run-4 position is carried the same way."""
+    import json, tempfile
+    from datetime import UTC, datetime
+    from pathlib import Path
+    import scripts.scanner_eval as e
+    from agents import dashboard as dsh, ops_report as ops
+    from agents.scanner import BOOK_START_USD, WINDOW_FROM, book_account, connect, open_book
+    assert WINDOW_FROM == "2026-11-21T00:00:00+00:00"
+    root = Path(tempfile.mkdtemp()); (root / "data").mkdir()
+    db = root / "data" / "scanner.db"
+    con = connect(db)
+    old, new = "2026-11-20T10:00:00+00:00", "2026-11-21T02:00:00+00:00"
+    for bar in (old, new):
+        con.execute("INSERT INTO scan_cycles (timestamp, bar_close, context) VALUES (?,?,?)",
+                    (bar, bar, json.dumps({"bar_closed_utc": bar, "prompt": "v2"})))
+    con.execute("INSERT INTO scan_picks (cycle_id, coin, side, confidence) VALUES (1,'SOL','LONG',60),(2,'ETH','SHORT',60)")
+    books = (("SOL", old, old, 40.0), ("ADA", old, None, None), ("ETH", new, new, 2.5), ("XRP", new, None, None))
+    for coin, opened, closed, pnl in books:
+        con.execute("INSERT INTO scan_positions (book, coin, side, opened_bar, entry, stop, target, "
+                    "closed_bar, pnl_usd, size_usd) VALUES ('futures',?,'LONG',?,1,0.9,1.2,?,?,100)",
+                    (coin, opened, closed, pnl))
+    con.commit()
+    assert book_account(con, "futures") == (BOOK_START_USD + 2.5, 100), "only the new book's rows count"
+    snap = {"coins": {"ADA": {"close": 1.0, "atr_pct": 1.0}, "BNB": {"close": 1.0, "atr_pct": 1.0}}}
+    picks = {"ADA": {"side": "LONG", "confidence": 50}, "BNB": {"side": "LONG", "confidence": 50}}
+    assert open_book(con, 2, picks, snap, 1795741200000) == 1, "a carried position still holds its coin"
+    size = con.execute("SELECT size_usd FROM scan_positions WHERE coin='BNB'").fetchone()[0]
+    assert size == round((BOOK_START_USD + 2.5) * 0.10, 2), "sized from the new book alone"
+    con.commit(); con.close()
+    cyc, pk = e.load(str(db))
+    assert list(cyc.id) == [2] and set(pk.cycle_id) == {2}, "cycles before the reset are never scored"
+    assert dsh._v2_days(db)["picks"] == 1, "scoring day counts from the reset"
+    rows = [{"book": "futures", "coin": c, "side": "LONG", "opened_bar": o, "closed_bar": cl,
+             "pnl_pct": 1.0, "pnl_usd": p, "size_usd": 100, "outcome": "TIME" if cl else None,
+             "upnl": None if cl else 7.0} for c, o, cl, p in books]
+    sb = dsh.scan_book(rows)
+    assert sb["realised"] == BOOK_START_USD + 2.5 and sb["upnl"] == 7.0 and sb["used"] == 100, sb
+    assert sb["carried"] == 1 and [p["coin"] for p in sb["open"]] == ["XRP", "ADA"] and sb["open"][1]["carried"]
+    m = ops.collect_scanner_facts(root, datetime(2026, 11, 21, 3, tzinfo=UTC))["murni"]
+    assert m["books"]["futures"]["balance"] == BOOK_START_USD + 2.5 and m["books"]["futures"]["open"] == 3, m
+    # BTC: a position opened before the manifest's started_at is carried, out of the account
+    h, saved, bdb = _temp_history_db()
+    try:
+        c = h._conn()
+        c.execute("INSERT INTO cycle_log (timestamp,mode,type,price,threshold,funding_rate) "
+                  "VALUES ('2026-11-20 15:01:04','futures','HOLD',95,4.9,0.004)")
+        c.execute("INSERT INTO paper_positions (type,entry_price,stop_loss,take_profit,opened_at,mode) "
+                  "VALUES ('SELL',100,110,90,'2026-11-19T17:01:05+00:00','futures')")
+        c.commit()
+        f = dsh.db_facts(bdb, datetime(2026, 11, 20, 16, tzinfo=UTC), datetime(2026, 11, 20, 15, 19, 48, tzinfo=UTC))
+    finally:
+        _restore_history_db(h, saved, bdb)
+    assert len(f["open"]) == 1 and f["open"][0]["carried"], f.get("open")
+    assert f["account"]["used"] == 0 and f["account"]["equity"] == 1000.0, "run 5's account does not hold #20"
+
+
 def test_scanner_digest_lists_opens_and_closes_per_arm_and_is_silent_when_quiet():
     import os, tempfile
     from agents import scanner as s
@@ -7390,7 +7465,7 @@ if __name__ == "__main__":
     run("state saved only after send; exit 1",    test_alarm_run_saves_state_only_after_a_send_and_exits_nonzero_while_active)
     run("alarm: scanner arms, backups, archive",  test_alarm_watches_scanner_arms_backups_and_the_derivs_archive)
     run("alarm: exit and flip opinions watched",  test_alarm_db_facts_watch_exit_and_flip_opinions_too)
-    run("ops report + dashboard: scanner, backups", test_ops_report_and_dashboard_show_scanner_arms_backups_and_archive)
+    run("ops report + dashboard: scanner, backups", _before_scanner_reset(test_ops_report_and_dashboard_show_scanner_arms_backups_and_archive))
     run("dashboard: runs, market, detail, stats",  test_dashboard_runs_market_position_detail_and_stats)
 
     print("\n── 36. Ops report: activity, agent health, LLM cost ──")
@@ -7497,18 +7572,19 @@ if __name__ == "__main__":
     run("H-FLP-C eval: value, verdict, replay",     test_flip_shadow_eval_value_verdict_and_replay_follow_the_prereg)
     run("H-SC scanner: closed bars, numbers only",  test_scanner_snapshot_uses_closed_bars_and_passes_numbers_only)
     run("H-SC scanner: store, dedupe, error row",   test_scanner_run_once_stores_dedupes_and_logs_a_failure_as_data)
-    run("H-SC eval: excess, days, verdict, leak",   test_scanner_eval_excess_day_unit_verdict_and_leakage)
+    run("H-SC eval: excess, days, verdict, leak",   _before_scanner_reset(test_scanner_eval_excess_day_unit_verdict_and_leakage))
     run("scanner paper book: open, stop, target, time", test_scanner_paper_book_opens_one_per_coin_and_exits_stop_first_target_or_time)
     run("re-entry anchor only from the current run", test_live_reentry_anchor_comes_only_from_the_current_run)
     run("H-SC2 hybrid arm: engine fields, own db",  test_scanner_hybrid_arm_adds_engine_fields_only_to_its_own_prompt_and_db)
     run("random arm: count-matched, seeded, no model", test_scanner_random_arm_deals_pure_picks_count_matched_and_mirrors_failures)
-    run("scanner digest: per arm, silent when quiet", test_scanner_digest_lists_opens_and_closes_per_arm_and_is_silent_when_quiet)
+    run("scanner digest: per arm, silent when quiet", _before_scanner_reset(test_scanner_digest_lists_opens_and_closes_per_arm_and_is_silent_when_quiet))
     run("H-SCD diag: parts, split, hash lock",      test_scanner_diag_parts_on_synthetic_data_follow_the_prereg)
     run("resting orders fill at their level",     test_resting_orders_fill_at_their_level_between_checks)
     run("scanner book: answer-price entry, 1m first hour", test_scanner_book_enters_at_the_answer_price_and_walks_its_first_hour_from_there)
-    run("dashboard: read-only, local, no blank",    test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel)
+    run("dashboard: read-only, local, no blank",    _before_scanner_reset(test_dashboard_reads_only_binds_locally_and_survives_a_broken_panel))
     run("basis own checkpoint, no stale reason", test_basis_has_its_own_checkpoint_and_a_disabled_condition_leaves_no_reason)
     run("gold/VIX survive weekend + rollover",    test_gold_and_vix_survive_a_weekend_and_the_daily_rollover)
+    run("scanner reset: carried, books, windows",  test_scanner_reset_carries_old_positions_and_restarts_every_window)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

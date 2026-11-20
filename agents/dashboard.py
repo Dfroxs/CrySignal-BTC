@@ -252,12 +252,17 @@ def db_facts(db, now, run_start=None):
         if run_start:
             closed = [c for c in closed if (_dt(c["opened_at"]) or now) >= run_start]
         f["closed_recent"] = closed[::-1][:CLOSED_ROWS]
-        f["account"] = usd_account([c for c in closed if c["pnl_pct"] is not None], f["open"])
+        # A position opened before the run is carried: shown, never in this run's account,
+        # since its close is counted by the run it opened in (run_history keys on opened_at).
+        for p in f["open"]:
+            p["carried"] = bool(run_start and (_dt(p["opened_at"]) or now) < run_start)
+        mine = [p for p in f["open"] if not p["carried"]]
+        f["account"] = usd_account([c for c in closed if c["pnl_pct"] is not None], mine)
         if "shadow_opinions" in tables:
             verdict = dict(q("SELECT signal_id, verdict FROM shadow_opinions WHERE provider='anthropic' "
                              "AND error IS NULL AND verdict IS NOT NULL AND signal_id IS NOT NULL "
                              "ORDER BY id"))
-            f["claude_account"] = claude_filter(closed, f["open"], verdict, now)
+            f["claude_account"] = claude_filter(closed, mine, verdict, now)
         f["curve"], f["totals"] = {}, {}
         for mode in ("spot", "futures"):
             rows = [(_dt(c["opened_at"]), _dt(c["closed_at"]), c["pnl_pct"], c["outcome"])
@@ -424,8 +429,11 @@ def scanner_facts(path, prices=None):
 
 
 def scan_book(pos):
-    """One scanner book (futures or spot) from its rows in scan_positions."""
-    from agents.scanner import BOOK_START_USD
+    """One scanner book (futures or spot) from its rows in scan_positions, from WINDOW_FROM.
+    A position opened before it is carried: listed as open, never in the balance."""
+    from agents.scanner import BOOK_START_USD, WINDOW_FROM
+    carried = [dict(p, carried=True) for p in pos if p["opened_bar"] < WINDOW_FROM and p["closed_bar"] is None]
+    pos = [p for p in pos if p["opened_bar"] >= WINDOW_FROM]
     opened = [p for p in pos if p["closed_bar"] is None]
     closed = sorted((p for p in pos if p["closed_bar"]), key=lambda p: p["closed_bar"])
     rows = [(_dt(p["opened_bar"]), _dt(p["closed_bar"]), p["pnl_pct"], p["outcome"]) for p in closed]
@@ -439,7 +447,7 @@ def scan_book(pos):
     entries += [{"t": _dt(p["opened_bar"]), "open": True, "p": p, "size": p.get("size_usd")} for p in pos]
     used = sum(p.get("size_usd") or 0 for p in opened)
     upnl = sum(p.get("upnl") or 0 for p in opened)
-    return {"open": opened, "closed": closed[::-1][:CLOSED_ROWS], "stats": _book(rows),
+    return {"open": opened + carried, "carried": len(carried), "closed": closed[::-1][:CLOSED_ROWS], "stats": _book(rows),
             "start": BOOK_START_USD, "realised": realised, "equity": realised + upnl,
             "upnl": upnl, "used": used, "cash": realised - used, "curve": curve, "entries": entries}
 
@@ -1206,7 +1214,7 @@ def _btc_tab(f, now):
     ac, ca = d.get("account"), d.get("claude_account")
     P = ['<section><h2>Posisi yang sedang berjalan</h2>']
     if d.get("open"):
-        rows = [[_side(p["type"]), e(p["mode"]), _t(p["opened_at"]), _n(p["entry_price"]), _n(p["price"]),
+        rows = [[_side(p["type"]), e(p["mode"]) + (CARRIED if p.get("carried") else ""), _t(p["opened_at"]), _n(p["entry_price"]), _n(p["price"]),
                  _pnl(p["move_pct"], 2, "%"), _n(p["stop"])] for p in d["open"]]
         P.append(_table(["arah", "jenis", "dibuka", "harga masuk", "harga sekarang", "untung/rugi", "stop"],
                         rows, num=(3, 4, 5, 6)))
@@ -1357,7 +1365,7 @@ def _cell(acct, base=None, base_name=""):
     cls = "up" if chg > 0 else "down" if chg < 0 else "flat"
     arrow = "▲ " if chg > 0 else "▼ " if chg < 0 else ""
     if "stats" in acct:
-        n_open, n_done = len(acct.get("open") or []), acct["stats"]["n"]
+        n_open, n_done = len(acct.get("open") or []) - acct.get("carried", 0), acct["stats"]["n"]
     else:                                               # a translated BTC book: count its entries
         ens = acct.get("entries") or []
         n_done = sum(1 for x in ens if not x["open"])
@@ -1423,8 +1431,8 @@ FIXED_TESTS = (("Data long/short memprediksi harga", "8 altcoin + BTC",
 
 def _v2_days(path):
     """UTC days with a LONG/SHORT pick from an error-free cycle of the current prompt, the
-    pick count, and that prompt's first cycle. Counts only: no return is read."""
-    from agents.scanner import PROMPT_VERSION
+    pick count, and that prompt's first cycle, from WINDOW_FROM. Counts only: no return is read."""
+    from agents.scanner import PROMPT_VERSION, WINDOW_FROM
     if not Path(path).exists():
         return None
     con = _ro(path)
@@ -1432,9 +1440,11 @@ def _v2_days(path):
         if "scan_cycles" not in _tables(con):
             return None
         tag = f'%"prompt": "{PROMPT_VERSION}"%'
-        first = con.execute("SELECT MIN(bar_close) FROM scan_cycles WHERE context LIKE ?", (tag,)).fetchone()[0]
+        first = con.execute("SELECT MIN(bar_close) FROM scan_cycles WHERE context LIKE ? AND bar_close >= ?",
+                            (tag, WINDOW_FROM)).fetchone()[0]
         rows = con.execute("SELECT substr(c.bar_close, 1, 10) FROM scan_picks p JOIN scan_cycles c ON c.id = p.cycle_id "
-                           "WHERE c.error IS NULL AND p.side IN ('LONG', 'SHORT') AND c.context LIKE ?", (tag,)).fetchall()
+                           "WHERE c.error IS NULL AND p.side IN ('LONG', 'SHORT') AND c.context LIKE ? "
+                           "AND c.bar_close >= ?", (tag, WINDOW_FROM)).fetchall()
     finally:
         con.close()
     return {"first": _dt(first), "days": {r[0] for r in rows}, "picks": len(rows)}
@@ -1520,6 +1530,9 @@ def _btc_size(p):
             + (f' · likuidasi {_money(liq)}' if 0 < liq < float("inf") else ""))
 
 
+CARRIED = ' <small class="mute" title="dibuka sebelum reset; tidak dihitung di saldo sekarang">bawaan</small>'
+
+
 def _positions(f):
     from config import RISK_CONFIG
     d, now = f.get("db") or {}, f["now"]
@@ -1532,7 +1545,7 @@ def _positions(f):
                     "move": p.get("move_pct"), "usd": None, "stop": p.get("stop"),
                     "target": target, "t2": bool(p.get("partial_closed")),
                     "left": cap - p["hours"] if p.get("hours") is not None else None,
-                    "detail": _btc_size(p), "mode": p["mode"]})
+                    "detail": _btc_size(p), "mode": p["mode"], "carried": p.get("carried")})
     groups.append(("Bot BTC", btc))
     for key, name, _ in ARMS:
         for bk, label in BOOKS_LABEL:
@@ -1542,21 +1555,22 @@ def _positions(f):
                 rows.append({"coin": p["coin"], "side": p["side"], "opened": o, "size": p.get("size_usd"),
                              "move": p.get("move_pct"), "usd": p.get("upnl"), "stop": p.get("stop"),
                              "target": p.get("target"), "t2": False,
-                             "left": 24 - (now - o).total_seconds() / 3600 if o else None, "detail": None})
+                             "left": 24 - (now - o).total_seconds() / 3600 if o else None, "detail": None,
+                             "carried": p.get("carried")})
             groups.append((f"{name} ({label})", rows))
     body = []
     px = lambda v: _n(v, 4 if v is not None and v < 10 else 2) if v is not None else "–"
     for name, rows in groups:
         if not rows:
             continue
-        tot = sum(r["usd"] or 0 for r in rows)
+        tot = sum(r["usd"] or 0 for r in rows if not r.get("carried"))
         body.append(f'<tr class="grp"><th colspan="6">{e(name)}</th><th class="n" colspan="3">'
                     f'{len(rows)} posisi{", " + _pnl(tot, 2, " $") if any(r["usd"] is not None for r in rows) else ""}'
                     f'</th></tr>')
         for r in rows:
             left = r["left"]
             left_s = "–" if left is None else ("segera" if left <= 0 else f"{left:.0f} j")
-            body.append(f'<tr><td><b>{e(r["coin"])}</b></td><td>{_side(r["side"])}</td>'
+            body.append(f'<tr><td><b>{e(r["coin"])}</b>{CARRIED if r.get("carried") else ""}</td><td>{_side(r["side"])}</td>'
                         f'<td class="mute">{_ago(now, r["opened"])}</td>'
                         f'<td class="n">{_money(r["size"]) if r["size"] else "–"}</td>'
                         f'<td class="n">{_pnl(r["move"], 2, "%")}</td>'

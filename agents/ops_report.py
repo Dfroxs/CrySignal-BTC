@@ -291,7 +291,7 @@ def collect_scanner_facts(root, now):
     """Per deployed scanner arm: cycles, errors and LONG/SHORT picks in 24h, and each demo
     book's realised balance, open and 24h-closed positions. Read-only; a broken arm is
     {'error': ...}, never raised."""
-    from agents.scanner import BOOK_START_USD, BOOKS
+    from agents.scanner import BOOKS, book_account
     since = (now - timedelta(hours=24)).isoformat()
     out = {}
     for arm, name in SCANNER_ARMS:
@@ -308,13 +308,11 @@ def collect_scanner_facts(root, now):
                                     (since,)).fetchone()[0]
                 books = {}
                 for book in BOOKS:
-                    pnl, opened = con.execute(
-                        "SELECT COALESCE(SUM(CASE WHEN closed_bar IS NOT NULL THEN pnl_usd END), 0), "
-                        "COALESCE(SUM(closed_bar IS NULL), 0) FROM scan_positions WHERE book = ?",
-                        (book,)).fetchone()
+                    opened = con.execute("SELECT COUNT(*) FROM scan_positions WHERE book = ? AND "
+                                         "closed_bar IS NULL", (book,)).fetchone()[0]
                     closed = con.execute("SELECT COUNT(*) FROM scan_positions WHERE book = ? AND "
                                          "closed_bar >= ?", (book, since)).fetchone()[0]
-                    books[book] = {"balance": BOOK_START_USD + pnl, "open": opened, "closed_24h": closed}
+                    books[book] = {"balance": book_account(con, book)[0], "open": opened, "closed_24h": closed}
             finally:
                 con.close()
             out[arm] = {"cycles_24h": n, "errors_24h": errs, "picks_24h": picks, "books": books}

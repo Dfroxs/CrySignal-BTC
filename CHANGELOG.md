@@ -4,6 +4,36 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-20 — scanner reset: books back to $1,000, H-SC/H-SC2/H-SCD windows from 2026-11-21 00:00
+
+This is the owner's decision ("reset saldo + jendela 90 hari"), not a test result. The
+gold/VIX fix never reaches the scanner. Nothing on the old windows had been computed.
+
+- **One boundary:** `agents.scanner.WINDOW_FROM = "2026-11-21T00:00:00+00:00"`, a bar close
+  on a UTC-day boundary, since a day is H-SC's unit.
+  - **Scoring:** `scanner_eval.load` keeps only cycles from it. That covers H-SC, H-SC2,
+    H-SCD (through `scanner_diag`) and the scoring-day counts (`dashboard._v2_days`).
+  - **Books:** `book_account` (sizing, the Telegram digest, the ops report) and
+    `dashboard.scan_book` count only positions opened from it.
+- **Carried positions:** scanner positions opened before the boundary are **carried**. They
+  close on their own levels within 24h and keep their coin's slot, but are in no balance.
+  The dashboard lists them as "bawaan".
+- **BTC dashboard:** the BTC account and "BTC + saran Claude" no longer count an open
+  position from before the run's `started_at`.
+  - **Bug fixed:** run 5 showed #20's unrealised P&L and margin, which would have vanished
+    from the account when it closed.
+  - #20 is now listed as "bawaan" and counted by run 4.
+- **Prereg addenda:** H-SC, H-SC2 and H-SCD.
+- **Tests:**
+  - `test_scanner_reset_carries_old_positions_and_restarts_every_window` is new.
+  - Four older scanner tests run with the window opened back (`_before_scanner_reset`),
+    since their fixtures are dated 11-17/18.
+  - Suite 347/347.
+- **Checked against copies of the live databases:** the BTC account and all six books read
+  $1,000 with every open position carried, and the full dashboard renders.
+
+---
+
 ## 2026-11-20 — run 5 starts at the gold/VIX restart; H-VG and H-VR/H-BS windows restart
 
 The owner reset the run ("reset balance dan 90 harinya") when PR #66 was deployed.
