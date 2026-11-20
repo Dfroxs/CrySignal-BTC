@@ -37,6 +37,9 @@ repaired, H-SR pre-registered).
   shadow-context restart (owner: now). Ceilings become futures 24.25 and spot 21.75, and
   thresholds 4.76 and 4.16.
   It is still **logged, not scored**, in `cycle_log.disabled_contributions` (H-SR-2).
+- **H-SR2 (S/R zones, trader-style) also FAILED** (4 of 10 at horizon 6). S/R as a scoring
+  bonus is closed. `sr_zone` is on `develop` and `main` disabled; it is recorded live from the
+  next restart made for another reason. No restart for it alone.
 - **Windows restart at 17:05:03:** H-VG to 2027-02-18 17:05:03, and H-VR/H-BS to
   2027-01-19 17:05:03.
 - **Scanner window not cut:** it begins 2026-11-21 00:00, after this.
