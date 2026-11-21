@@ -4,6 +4,26 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-21 — dashboard: open positions as tables grouped by method
+
+The owner asked for tables in place of cards, "klasifikasinya jelas: bot BTC, scanner".
+- **One table per method,** each under its own heading line: Bot BTC, Scanner Claude murni,
+  Claude + engine, Acak.
+- **The heading line carries the method's rules:**
+  - Bot BTC: "leverage per posisi: perkiraan; hasil dicatat tanpa leverage";
+  - scanner: "tanpa leverage · satu target, tanpa TP2 · maksimal 24 jam".
+- **Columns:**
+  - BTC: Koin, Arah, Buku, Dibuka, Status, Untung/rugi, Masuk, Sekarang, SL, TP1, TP2,
+    Leverage, Sisa;
+  - scanner: Modal and one Target in place of TP1/TP2/Leverage.
+- **Cells still say it in words:** "TP1 tercapai, separuh posisi sudah ditutup",
+  "+6,25% final / sisa … belum final", "ikut bergerak", "bawaan (tidak dihitung saldo)".
+- **Carried scanner positions** fold into one table per book.
+- **Test:** `test_dashboard_positions_are_tables_grouped_by_method`. The card tests' facts all
+  still hold. Suite 360/360. Rendered on copies of the live databases.
+
+---
+
 ## 2026-11-21 — fix: the Telegram bot token never reaches a log
 
 A Telegram outage on 2026-11-20 at 18:07 UTC ("Network is unreachable") wrote the bot token

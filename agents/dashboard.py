@@ -1564,7 +1564,7 @@ CARD_CSS = """
 .mlabel{color:#fff;border-radius:4px;padding:1px 7px;font-size:12px;font-weight:600}
 .m-btc{background:var(--good)}.m-scanner{background:var(--c1)}.m-hybrid{background:var(--c2)}.m-random{background:var(--mute)}
 .plev{width:100%;margin-top:6px;font-size:13px;border-collapse:collapse}.plev td{padding:2px 4px}
-.plev td:nth-child(odd){color:var(--mute)}details.fold{margin:6px 0}.how{border-left:4px solid var(--accent);background:var(--tint);padding:10px 14px;border-radius:6px}
+.plev td:nth-child(odd){color:var(--mute)}.mhead{margin:12px 0 4px}.ptable td{vertical-align:top}details.fold{margin:6px 0}.how{border-left:4px solid var(--accent);background:var(--tint);padding:10px 14px;border-radius:6px}
 .how ul{margin:4px 0 0 18px;padding:0}.m-box-btc{border-color:var(--good)}.plines{list-style:none;padding:0}.plines li{padding:4px 0}
 .plines a{color:inherit;text-decoration:none}details.fold summary{cursor:pointer;color:var(--ink2)}
 """
@@ -1617,59 +1617,74 @@ def _scanner_cards(f, key):
     return out
 
 
-def _card(c, now):
-    name, desc = METHODS[c["method"]]
+def _pnl_cell(c):
+    if c["pnl_final_pct"] is not None or c["tp1_hit"]:
+        return (f'{_pnl(c["pnl_final_pct"], 2, "%")} final<br><small>sisa {_pnl(c["pnl_open_pct"], 2, "%")} '
+                f'belum final</small>')
+    if c["pnl_open_pct"] is None:
+        return _pnl(None)
+    return _pnl(c["pnl_open_pct"], 2, "%") + (
+        f'<br><small>{_money(c["pnl_usd"], True)}</small>' if c["pnl_usd"] is not None else "")
+
+
+def _row(c, now):
     left = c["hours_left"]
     left_s = "–" if left is None else ("segera" if left <= 0 else f"{left:.0f} jam")
-    if c["pnl_final_pct"] is not None or c["tp1_hit"]:
-        pnl = (f'separuh pertama {_pnl(c["pnl_final_pct"], 2, "%")} (final) · '
-               f'sisa separuh {_pnl(c["pnl_open_pct"], 2, "%")} (belum final)')
-    elif c["pnl_open_pct"] is None:
-        pnl = _pnl(None)
-    else:
-        pnl = _pnl(c["pnl_open_pct"], 2, "%") + (
-            f' = {_money(c["pnl_usd"], True)} dari modal {_money(c["size_usd"])}' if c["pnl_usd"] is not None else "") \
-            + " (belum final)"
-    stop = _px(c["stop"]) + (" <small>ikut bergerak</small>" if c["trailing"] else "")
+    sl = _px(c["stop"]) + ("<br><small>ikut bergerak</small>" if c["trailing"] else "")
+    status = e(c["status"]) + ("<br><small>bawaan (tidak dihitung saldo)</small>" if c["carried"] else "")
+    cells = [f'<b>{e(c["coin"])}</b>', _side(c["side"]), e(c["book"]), _ago(now, c["opened"]), status,
+             _pnl_cell(c)]
     if c["method"] == "btc":
-        lev = [("Masuk", _px(c["entry"])), ("Sekarang", _px(c["price"])), ("Stop (SL)", stop),
-               ("TP1", _px(c["tp1"]) + (" ✓" if c["tp1_hit"] else "")), ("TP2", _px(c["tp2"])),
-               ("Leverage", e(c["leverage"] or "–"))]
+        lev = e((c["leverage"] or "–").split(" (perkiraan")[0])
+        cells += [_px(c["entry"]), _px(c["price"]), sl, _px(c["tp1"]) + (" ✓" if c["tp1_hit"] else ""),
+                  _px(c["tp2"]), lev, left_s]
     else:
-        lev = [("Masuk", _px(c["entry"])), ("Sekarang", _px(c["price"])), ("Stop (SL)", stop),
-               ("Target", _px(c["target"]) + " <small>satu target, tanpa TP2</small>"),
-               ("Leverage", e(c["leverage"] or "–"))]
-    rows = "".join(f"<tr><td>{a}</td><td>{b}</td></tr>" for a, b in lev)
-    carried = " · <small>bawaan (tidak dihitung saldo)</small>" if c["carried"] else ""
-    return (f'<div class="pcard"><div class="ph"><span class="mlabel m-{c["method"]}">{e(name)}</span> '
-            f'<small>{e(desc)} · {e(c["book"])}</small></div>'
-            f'<div class="pt"><b>{e(c["coin"])}</b> {_side(c["side"])} · dibuka {_ago(now, c["opened"])}{carried}</div>'
-            f'<div><b>Status:</b> {e(c["status"])} · sisa waktu {left_s}</div>'
-            f'<div><b>Untung/rugi:</b> {pnl}</div><table class="plev">{rows}</table></div>')
+        cells += [_money(c["size_usd"]), _px(c["entry"]), _px(c["price"]), sl, _px(c["target"]), left_s]
+    return "<tr>" + "".join(f"<td>{x}</td>" for x in cells) + "</tr>"
+
+
+_COLS = {"btc": ("Koin", "Arah", "Buku", "Dibuka", "Status", "Untung/rugi", "Masuk", "Sekarang", "SL", "TP1",
+                 "TP2", "Leverage", "Sisa"),
+         "scanner": ("Koin", "Arah", "Buku", "Dibuka", "Status", "Untung/rugi", "Modal", "Masuk", "Sekarang",
+                     "SL", "Target", "Sisa")}
+
+
+def _table_of(cards, now):
+    cols = _COLS["btc" if cards[0]["method"] == "btc" else "scanner"]
+    return ('<div class="scroll"><table class="grid ptable"><thead><tr>' + "".join(f"<th>{c}</th>" for c in cols)
+            + "</tr></thead><tbody>" + "".join(_row(c, now) for c in cards) + "</tbody></table></div>")
 
 
 def _scanner_positions(f):
-    """Scanner tab: each arm's open positions as cards, carried ones folded per book."""
+    """Scanner tab: each arm's open positions as a table, carried ones folded per book."""
     now, out = f["now"], []
     for key, name, _ in ARMS:
         cards = _scanner_cards(f, key)
         if cards:
-            out.append(f'<h3>{e(METHODS[key][0])}</h3>' + _cards_block(cards, now))
+            out.append(_cards_block(cards, now))
     body = "".join(out) or '<p class="empty">Tidak ada posisi scanner terbuka.</p>'
     return '<section><h2>Posisi berjalan</h2>' + body + "</section>"
 
 
 def _cards_block(cards, now, fold_carried=True):
-    """Live cards in full; with `fold_carried`, each book's carried cards in one <details>."""
+    """One table per method (owner, 2026-11-21: "klasifikasinya jelas"), headed by the method's
+    name and rules. With `fold_carried`, each book's carried positions go in one <details>."""
+    if not cards:
+        return ""
+    key = cards[0]["method"]
+    name, desc = METHODS[key]
+    rules = ("leverage per posisi: perkiraan; hasil dicatat tanpa leverage" if key == "btc"
+             else "tanpa leverage · satu target, tanpa TP2 · maksimal 24 jam")
+    out = (f'<p class="mhead"><span class="mlabel m-{key}">{e(name)}</span> <small>{e(desc)} · {e(rules)}</small></p>')
     live = [c for c in cards if not (fold_carried and c["carried"])]
-    out = '<div class="cards">' + "".join(_card(c, now) for c in live) + "</div>" if live else ""
+    if live:
+        out += _table_of(live, now)
     if fold_carried:
         for book in dict.fromkeys(c["book"] for c in cards if c["carried"]):
             car = [c for c in cards if c["carried"] and c["book"] == book]
             out += (f'<details class="fold"><summary>{len(car)} posisi bawaan (tidak dihitung saldo) · '
-                    f'{e(book)} ▸</summary><div class="cards">' + "".join(_card(c, now) for c in car) + "</div></details>")
+                    f'{e(book)} ▸</summary>{_table_of(car, now)}</details>')
     return out
-
 
 def _stats(f):
     """Closed-position statistics per account, in % per trade (pp)."""
