@@ -4,6 +4,25 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-21 — H-EA FAIL: the BTC bot's rules on the scanner's altcoins
+
+The owner asked for a "BTC bot mode for the scanner coins", so it was tested offline first,
+pre-registered (`2026-11-21-alt-engine-prereg.md`). Results are in
+`2026-11-21-alt-engine-results.md`.
+- **Test:** `scripts/alt_engine_eval.py` runs `backtest.run_backtest` unchanged on 8 altcoins
+  × 2024–25. Every trade is paired with its mirror twin: the same entry in the opposite
+  direction, levels reflected, the same exits and costs.
+- **FAIL:**
+  - 9 of 16 cells positive, where 12 were needed;
+  - pooled `d` +0.197 pp, CI90 [−0.137, +0.537].
+- **Reported only:** the engine nets +0.02 % per trade over 1,166 trades, with a 37 % win
+  rate.
+- **The first run** died on a Binance timeout at cell 7. The rerun, which checkpoints each
+  cell and retries failed fetches, reproduced its six cells exactly.
+- **No live "Engine" book** is built. That would be the owner's call, for data only.
+
+---
+
 ## 2026-11-21 — dashboard: position tables fit the page
 
 The owner's screenshot showed the 13-column BTC table running off the page, with Leverage cut
