@@ -6955,6 +6955,24 @@ def test_dashboard_position_cards_say_method_status_levels_and_leverage():
     assert "–" in sol[:600], "a missing price shows –, the card stays"
 
 
+def test_dashboard_positions_are_tables_grouped_by_method():
+    """Owner 2026-11-21: positions as tables, classified by method (Bot BTC, Scanner ...), one
+    row per position, the same facts the cards carried."""
+    import re
+    from agents import dashboard as dsh
+    now, f = _card_facts()
+    btc = dsh._cards_block(dsh._btc_cards(f), now, fold_carried=False)
+    assert btc.count("<table") == 1 and btc.count("<tr") == 2, "one header row, one position row"
+    head = re.search(r"<thead>.*?</thead>", btc, re.S).group(0)
+    for col in ("Koin", "Arah", "Status", "Untung/rugi", "SL", "TP1", "TP2", "Leverage", "Sisa"):
+        assert f">{col}<" in head, col
+    assert btc.index("Bot BTC") < btc.index("<table"), "the method names the table"
+    sc = dsh._cards_block(dsh._scanner_cards(f, "scanner"), now)
+    head = re.search(r"<thead>.*?</thead>", sc, re.S).group(0)
+    assert ">Target<" in head and ">TP1<" not in head and ">Modal<" in head
+    assert sc.index("Scanner Claude murni") < sc.index("<table")
+
+
 def test_dashboard_method_tabs_open_with_how_it_works_and_summary_links():
     """Owner 2026-11-20: "tab pilih koin & bot BTC bikin bingung, ini metode yang mana". Each
     method gets its own tab, named for the method and opened by a "Cara kerja" box; the
@@ -7928,6 +7946,7 @@ if __name__ == "__main__":
     run("alarm: macro source blank 3 cycles",     test_alarm_flags_a_macro_source_blank_in_three_futures_cycles)
     run("dash: BTC rows carry TP1/partial/sizing", test_dashboard_btc_open_rows_carry_partial_tp1_trailing_and_sizing)
     run("dash: one card per position, plain words", test_dashboard_position_cards_say_method_status_levels_and_leverage)
+    run("dash: positions as tables, by method",    test_dashboard_positions_are_tables_grouped_by_method)
     run("dash: a tab per method, Cara kerja, links", test_dashboard_method_tabs_open_with_how_it_works_and_summary_links)
     run("dash: Indonesian money, fuller glossary",  test_dashboard_money_is_indonesian_everywhere_and_glossary_explains_levels)
     run("logs never carry the Telegram token",     test_logs_never_carry_the_telegram_token)
