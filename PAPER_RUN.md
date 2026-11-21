@@ -19,6 +19,15 @@ This is the run that counts.
   - H-VR/H-BS to 2027-01-19 17:57:15;
   - the dashboard board matches (guard test).
 - **Scanner window not cut:** it begins 2026-11-21 00:00.
+- **2026-11-21 checks and decisions:**
+  - Check 1 (the first window cycle) and check 2 (the daily jobs) were clean.
+  - **Carried scanner positions held every coin's slot in the pure and random arms' futures
+    books until about 2026-11-21 22:00 UTC.** The new books stayed nearly empty on day 1.
+    The owner chose to let them run out. H-SC and H-SC2 score picks, not positions, so they
+    were not affected.
+  - **The Telegram token was found in `data/scanner.log`** (outage 2026-11-20 18:07). It
+    was scrubbed and redaction shipped (PR #79). **The owner chose to keep the token** rather
+    than rotate it.
 - **Unchanged:** the dashboard account ($1,000), and #20 (carried; run 4's).
 - **Blocks below:** the 17:05 and 15:19 blocks describe how run 5 got here; their thresholds
   and window lines are superseded.

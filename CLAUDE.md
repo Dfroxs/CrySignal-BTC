@@ -29,6 +29,12 @@ nothing; missing data costs the run.
   judged on its own trade count** (`2026-10-09-reentry-age-results.md`).
 - Every value in `config.py` rests on 2–8 closed trades drawn from mutually blocking
   sequences.
+- **Closed 2026-11-20/21, never re-test (results docs in `docs/superpowers/specs/`):**
+  - S/R as a scoring bonus failed in both forms:
+    - H-SR: the repaired 50-bar rule, 5 of 10 cells;
+    - H-SR2: trader-style HTF zones, 4 of 10 cells.
+  - The BTC bot's rules on the scanner's 8 altcoins (H-EA) failed: 9 of 16 cells against a
+    mirror twin, netting +0.02% per trade.
 
 So the route to profit is probably **not** retuning existing weights, thresholds or
 gates. That has been tried, and it produced the noise-fitted values above.
@@ -45,14 +51,15 @@ claim real; it is not an obstacle to profit:
 
 **Most promising source of edge:** the data only the live bot sees. `backtest.py` must
 score funding, L/S, open interest, basis, taker ratio, gold, VIX and the news overlay as
-NEUTRAL, because no free historical API serves them. That is 7.5 of the 26.5-point
-futures ceiling, never tested. The live bot fetches all of it every cycle, and
+NEUTRAL, because no free historical API serves them. That was 7.5 of the then 26.5-point
+futures ceiling (basis and taker are now pruned), never tested. The live bot fetches all of it every cycle, and
 `cycle_log` persists 37 fields hourly. Testing those fields against forward returns, as
 the data accumulates, is the first edge search this project has never been able to run.
 
-`v2.9.2` runs unattended on a VPS (`~/playground/CrySignal-BTC`, systemd unit
-`spotsignal`). Land changes on `develop`; the server tracks `main` and is
-updated deliberately:
+**Run 5** (started 2026-11-20 17:57 UTC, see `PAPER_RUN.md`) runs unattended on a VPS
+(`~/playground/CrySignal-BTC`, systemd unit `spotsignal`). Land changes on `develop`, then
+cherry-pick onto a `deploy/*` branch from `origin/main` and open a PR; the owner merges
+it. The server tracks `main` and is updated deliberately:
 
 ```bash
 cd ~/playground/CrySignal-BTC && git pull && sudo systemctl restart spotsignal
@@ -89,8 +96,10 @@ commented out for that reason.
 
 ⚠️ **When Binance is unreachable the bot does not fail — it degrades.** Funding,
 L/S, open interest, basis and taker ratio each fall back to NEUTRAL on their own,
-so the system keeps running as a quieter, weaker version of itself: 7.5 of the
-26.5-point futures ceiling, gone, with nothing in the signal to say so. The spot
+so the system keeps running as a quieter, weaker version of itself, with nothing in the
+signal to say so. The Yahoo series (gold, VIX, DXY, S&P) fail the same way; gold and VIX
+were blank in 740 and 191 cycles until `range=5d` (2026-11-20). The hourly alarm now raises
+`data:<name>` when any of these is blank in 3 futures cycles in a row. The spot
 mirror in `signals/market_data.py` covers spot reads only; futures endpoints have
 no fallback. Detect it after the fact with:
 
@@ -108,9 +117,9 @@ Fetches FinancialJuice RSS, CoinGecko API, and ForexFactory XML macro calendar. 
 **Phase 2 — `signals/` package**
 Computes indicators, scores every numbered condition in `signals/engine.py:generate_signals()`, and applies the news/macro overlay.
 
-*Spot (4H):* `analyze_spot_signal()` fetches 4H OHLCV (VWAP over 6 candles = 24H), then runs conditions via `generate_signals(..., mode='spot')`. HTF trend uses 1D + 1W EMA200 (`get_spot_htf_trend()`). Futures-only conditions (funding, L/S, OI, basis) are skipped. Threshold: `SPOT_THRESHOLD` (4.3), max score: `SPOT_MAX_SCORE`.
+*Spot (4H):* `analyze_spot_signal()` fetches 4H OHLCV (VWAP over 6 candles = 24H), then runs conditions via `generate_signals(..., mode='spot')`. HTF trend uses 1D + 1W EMA200 (`get_spot_htf_trend()`). Futures-only conditions (funding, L/S, OI, basis) are skipped. Threshold: `SPOT_THRESHOLD` (base 4.16 since 2026-11-20), max score: `SPOT_MAX_SCORE` (21.75).
 
-*Futures (1H):* `analyze_futures_signal()` fetches 1H OHLCV (VWAP over 24 candles), runs all conditions via `generate_signals(..., mode='futures')`. HTF trend uses 4H + 1D EMA200 (`get_htf_trend()`). Threshold: `SIGNAL_THRESHOLD` (5.2), max score: `SIGNAL_MAX_SCORE`.
+*Futures (1H):* `analyze_futures_signal()` fetches 1H OHLCV (VWAP over 24 candles), runs all conditions via `generate_signals(..., mode='futures')`. HTF trend uses 4H + 1D EMA200 (`get_htf_trend()`). Threshold: `SIGNAL_THRESHOLD` (base 4.76 since 2026-11-20), max score: `SIGNAL_MAX_SCORE` (24.25).
 
 Both use `ThreadPoolExecutor` to fetch market data in parallel. Spot skips funding rate, L/S ratio, and open interest fetches entirely.
 
@@ -136,7 +145,7 @@ After scoring, `integrate_news_with_signal()` applies the macro hold gate (HIGH-
 `trading/history.py` — SQLite `data/signal_history.db` with three tables:
 - `signals` — one row per signal fired, with indicator snapshot and outcome
 - `paper_positions` — open/closed trades with `mode` column (`'spot'`/`'futures'`), trailing stop, TP1/TP2, partial close state
-- `cycle_log` — every cycle including HOLDs; 35+ fields: scores, all technicals, market structure, HTF indicators (JSON), sentiment, reasons, open position count
+- `cycle_log` — every cycle including HOLDs; 35+ fields: scores, all technicals, market structure, HTF indicators (JSON), sentiment, reasons, open position count, `contributions`, `variants`, and `disabled_contributions` (what each disabled condition would have added; never scored)
 
 All queries that touch paper positions accept `mode=None` (all) or `mode='spot'`/`mode='futures'` for per-mode filtering: `get_open_positions(mode)`, `get_closed_pnl(mode)`.
 
@@ -159,6 +168,8 @@ Legacy CSV (`data/signal_history.csv`) is still written as fallback. `migrate_fr
 Thresholds are derived as a **fraction of that ceiling**, not absolute numbers, so pruning a condition lowers the bar with it. The fractions in `config.py` reproduce the historical 5.2 / 4.3 / 4.0 / 8.0 / 3.0 / 7.0 exactly at the pre-pruning maxima of 26.50 and 22.50 — that is 19.6% and 19.1% of max, not the ~25–30% an earlier revision of this file claimed.
 
 Every condition also emits `signal['_contributions'][name] = (buy_delta, sell_delta)` via a read-only checkpoint. `scripts/condition_ic.py` correlates those against forward returns; `backtest.py --disable` ablates them.
+
+A **disabled** condition scores (0, 0), but `_mark()` records what it *would* have added in `signal['_disabled_contributions']`, persisted as `cycle_log.disabled_contributions`. So a pruned or not-yet-tested condition keeps a live record. `condition_ic.py --include-disabled` scores it from that record. Today `DISABLED_CONDITIONS` holds `basis`, `taker`, `support_resistance` (H-SR FAILED) and `sr_zone` (built disabled, H-SR2 FAILED), so the ceilings are futures 24.25 and spot 21.75.
 
 ### Threshold layering — do not re-floor in the engine
 
@@ -257,6 +268,7 @@ happened, never as a basis for picking a value.
   (not in the repo). It patches `fetch_ohlcv_df`; the HTF loader bypasses that
   patch by design and degrades to `htf=None`.
 - `loss_forensics.py` — post-mortem on individual losing trades.
+- `alt_engine_eval.py` — H-EA: the BTC bot's rules on the scanner's altcoins against a mirror twin (FAILED 2026-11-21). It checkpoints each cell (`--cache`), because a Binance timeout once killed a 4-hour run.
 
 Run the heavy ones on a workstation, not the VPS: `backtest.py` and
 `condition_ic.py` hold frames of thousands of rows and will exhaust 1 GB. They
@@ -272,6 +284,31 @@ scp <host>:~/playground/CrySignal-BTC/data/signal_history.db data/server.db
 database, which is the only copy of whatever it holds. Every report names its
 source file and the span it covers, because two hosts otherwise produce reports
 that are indistinguishable.
+
+## Other processes on the VPS (read `PAPER_RUN.md` for their state)
+
+- **Scanner** (`agents/scanner.py`, cron `:05`): three arms, each with a futures and a spot
+  demo book of $1,000:
+  - Claude picks coins (`scanner.db`, H-SC);
+  - Claude plus the engine's score (`scanner_hybrid.db`, H-SC2);
+  - a count-matched random arm (`scanner_random.db`).
+
+  `WINDOW_FROM` (2026-11-21 00:00 UTC) is the one boundary for the books' balances and the
+  H-SC, H-SC2 and H-SCD windows. Older positions are "carried": they run out but count in
+  no balance, and they hold their coin's slot. To move the boundary again, change that one
+  constant, add prereg addenda, and wrap fixture-dated tests with `_before_scanner_reset`.
+- **Dashboard** (`agents/dashboard.py`, user unit `spotsignal-dash`, `127.0.0.1:8080`, read-only):
+  - tabs per method, each with a "Cara kerja" box;
+  - open positions as tables grouped by method, coloured by book (futures purple, spot amber).
+
+  Its `FIXED_TESTS` dates are copied from the scorers, and
+  `test_dashboard_fixed_tests_match_their_scorers` fails when a window moves without them.
+- **Q&A bot** (`spotsignal-qa`): reads `agents/qa_knowledge.md` on every question, so no
+  restart is needed for knowledge edits.
+- **Cron jobs:** alarm `:10`; backup 03:00; report 03:30; derivs archive 03:40; scoring day
+  04:20, which runs each scorer once when it is due; news archive `:03`.
+- **Secrets:** the Telegram token travels in URLs. Any process that configures logging calls
+  `notifier.common.install_log_redaction()` so it never lands in a log.
 
 ## Changelog
 
