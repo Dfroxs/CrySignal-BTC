@@ -1,6 +1,7 @@
 """Shared helpers and public API dispatcher for Telegram notifications."""
 
 import logging
+import re
 from datetime import datetime
 
 from config import (
@@ -12,6 +13,32 @@ from config import (
 )
 
 logger = logging.getLogger(__name__)
+
+# The bot token travels in the URL path (/bot<token>/sendMessage), so any error or retry
+# warning that prints the URL leaks it: urllib3's retry lines and our own "failed" line
+# wrote it into data/scanner.log during a 2026-11-20 outage.
+_TOKEN_RE = re.compile(r"bot\d{6,}:[A-Za-z0-9_-]{20,}")
+
+
+def redact(text):
+    return _TOKEN_RE.sub("bot***", str(text))
+
+
+class _RedactFilter(logging.Filter):
+    def filter(self, record):
+        msg = record.getMessage()
+        clean = redact(msg)
+        if clean != msg:
+            record.msg, record.args = clean, None
+        return True
+
+
+def install_log_redaction():
+    """Mask the Telegram token on every root handler, for whatever logger emits it.
+    Call once after the process configures logging."""
+    for h in logging.getLogger().handlers:
+        if not any(isinstance(x, _RedactFilter) for x in h.filters):
+            h.addFilter(_RedactFilter())
 
 _UP = "▲"
 _DOWN = "▼"
@@ -87,7 +114,7 @@ def _send_telegram_message(text, label="alert"):
             logger.warning("Telegram %s returned %d: %s", label, resp.status_code, resp.text[:200])
             return False
     except Exception as e:
-        logger.warning("Telegram %s failed: %s", label, e)
+        logger.warning("Telegram %s failed: %s", label, redact(e))
         return False
 
 
