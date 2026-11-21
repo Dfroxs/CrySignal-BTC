@@ -54,3 +54,13 @@ OPEN at the window's end is excluded on both sides.
   No re-scoring on other coins, years, timeframes or parameters.
 
 Run once, on the Mac, and touch nothing on the VPS.
+
+## Amendment 2026-11-21 (05:40 UTC): the first run died on the network
+
+The first run (03:45 UTC, `874ddc7`) completed 6 of 16 cells. It then died on a connect
+timeout to `data-api.binance.vision` while fetching XRP 2024, and it produced no verdict. Its
+six per-cell lines were printed, and they are not a result: the criteria read all 16 cells
+together. Nothing about the test changes: the cells, the statistic, the criteria and the
+engine are all as above. The script now checkpoints each cell (`--cache`) and retries a
+failed fetch 3 times, so a second outage cannot cost finished cells. The run starts again
+from cell 1. The code and the data are fixed, so the first six cells can only repeat.

@@ -7105,6 +7105,22 @@ def test_alt_engine_mirror_twin_and_verdict_follow_the_h_ea_prereg():
     assert ea.verdict(split)["verdict"] == "FAIL", "11 of 16 is short of 12"
     assert ea.CELLS == [(c, y) for c in ("ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "LINK", "AVAX")
                         for y in (2024, 2025)]
+    # A network failure mid-run must not redo finished cells or lose them: each cell is
+    # checkpointed, and a failed fetch is retried before it aborts.
+    import json, os, tempfile
+    calls, fails = [], {"SOL 2024": 1}
+    def fake(coin, year):
+        k = f"{coin} {year}"
+        calls.append(k)
+        if fails.get(k):
+            fails[k] -= 1
+            raise TimeoutError("timed out")
+        return [0.1] * 12, [0.05] * 12, {"WIN": 12}
+    cache = os.path.join(tempfile.mkdtemp(), "cells.json")
+    json.dump({"ETH 2024": {"d": [0.2] * 12, "eng": [0.1] * 12, "outcomes": {}}}, open(cache, "w"))
+    cells = ea.collect_cells(cache, run=fake, retries=2, wait_s=0)
+    assert "ETH 2024" not in calls and calls.count("SOL 2024") == 2, calls
+    assert len(cells) == 16 and len(json.load(open(cache))) == 16
 
 
 def test_scanner_reset_carries_old_positions_and_restarts_every_window():

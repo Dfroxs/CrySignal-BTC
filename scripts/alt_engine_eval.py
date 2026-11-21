@@ -87,15 +87,42 @@ def run_cell(coin, year):
     return d, eng, out
 
 
+def collect_cells(cache, run=None, retries=3, wait_s=60):
+    """{cell: {"d", "eng", "outcomes"}} for every cell, checkpointed to `cache` after each.
+    A failed fetch is retried; a finished cell is never re-run (the code and data are fixed,
+    so a re-run could only repeat it)."""
+    import time
+    run = run or run_cell
+    done = json.loads(Path(cache).read_text()) if cache and Path(cache).exists() else {}
+    for coin, year in CELLS:
+        key = f"{coin} {year}"
+        if key in done:
+            continue
+        for attempt in range(retries + 1):
+            try:
+                d, eng, out = run(coin, year)
+                break
+            except Exception as exc:  # noqa: BLE001 - network: retry, then abort loudly
+                if attempt == retries:
+                    raise
+                print(f"{key}: attempt {attempt + 1} failed ({exc}); retrying", flush=True)
+                time.sleep(wait_s)
+        done[key] = {"d": d, "eng": eng, "outcomes": out}
+        if cache:
+            Path(cache).write_text(json.dumps(done))
+        print(f"{key}: {len(d)} trades done", flush=True)
+    return done
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--out")
+    ap.add_argument("--cache", default="data/local_tests/hea_cells.json")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.WARNING)
     cells, report = {}, {}
-    for coin, year in CELLS:
-        d, eng, out = run_cell(coin, year)
-        key = f"{coin} {year}"
+    for key, c in collect_cells(args.cache).items():
+        d, eng, out = c["d"], c["eng"], c["outcomes"]
         cells[key] = d
         report[key] = {"trades": len(d), "mean_d": float(np.mean(d)) if d else None,
                        "engine_net_per_trade": float(np.mean(eng)) if eng else None,
