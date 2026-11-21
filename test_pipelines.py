@@ -7085,6 +7085,44 @@ def test_logs_never_carry_the_telegram_token():
     assert out.count("bot***") >= 3, out
 
 
+def test_alt_engine_mirror_twin_and_verdict_follow_the_h_ea_prereg():
+    """H-EA (2026-11-21-alt-engine-prereg.md): the twin is the same entry in the opposite
+    direction with every level reflected about the entry; PASS needs >= 12 of 16 cells
+    positive (fewer than 10 trades is not positive) and a cluster-bootstrap 90% CI above 0."""
+    import scripts.alt_engine_eval as ea
+    sig = {"type": "BUY", "entry_price": 100.0, "stop_loss": 95.0, "take_profit": 110.0, "tp2": 120.0,
+           "atr": 2.0, "strength": 6.0}
+    m = ea.mirror(sig)
+    assert (m["type"], m["stop_loss"], m["take_profit"], m["tp2"], m["entry_price"], m["atr"]) == \
+        ("SELL", 105.0, 90.0, 80.0, 100.0, 2.0)
+    assert sig["type"] == "BUY", "the engine's own signal is never mutated"
+    assert ea.mirror(m)["stop_loss"] == 95.0
+    good = {f"c{i}": [0.5] * 12 for i in range(13)} | {f"n{i}": [-0.2] * 12 for i in range(3)}
+    assert ea.verdict(good)["verdict"] == "PASS"
+    thin = {f"c{i}": [0.5] * 9 for i in range(16)}
+    assert ea.verdict(thin)["positive_cells"] == 0 and ea.verdict(thin)["verdict"] == "FAIL"
+    split = {f"c{i}": [0.5] * 12 for i in range(11)} | {f"n{i}": [-0.2] * 12 for i in range(5)}
+    assert ea.verdict(split)["verdict"] == "FAIL", "11 of 16 is short of 12"
+    assert ea.CELLS == [(c, y) for c in ("ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "LINK", "AVAX")
+                        for y in (2024, 2025)]
+    # A network failure mid-run must not redo finished cells or lose them: each cell is
+    # checkpointed, and a failed fetch is retried before it aborts.
+    import json, os, tempfile
+    calls, fails = [], {"SOL 2024": 1}
+    def fake(coin, year):
+        k = f"{coin} {year}"
+        calls.append(k)
+        if fails.get(k):
+            fails[k] -= 1
+            raise TimeoutError("timed out")
+        return [0.1] * 12, [0.05] * 12, {"WIN": 12}
+    cache = os.path.join(tempfile.mkdtemp(), "cells.json")
+    json.dump({"ETH 2024": {"d": [0.2] * 12, "eng": [0.1] * 12, "outcomes": {}}}, open(cache, "w"))
+    cells = ea.collect_cells(cache, run=fake, retries=2, wait_s=0)
+    assert "ETH 2024" not in calls and calls.count("SOL 2024") == 2, calls
+    assert len(cells) == 16 and len(json.load(open(cache))) == 16
+
+
 def test_scanner_reset_carries_old_positions_and_restarts_every_window():
     """Owner's reset with run 5: every arm's books start again at $1,000, and H-SC/H-SC2/H-SCD
     count only cycles from WINDOW_FROM. A position opened before it runs out on its own, holds
@@ -7959,6 +7997,7 @@ if __name__ == "__main__":
     run("dash: a tab per method, Cara kerja, links", test_dashboard_method_tabs_open_with_how_it_works_and_summary_links)
     run("dash: Indonesian money, fuller glossary",  test_dashboard_money_is_indonesian_everywhere_and_glossary_explains_levels)
     run("logs never carry the Telegram token",     test_logs_never_carry_the_telegram_token)
+    run("H-EA mirror twin + verdict per prereg",  test_alt_engine_mirror_twin_and_verdict_follow_the_h_ea_prereg)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL
