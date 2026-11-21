@@ -15,6 +15,7 @@ to "3x · margin" and Sisa gone.
 - **Cells:** Status wraps (150–210 px); every other cell stays on one line, and the number
   columns are right-aligned.
 - **Checked:** a headless screenshot at 1,280 px of the live data shows every column.
+- **Spot vs futures** (owner: "tambah warna ... agar mudah dibedakan"): the book is a coloured chip under the side, futures purple and spot amber, and each row has a left bar in the same colour. Futures is purple, not the accent blue, so it cannot be read as the "Claude murni" label.
 - **Suite:** 360/360.
 
 ---

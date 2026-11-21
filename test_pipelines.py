@@ -6969,6 +6969,10 @@ def test_dashboard_positions_are_tables_grouped_by_method():
     # Owner 2026-11-21 screenshot: the 13-column table overflowed (Leverage cut, Sisa gone).
     assert len(re.findall(r"<th[ >]", head)) == 10 and ">Buku<" not in head and ">Dibuka<" not in head, head
     assert ">Masuk / Sekarang<" in head
+    # Owner 2026-11-21: spot and futures must differ at a glance, by colour.
+    assert '<tr class="b-futures">' in btc and 'class="book book-futures">futures<' in btc
+    spot = dict(dsh._btc_cards(f)[0], book="spot")
+    assert '<tr class="b-spot">' in dsh._cards_block([spot], now, fold_carried=False)
     lev = re.search(r"<td[^>]*>3x<br><small>likuidasi [^<]+</small></td>", btc)
     assert lev, "leverage cell is the multiple, liquidation small under it"
     assert btc.index("Bot BTC") < btc.index("<table"), "the method names the table"
