@@ -1565,7 +1565,12 @@ CARD_CSS = """
 .m-btc{background:var(--good)}.m-scanner{background:var(--c1)}.m-hybrid{background:var(--c2)}.m-random{background:var(--mute)}
 .plev{width:100%;margin-top:6px;font-size:13px;border-collapse:collapse}.plev td{padding:2px 4px}
 .plev td:nth-child(odd){color:var(--mute)}.mhead{margin:12px 0 4px}.ptable td{vertical-align:top;white-space:nowrap}
-.ptable td.st{white-space:normal;min-width:150px;max-width:210px}.ptable small{color:var(--mute)}details.fold{margin:6px 0}.how{border-left:4px solid var(--accent);background:var(--tint);padding:10px 14px;border-radius:6px}
+.ptable td.st{white-space:normal;min-width:150px;max-width:210px}
+.book{display:inline-block;margin-top:3px;padding:0 6px;border-radius:4px;font-size:11px;font-weight:600;color:#fff}
+.book-futures{background:#8B5CF6}.book-spot{background:var(--warn)}
+.ptable td:first-child{padding-left:10px}
+.ptable tr.b-futures td:first-child{box-shadow:inset 3px 0 0 #8B5CF6}
+.ptable tr.b-spot td:first-child{box-shadow:inset 3px 0 0 var(--warn)}.ptable small{color:var(--mute)}details.fold{margin:6px 0}.how{border-left:4px solid var(--accent);background:var(--tint);padding:10px 14px;border-radius:6px}
 .how ul{margin:4px 0 0 18px;padding:0}.m-box-btc{border-color:var(--good)}.plines{list-style:none;padding:0}.plines li{padding:4px 0}
 .plines a{color:inherit;text-decoration:none}details.fold summary{cursor:pointer;color:var(--ink2)}
 """
@@ -1638,7 +1643,9 @@ def _row(c, now):
     left_s = "–" if left is None else ("segera" if left <= 0 else f"{left:.0f} jam")
     sl = _px(c["stop"]) + ("<br><small>ikut bergerak</small>" if c["trailing"] else "")
     status = e(c["status"]) + ("<br><small>bawaan (tidak dihitung saldo)</small>" if c["carried"] else "")
-    cells = [("", f'<b>{e(c["coin"])}</b>'), ("", f'{_side(c["side"])}<br><small>{e(c["book"])}</small>'),
+    book = "spot" if c["book"] == "spot" else "futures"
+    cells = [("", f'<b>{e(c["coin"])}</b>'),
+             ("", f'{_side(c["side"])}<br><span class="book book-{book}">{e(c["book"])}</span>'),
              ("st", status), ("n", _pnl_cell(c))]
     if c["method"] == "btc":
         lev = (f'{c["lev_x"]}<br><small>likuidasi {_money(c["liq"])}</small>' if c.get("lev_x") and c.get("liq")
@@ -1649,7 +1656,8 @@ def _row(c, now):
         cells += [("n", _money(c["size_usd"])), ("n", f'{_px(c["entry"])}<br><small>{_px(c["price"])}</small>'),
                   ("n", sl), ("n", _px(c["target"]))]
     cells.append(("n", f'{left_s}<br><small>dibuka {_ago(now, c["opened"])}</small>'))
-    return "<tr>" + "".join(f'<td class="{k}">{x}</td>' if k else f"<td>{x}</td>" for k, x in cells) + "</tr>"
+    return (f'<tr class="b-{book}">' + "".join(f'<td class="{k}">{x}</td>' if k else f"<td>{x}</td>" for k, x in cells)
+            + "</tr>")
 
 
 _COLS = {"btc": ("Koin", "Arah", "Status", "Untung/rugi", "Masuk / Sekarang", "SL", "TP1", "TP2", "Leverage",
