@@ -4,6 +4,22 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-21 — dashboard: position tables fit the page
+
+The owner's screenshot showed the 13-column BTC table running off the page, with Leverage cut
+to "3x · margin" and Sisa gone.
+- **Columns:** BTC now has 10, scanner 9.
+  - The book sits under the side, and the age under the time left.
+  - Entry is stacked over the price now in one column.
+  - The leverage cell shows "3x", with the liquidation price small beneath it.
+- **Cells:** Status wraps (150–210 px); every other cell stays on one line, and the number
+  columns are right-aligned.
+- **Checked:** a headless screenshot at 1,280 px of the live data shows every column.
+- **Spot vs futures** (owner: "tambah warna ... agar mudah dibedakan"): the book is a coloured chip under the side, futures purple and spot amber, and each row has a left bar in the same colour. Futures is purple, not the accent blue, so it cannot be read as the "Claude murni" label.
+- **Suite:** 360/360.
+
+---
+
 ## 2026-11-21 — dashboard: open positions as tables grouped by method
 
 The owner asked for tables in place of cards, "klasifikasinya jelas: bot BTC, scanner".

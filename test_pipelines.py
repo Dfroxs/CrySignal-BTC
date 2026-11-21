@@ -5577,7 +5577,7 @@ def test_dashboard_runs_market_position_detail_and_stats():
         assert "turun" in mk and "naik" in mk and "+0,0029%" in mk and "FOMC &lt;x&gt;" in mk and "7 j" in mk, mk
         pos = dsh._cards_block(dsh._btc_cards(f), now, fold_carried=False)
         assert "66.000,00" in pos and "60.000,00" in pos and "66 jam" in pos, "stop, TP1, 72 h cap minus 6 h"
-        assert "Leverage" in pos and "x · margin" in pos and "likuidasi" in pos, "BTC futures card shows its sizing"
+        assert "Leverage" in pos and "x<br><small>likuidasi" in pos, "BTC futures row shows its sizing"
         st = dsh._stats(f)
         assert "Bot BTC (futures)" in st and "50%" in st and "2,00" in st and "Acak (spot)" in st, st
         assert "run 3 sejak 17 Nov; run 2 berakhir" in dsh._run_hint(f)
@@ -6966,10 +6966,19 @@ def test_dashboard_positions_are_tables_grouped_by_method():
     head = re.search(r"<thead>.*?</thead>", btc, re.S).group(0)
     for col in ("Koin", "Arah", "Status", "Untung/rugi", "SL", "TP1", "TP2", "Leverage", "Sisa"):
         assert f">{col}<" in head, col
+    # Owner 2026-11-21 screenshot: the 13-column table overflowed (Leverage cut, Sisa gone).
+    assert len(re.findall(r"<th[ >]", head)) == 10 and ">Buku<" not in head and ">Dibuka<" not in head, head
+    assert ">Masuk / Sekarang<" in head
+    # Owner 2026-11-21: spot and futures must differ at a glance, by colour.
+    assert '<tr class="b-futures">' in btc and 'class="book book-futures">futures<' in btc
+    spot = dict(dsh._btc_cards(f)[0], book="spot")
+    assert '<tr class="b-spot">' in dsh._cards_block([spot], now, fold_carried=False)
+    lev = re.search(r"<td[^>]*>3x<br><small>likuidasi [^<]+</small></td>", btc)
+    assert lev, "leverage cell is the multiple, liquidation small under it"
     assert btc.index("Bot BTC") < btc.index("<table"), "the method names the table"
     sc = dsh._cards_block(dsh._scanner_cards(f, "scanner"), now)
     head = re.search(r"<thead>.*?</thead>", sc, re.S).group(0)
-    assert ">Target<" in head and ">TP1<" not in head and ">Modal<" in head
+    assert ">Target<" in head and ">TP1<" not in head and ">Modal<" in head and len(re.findall(r"<th[ >]", head)) == 9
     assert sc.index("Scanner Claude murni") < sc.index("<table")
 
 
