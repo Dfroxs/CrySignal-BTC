@@ -4,6 +4,35 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-21 — docs: README and CLAUDE.md brought up to date
+
+**README** was months stale: it still listed 19 conditions, the ceilings 22.25 / 18.75 and
+the thresholds 5.2 / 4.3.
+- **New "Status" section:** paper only; run 5; what has been learned; the tests running; the
+  processes.
+- **Conditions:** the table now points to `CONDITION_MAX` and `DISABLED_CONDITIONS` as the
+  source of truth.
+- **Figures:** the current ceilings (24.25 / 21.75) and thresholds (4.76 / 4.16, with their
+  adaptive bands).
+- **Output files:** the scanner, archive and scoring entries.
+
+**CLAUDE.md:**
+- **Known results:** H-SR, H-SR2 and H-EA join the closed list.
+- **Run 5 and the deploy flow:** work lands on `develop`, goes to a `deploy/*` branch as a
+  PR, and the owner merges.
+- **Figures:** the current thresholds and ceilings.
+- **Silent degradation:** now covers the Yahoo series, and the new alarm.
+- **Shadow record:** `disabled_contributions` and `--include-disabled`.
+- **New section, "Other processes on the VPS":**
+  - the scanner `WINDOW_FROM` reset;
+  - the dashboard tabs and the dates guard;
+  - Q&A knowledge read per question;
+  - the cron schedule;
+  - log redaction of the Telegram token.
+- **`alt_engine_eval.py`** in the scripts list.
+
+---
+
 ## 2026-11-21 — H-EA FAIL: the BTC bot's rules on the scanner's altcoins
 
 The owner asked for a "BTC bot mode for the scanner coins", so it was tested offline first,

@@ -1,9 +1,27 @@
 # SpotSignal
 
 BTC/USDT trading signal generator — dual pipeline (SPOT 4H + FUTURES 1H),
-18 conditions, multi-timeframe analysis, macro event gating, paper trading
+rule-based scoring, multi-timeframe analysis, macro event gating, paper trading
 with trailing stop + partial TP, conviction-based dynamic leverage, and
-Telegram notifications.
+Telegram notifications. Alongside it, a Claude coin scanner (9 perps, three
+arms) and a read-only dashboard.
+
+## Status (2026-11-21)
+
+- **Paper only:** no exchange keys, virtual money. Run 5 started 2026-11-20 17:57 UTC on
+  a VPS. `PAPER_RUN.md` is the operations note; `CLAUDE.md` holds the project's rules.
+- **What has been learned:** no public-indicator component holds its sign across markets
+  and years. That covers STEP 1, S/R in two forms, and the BTC rules on altcoins; the
+  results are in `docs/superpowers/specs/*-results.md`. The open question is the live-only
+  data (funding, L/S, OI, basis, gold, VIX) the bot logs every hour.
+- **Tests running:** H-VR/H-BS, H-SC2, H-DR, H-VG, H-SC and H-SCD. They are scored from
+  Jan to Feb 2027 by the scoring-day cron; the dashboard's board shows the dates.
+- **Processes:**
+  - `spotsignal` (the bot);
+  - the scanner (cron);
+  - `spotsignal-dash` (dashboard, `127.0.0.1:8080`, reached through an SSH tunnel);
+  - `spotsignal-qa` (Telegram Q&A);
+  - alarm, backups (VPS and Mac), the daily report, derivs and news archives.
 
 ## Quick Start
 
@@ -73,7 +91,13 @@ Paper trading is simulated. Past results do not guarantee future performance.
 
 ---
 
-## 19 Signal Conditions
+## Signal Conditions
+
+> **Source of truth: `config.CONDITION_MAX`** (the ceilings) and `config.DISABLED_CONDITIONS`.
+> The table below is the original design and may drift. As of 2026-11-21 the disabled set is
+> `basis`, `taker`, `support_resistance` and `sr_zone`. Disabled conditions are logged in
+> `cycle_log.disabled_contributions` but never scored. The active ceilings are **futures
+> 24.25** and **spot 21.75**.
 
 | # | Condition | Max Buy | Max Sell | Notes |
 |---|---|---|---|---|
@@ -102,8 +126,8 @@ Paper trading is simulated. Past results do not guarantee future performance.
 
 † = futures-only conditions (skipped in SPOT pipeline)
 
-**FUTURES max: 22.25** (all 19 conditions)  
-**SPOT max: 18.75** (conditions 1-8, 9c-12, 15-19; no funding/L/S/OI/basis)
+Ceilings are summed from `CONDITION_MAX` over the active set (futures 24.25, spot 21.75
+today). Thresholds are a fixed fraction of them.
 
 ---
 
@@ -194,8 +218,8 @@ All values in `config.py`, overridable via `.env`:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SPOT_THRESHOLD` | 4.3 | SPOT minimum score (adaptive: 3.0–7.0) |
-| `SIGNAL_THRESHOLD` | 5.2 | FUTURES minimum score (adaptive: 4.0–8.0) |
+| `SPOT_THRESHOLD` | 4.16 | SPOT base threshold, 19.1% of the ceiling (adaptive: 2.90–6.77). Setting it in `.env` switches the controller OFF |
+| `SIGNAL_THRESHOLD` | 4.76 | FUTURES base threshold, 19.6% of the ceiling (adaptive: 3.66–7.32). Setting it in `.env` switches the controller OFF |
 | `ACCOUNT_BALANCE` | 1000 | Spot account balance (USDT) |
 | `FUTURES_BALANCE` | 500 | Futures sub-account balance |
 | `LOOP_INTERVAL` | 60 | Loop cadence (minutes) |
@@ -223,7 +247,7 @@ All values in `config.py`, overridable via `.env`:
 | `data/crypto_news_sentiment.csv` | Scored headlines with sentiment label |
 | `data/macro_events.csv` | USD macro calendar events |
 | `data/signal_history.csv` | Signal log (CSV fallback) |
-| `data/signal_history.db` | **Full SQLite database** with 3 tables: |
+| `data/signal_history.db` | **Full SQLite database** (main tables below; also `signal_blocks` and the shadow-opinion tables): |
 | | • `cycle_log` — every cycle (including HOLD) with all indicators |
 | | • `signals` — triggered BUY/SELL signals with indicator snapshot |
 | | • `paper_positions` — all trades with outcomes and P&L |
@@ -232,7 +256,10 @@ All values in `config.py`, overridable via `.env`:
 | `data/oi_cache.json` | Previous open interest for trend |
 | `data/threshold_state.json` | Adaptive threshold counter (futures) |
 | `data/spot_threshold_state.json` | Adaptive threshold counter (spot) |
-| `spotsignal.log` | Full log including slippage + macro warnings |
+| `spotsignal.log` | Full log including slippage + macro warnings (the Telegram token is redacted) |
+| `data/scanner*.db` | Scanner arms: cycles, picks, demo books (`scan_positions`) |
+| `data/derivs/`, `data/news/` | Daily Binance derivatives and hourly headline archives (forward-only data) |
+| `data/scoring/` | Scoring-day outputs, one JSON per test when it is due |
 
 ---
 
