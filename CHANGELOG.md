@@ -4,6 +4,30 @@ All notable changes to the SpotSignal project.
 
 ---
 
+## 2026-11-21 — fix: the Telegram bot token never reaches a log
+
+A Telegram outage on 2026-11-20 at 18:07 UTC ("Network is unreachable") wrote the bot token
+into `data/scanner.log` four times. The token travels in the URL path
+(`/bot<token>/sendMessage`). It leaked twice over:
+- our own `Telegram <label> failed: <error>` line printed the exception, URL included;
+- urllib3's retry warnings print the full URL.
+
+The Q&A bot already masked it; the scanner and the bot did not. No other log on the VPS, and
+no Mac copy, held it: the Mac had pulled before the outage.
+
+- **Fix:** `notifier/common.redact()` and `install_log_redaction()`, a filter on every root
+  handler that turns `bot<digits>:<secret>` into `bot***`, whichever logger emits it. It is
+  installed by `agents/scanner.main` and `run_bot.py`, and the "failed" line redacts its
+  exception too.
+- **Test:** `test_logs_never_carry_the_telegram_token` covers the urllib3 line, our own line,
+  and a real `_send_telegram_message` failure.
+- **Takes effect:** the scanner from its next cron run (no restart). The bot only at its next
+  restart, which is held until one is needed. Until then a bot-side Telegram failure could
+  still log it.
+- **Owner action recommended:** rotate the token in @BotFather and update `.env` on the VPS.
+
+---
+
 ## 2026-11-20 — dashboard readability: a tab per method, one card per position
 
 The owner found that the positions and the tabs did not say which method they came from,

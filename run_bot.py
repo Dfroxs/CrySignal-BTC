@@ -32,6 +32,8 @@ _console_handler.setLevel(logging.WARNING)   # INFO stays in file only
 _console_handler.setFormatter(logging.Formatter("%(levelname)s %(name)s — %(message)s"))
 
 logging.basicConfig(level=logging.INFO, handlers=[_file_handler, _console_handler])
+from notifier.common import install_log_redaction  # noqa: E402 - after the handlers exist
+install_log_redaction()
 logger = logging.getLogger(__name__)
 
 

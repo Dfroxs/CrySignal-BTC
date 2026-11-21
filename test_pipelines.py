@@ -7020,6 +7020,44 @@ def test_dashboard_money_is_indonesian_everywhere_and_glossary_explains_levels()
         assert f"<dt>{term}</dt>" in page, term
 
 
+def test_logs_never_carry_the_telegram_token():
+    """2026-11-21: a Telegram outage wrote the bot token into data/scanner.log four times, once
+    in our own "Telegram ... failed: <error>" line and three times in urllib3's retry
+    warnings, which print the full URL. Every handler a process installs redacts it."""
+    import io, logging
+    import notifier.common as nc
+    tok = "123456789:AAEoRDubeawe8epE6Av3yUEAEkejvjf7L2Y"
+    buf = io.StringIO()
+    root = logging.getLogger()
+    h = logging.StreamHandler(buf)
+    root.addHandler(h)
+    saved_level, saved_tok = root.level, nc.TELEGRAM_BOT_TOKEN
+    root.setLevel(logging.INFO)
+    try:
+        nc.install_log_redaction()
+        logging.getLogger("urllib3.connectionpool").warning(
+            "Retrying after connection broken: /bot%s/sendMessage", tok)
+        logging.getLogger("x").warning("Telegram %s failed: %s", "scanner",
+                                       Exception(f"Max retries exceeded with url: /bot{tok}/sendMessage"))
+
+        class Boom:
+            def post(self, *a, **k):
+                raise ConnectionError(f"HTTPSConnectionPool url: /bot{tok}/sendMessage")
+        nc.TELEGRAM_BOT_TOKEN = tok
+        saved_session, nc.HTTP_SESSION = nc.HTTP_SESSION, Boom()
+        try:
+            assert nc._send_telegram_message("hi", "scanner") is False
+        finally:
+            nc.HTTP_SESSION = saved_session
+    finally:
+        root.removeHandler(h)
+        root.setLevel(saved_level)
+        nc.TELEGRAM_BOT_TOKEN = saved_tok
+    out = buf.getvalue()
+    assert tok not in out and "AAEoRDubeawe8" not in out, out
+    assert out.count("bot***") >= 3, out
+
+
 def test_scanner_reset_carries_old_positions_and_restarts_every_window():
     """Owner's reset with run 5: every arm's books start again at $1,000, and H-SC/H-SC2/H-SCD
     count only cycles from WINDOW_FROM. A position opened before it runs out on its own, holds
@@ -7892,6 +7930,7 @@ if __name__ == "__main__":
     run("dash: one card per position, plain words", test_dashboard_position_cards_say_method_status_levels_and_leverage)
     run("dash: a tab per method, Cara kerja, links", test_dashboard_method_tabs_open_with_how_it_works_and_summary_links)
     run("dash: Indonesian money, fuller glossary",  test_dashboard_money_is_indonesian_everywhere_and_glossary_explains_levels)
+    run("logs never carry the Telegram token",     test_logs_never_carry_the_telegram_token)
 
     print(f"\n{'══' * 20}")
     total = PASS + FAIL

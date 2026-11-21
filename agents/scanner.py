@@ -700,6 +700,8 @@ def main(argv=None):
     ap.add_argument("--random-db", default=str(RANDOM_DB_PATH))
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    from notifier.common import install_log_redaction
+    install_log_redaction()
     from dotenv import load_dotenv
     load_dotenv(ROOT / ".env")
     if args.dry_run:
